@@ -11,8 +11,7 @@ import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
 import '../../data/api/tv_app_api_service.dart';
-import '../../data/local/entities.dart';
-import '../../data/local/isar_provider.dart';
+import '../../data/models/app_media.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
 
@@ -79,34 +78,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _checkAutoSync() async {
-    AppDebugLog.instance.log('HomeScreen: Checking auto-sync...');
     final auth = ref.read(authNotifierProvider);
     if (auth.apiAccessToken != null && auth.apiAccessToken!.isNotEmpty) {
-      await _refreshLibraryFromServer();
+      // Library is auto fetched from API via generic providers,
+      // but we might want to manually refresh
     }
-
-    final isar = await ref.read(isarProvider.future);
-    SyncCheckpoint? checkpoint;
-    try {
-      checkpoint = await isar.runWithRetry(
-        () => isar.syncCheckpoints.getByDialogKey('global_sync'),
-        debugName: 'autoSyncCheck',
-      );
-    } catch (e) {
-      AppDebugLog.instance
-          .log('HomeScreen: Failed to read sync checkpoint: $e');
-      return;
-    }
-
-    if (checkpoint != null) {
-      _lastSyncTime =
-          DateTime.fromMillisecondsSinceEpoch(checkpoint.lastSyncAt);
-      if (mounted) setState(() {});
-    }
-
-    final fourHoursAgo = DateTime.now().subtract(const Duration(hours: 4));
-    if (checkpoint == null || _lastSyncTime!.isBefore(fourHoursAgo)) {
-      await _triggerSync();
+    
+    // Check if we need to sync manually
+    if (_lastSyncTime == null) {
+       await _triggerSync();
     }
   }
 
@@ -139,151 +119,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return accessToken;
   }
 
-  Future<void> _refreshLibraryFromServer() async {
-    final config = ref.read(appConfigProvider);
-    final token = await _requireApiAccessToken();
-    final api = ref.read(tvAppApiServiceProvider);
-    final items = await api.fetchLibrary(config: config, accessToken: token);
-    await _replaceLocalLibrary(items);
-    ref.invalidate(mediaListProvider);
-  }
-
-  Future<void> _replaceLocalLibrary(List<ApiLibraryItem> items) async {
-    final isar = await ref.read(isarProvider.future);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final existingItems = List<MediaItem>.from(
-      ref.read(mediaListProvider).valueOrNull ?? const <MediaItem>[],
-    );
-    final existingByGlobalId = <String, MediaItem>{
-      for (final item in existingItems) item.globalId: item,
-    };
-    final existingByImdb = <String, MediaItem>{
-      for (final item in existingItems)
-        if (item.imdbId.trim().isNotEmpty) item.imdbId.trim(): item,
-    };
-    final existingByTmdb = <String, MediaItem>{
-      for (final item in existingItems)
-        if ((item.tmdbId ?? '').trim().isNotEmpty) item.tmdbId!.trim(): item,
-    };
-
-    await isar.runWithRetry(
-      () => isar.writeTxn(() async {
-        // Keep variants/seasons/episodes collected from Telegram parsing so
-        // detail-screen actions (download/play/pause/delete) remain available.
-        await isar.mediaItems.clear();
-
-        final mapped = items.map((row) {
-          final mediaType =
-              row.type.toUpperCase() == 'SERIES' ? '#series' : '#movie';
-          final tags = <String>[
-            if (row.releaseYear != null) '#Y${row.releaseYear}',
-            if ((row.quality ?? '').isNotEmpty) '#quality_${row.quality}',
-            if ((row.videoLanguage ?? '').isNotEmpty)
-              '#lang_${row.videoLanguage}',
-          ];
-          final posterUrl = _resolvePosterUrl(row.posterPath);
-          final preserved = existingByGlobalId[row.mediaFileId] ??
-              (row.imdbId != null ? existingByImdb[row.imdbId!.trim()] : null) ??
-              (row.tmdbId != null ? existingByTmdb[row.tmdbId!.trim()] : null);
-          final mergedGlobalId = preserved?.globalId ?? row.mediaFileId;
-          return MediaItem()
-            ..globalId = mergedGlobalId
-            ..title = row.title
-            ..imdbId = row.imdbId ?? ''
-            ..tmdbId = row.tmdbId
-            ..mediaType = mediaType
-            ..genres = const <String>[]
-            ..tags = tags
-            ..posterUrl = posterUrl
-            ..backdropUrl = null
-            ..mediaSourceId = _sourceIdToInt(row.sourceId)
-            ..lastMsgId = 0
-            ..lastSyncedAt = now
-            ..variantsCount = preserved?.variantsCount ?? 0
-            ..bestVariantId = preserved?.bestVariantId
-            ..streamSupported = preserved?.streamSupported ?? false
-            ..isPremiumNeeded = preserved?.isPremiumNeeded ?? false
-            ..bitrateEstimate = preserved?.bitrateEstimate
-            ..metaCachedAt = now;
-        }).toList();
-
-        if (mapped.isNotEmpty) {
-          await isar.mediaItems.putAll(mapped);
-        }
-      }),
-      debugName: 'replaceLibraryFromApi',
-    );
-  }
-
-  int _sourceIdToInt(String? sourceId) {
-    if (sourceId == null || sourceId.isEmpty) return 0;
-    return sourceId.hashCode.abs();
-  }
-
-  String? _resolvePosterUrl(String? posterPath) {
-    final value = (posterPath ?? '').trim();
-    if (value.isEmpty) return null;
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      return value;
-    }
-    if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
-    return value;
-  }
-
   Future<void> _triggerSync() async {
     if (_isSyncing) return;
     setState(() => _isSyncing = true);
     AppDebugLog.instance.log('HomeScreen: Sync started');
 
     try {
-      final token = await _requireApiAccessToken();
-      final tdlib = ref.read(tdlibFacadeProvider);
-      final config = ref.read(appConfigProvider);
-      final api = ref.read(tvAppApiServiceProvider);
-
-      final discoveredIds = await api.collectMediaFileIdsFromTelegram(
-        tdlib: tdlib,
-        config: config,
-      );
-      AppDebugLog.instance.log(
-        'HomeScreen: discovered mediaFileIds=${discoveredIds.length}',
-      );
-
-      final items = await api.syncLibrary(
-        config: config,
-        accessToken: token,
-        mediaFileIds: discoveredIds.toList(),
-      );
-      AppDebugLog.instance.log('HomeScreen: sync returned items=${items.length}');
-      await _replaceLocalLibrary(items);
-
-      final isar = await ref.read(isarProvider.future);
-      await isar.runWithRetry(
-        () => isar.writeTxn(() async {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          final globalSync = SyncCheckpoint()
-            ..dialogKey = 'global_sync'
-            ..scope = 'global'
-            ..dialogId = 0
-            ..lastMessageId = 0
-            ..lastSyncAt = now
-            ..status = 'success';
-          await isar.syncCheckpoints.put(globalSync);
-        }),
-        debugName: 'putGlobalSyncCheckpoint',
-      );
-
-      final checkpoint = await isar.runWithRetry(
-        () => isar.syncCheckpoints.getByDialogKey('global_sync'),
-        debugName: 'postSyncCheckpoint',
-      );
-      if (checkpoint != null) {
-        _lastSyncTime =
-            DateTime.fromMillisecondsSinceEpoch(checkpoint.lastSyncAt);
-      }
-
+      await _requireApiAccessToken();
+      
+      // Since it's server driven, "syncing" just means fetching the latest from the server.
       ref.invalidate(mediaListProvider);
-      ref.invalidate(downloadsListProvider);
+      
+      _lastSyncTime = DateTime.now();
       AppDebugLog.instance.log('HomeScreen: Sync completed successfully');
     } catch (e) {
       AppDebugLog.instance.log('HomeScreen: Sync failed: $e');
@@ -345,7 +192,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _focusActiveSidebarNode({
     required LibraryTypeFilter typeFilter,
-    required int? sourceFilter,
+    required String? sourceFilter,
     required List<SourceFilterOption> sources,
   }) {
     if (sourceFilter != null) {
@@ -429,8 +276,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return '${diff.inDays}d ago';
   }
 
-  void _openItem(BuildContext context, MediaItem item) {
-    context.push('/item/${Uri.encodeComponent(item.globalId)}');
+  void _openItem(BuildContext context, AppMediaAggregate item) {
+    context.push('/item/${Uri.encodeComponent(item.media.id)}');
   }
 
   @override
@@ -760,16 +607,26 @@ class _PosterGridTile extends StatelessWidget {
     required this.onOpen,
   });
 
-  final MediaItem item;
+  final AppMediaAggregate item;
   final FocusNode focusNode;
   final bool autofocus;
   final ValueChanged<bool> onFocusChanged;
   final KeyEventResult Function(FocusNode node, KeyEvent event) onKeyEvent;
   final VoidCallback onOpen;
 
+  String? _resolvePosterUrl(String? posterPath) {
+    final value = (posterPath ?? '').trim();
+    if (value.isEmpty) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+    if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
+    return value;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final poster = item.posterUrl?.trim() ?? '';
+    final poster = _resolvePosterUrl(item.media.posterPath) ?? '';
     return TVButton(
       focusNode: focusNode,
       autofocus: autofocus,
@@ -801,7 +658,7 @@ class _PosterGridTile extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(10),
               child: Text(
-                item.title,
+                item.media.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w600),

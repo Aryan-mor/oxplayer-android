@@ -1,7 +1,6 @@
-import 'package:isar/isar.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
-
-import 'entities.dart';
 
 String? _primaryUsername(td.User user) {
   final u = user.usernames;
@@ -11,17 +10,23 @@ String? _primaryUsername(td.User user) {
   return null;
 }
 
-/// Upserts the singleton TDLib session row (id / [singletonKey] = 1).
-Future<void> putTelegramSessionFromUser(Isar isar, td.User user) async {
+/// Upserts the singleton TDLib session row via SharedPreferences.
+Future<void> putTelegramSessionFromUser(td.User user) async {
+  final prefs = await SharedPreferences.getInstance();
   final now = DateTime.now().millisecondsSinceEpoch;
-  final row = TelegramSession()
-    ..id = 1
-    ..singletonKey = 1
-    ..userId = user.id
-    ..firstName = user.firstName
-    ..username = _primaryUsername(user)
-    ..updatedAt = now;
-  await isar.writeTxn(() async {
-    await isar.telegramSessions.put(row);
-  });
+  
+  final sessionData = {
+    'userId': user.id,
+    'firstName': user.firstName,
+    'username': _primaryUsername(user),
+    'updatedAt': now,
+  };
+  
+  await prefs.setString('telegram_session', jsonEncode(sessionData));
+}
+
+/// Clears the singleton TDLib session row.
+Future<void> clearTelegramSession() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove('telegram_session');
 }

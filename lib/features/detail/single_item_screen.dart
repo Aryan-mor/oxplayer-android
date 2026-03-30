@@ -3,19 +3,14 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:isar/isar.dart';
-import 'package:tdlib/td_api.dart' as td;
 
-import '../../core/config/app_config.dart';
 import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
-import '../../data/local/entities.dart';
-import '../../data/local/isar_provider.dart';
+import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../player/external_player.dart';
 import '../../providers.dart';
-import '../../telegram/tdlib_facade.dart';
 
 // ─── Route args ──────────────────────────────────────────────────────────────
 
@@ -36,10 +31,10 @@ class SingleItemScreen extends ConsumerStatefulWidget {
 }
 
 class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
-  MediaItem? _item;
-  List<MediaVariant> _variants = [];
-  List<MediaSeason> _seasons = [];
-  List<MediaEpisode> _episodes = [];
+  AppMediaAggregate? _aggregate;
+  List<AppMediaFile> _files = [];
+  List<int> _seasons = [];
+  List<AppMediaFile> _currentEpisodes = [];
   int _selectedSeason = 1;
   bool _loading = true;
 
@@ -51,298 +46,57 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
 
   Future<void> _load() async {
     AppDebugLog.instance.log('SingleItemScreen: load start globalId=${widget.globalId}');
-    final isar = await ref.read(isarProvider.future);
     
-    await isar.runWithRetry(() async {
-      final item = await isar.mediaItems.getByGlobalId(widget.globalId);
-      final variants = await isar.mediaVariants
-          .filter()
-          .globalIdEqualTo(widget.globalId)
-          .findAll();
-      final seasons = await isar.mediaSeasons
-          .filter()
-          .globalIdEqualTo(widget.globalId)
-          .findAll();
-      seasons.sort((a, b) => a.seasonNumber.compareTo(b.seasonNumber));
+    final allMedia = await ref.read(mediaListProvider.future);
+    
+    // Find the requested media
+    try {
+      final item = allMedia.firstWhere((m) => m.media.id == widget.globalId);
+      final isSeries = item.media.type == 'SERIES' || item.media.type == '#series';
+      
+      List<int> seasons = [];
+      List<AppMediaFile> episodes = [];
+      int selected = 1;
 
-      List<MediaEpisode> episodes = [];
-      if (seasons.isNotEmpty) {
-        final seasonKey = seasons.first.seasonKey;
-        episodes = await isar.mediaEpisodes
-            .filter()
-            .seasonKeyEqualTo(seasonKey)
-            .findAll();
-        episodes.sort((a, b) => a.episodeNumber.compareTo(b.episodeNumber));
-      }
-
-      var effectiveVariants = variants;
-      if (item != null && effectiveVariants.isEmpty) {
-        effectiveVariants = await _recoverVariantsFromTelegramIfMissing(
-          tdlib: ref.read(tdlibFacadeProvider),
-          config: ref.read(appConfigProvider),
-          globalId: widget.globalId,
-        );
-      }
-
-      // Ensure DownloadManager is ready, then reconcile persisted file state.
-      final dm = await ref.read(downloadManagerProvider.future);
-      final existingPath = await dm.checkExistingFile(widget.globalId);
-      final state = dm.stateFor(widget.globalId);
-
-      final downloadRows = await isar.mediaDownloads
-          .filter()
-          .globalIdEqualTo(widget.globalId)
-          .findAll();
-      final completedPaths = <String>[];
-      for (final row in downloadRows.where((r) => r.status == 'completed')) {
-        final p = row.localFilePath;
-        if (p == null || p.isEmpty) continue;
-        final exists = await File(p).exists();
-        completedPaths.add('$p (exists=$exists)');
-      }
-
-      final firstVariant =
-          effectiveVariants.isNotEmpty ? effectiveVariants.first : null;
-      AppDebugLog.instance.log(
-        'SingleItemScreen: load result '
-        'itemFound=${item != null} '
-        'variants=${effectiveVariants.length} '
-        'seasons=${seasons.length} '
-        'episodes=${episodes.length} '
-        'dmState=${state.runtimeType} '
-        'existingPath=${existingPath ?? "null"} '
-        'downloadRows=${downloadRows.length}',
-      );
-      if (firstVariant != null) {
-        AppDebugLog.instance.log(
-          'SingleItemScreen: firstVariant '
-          'variantId=${firstVariant.variantId} '
-          'chatId=${firstVariant.chatId} '
-          'msgId=${firstVariant.msgId} '
-          'fileSize=${firstVariant.fileSize} '
-          'fileName=${firstVariant.fileName}',
-        );
-      } else {
-        AppDebugLog.instance.log(
-          'SingleItemScreen: no variants for globalId=${widget.globalId}',
-        );
-      }
-      if (completedPaths.isNotEmpty) {
-        AppDebugLog.instance.log(
-          'SingleItemScreen: completed paths ${completedPaths.join(" | ")}',
-        );
+      if (isSeries) {
+        final rawSeasons = item.files.map((f) => f.season).whereType<int>().toSet().toList();
+        rawSeasons.sort();
+        seasons = rawSeasons;
+        if (seasons.isNotEmpty) {
+          selected = seasons.first;
+          episodes = item.files.where((f) => f.season == selected).toList();
+          episodes.sort((a, b) => (a.episode ?? 0).compareTo(b.episode ?? 0));
+        }
       }
 
       if (mounted) {
         setState(() {
-          _item = item;
-          _variants = effectiveVariants;
+          _aggregate = item;
+          _files = item.files;
           _seasons = seasons;
-          _episodes = episodes;
-          _selectedSeason = seasons.isNotEmpty ? seasons.first.seasonNumber : 1;
+          _selectedSeason = selected;
+          _currentEpisodes = episodes;
           _loading = false;
         });
       }
-    }, debugName: 'SingleItemScreen:load');
-  }
-
-  Future<List<MediaVariant>> _recoverVariantsFromTelegramIfMissing({
-    required TdlibFacade tdlib,
-    required AppConfig config,
-    required String globalId,
-  }) async {
-    AppDebugLog.instance.log(
-      'SingleItemScreen: recover variants start globalId=$globalId',
-    );
-
-    await tdlib.ensureAuthorized();
-    final resolved = await tdlib.send(td.SearchPublicChat(username: config.botUsername));
-    if (resolved is! td.Chat || resolved.type is! td.ChatTypePrivate) {
-      AppDebugLog.instance.log(
-        'SingleItemScreen: recover variants failed to resolve bot chat',
-      );
-      return const <MediaVariant>[];
-    }
-
-    final botUserId = (resolved.type as td.ChatTypePrivate).userId;
-    final chatIds = <int>{};
-    final privateChat = await tdlib.send(
-      td.CreatePrivateChat(userId: botUserId, force: false),
-    );
-    if (privateChat is td.Chat) {
-      chatIds.add(privateChat.id);
-    }
-    final groups = await tdlib.send(
-      td.GetGroupsInCommon(userId: botUserId, offsetChatId: 0, limit: 100),
-    );
-    if (groups is td.Chats) {
-      chatIds.addAll(groups.chatIds);
-    }
-
-    final variants = <MediaVariant>[];
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    for (final chatId in chatIds) {
-      var fromMessageId = 0;
-      var hasMore = true;
-      while (hasMore) {
-        final batch = await tdlib.send(
-          td.SearchChatMessages(
-            chatId: chatId,
-            query: config.indexTag,
-            senderId: null,
-            filter: null,
-            messageThreadId: 0,
-            fromMessageId: fromMessageId,
-            offset: 0,
-            limit: 100,
-          ),
-        );
-
-        List<td.Message> messages = const <td.Message>[];
-        if (batch is td.FoundChatMessages) {
-          messages = batch.messages;
-          fromMessageId = batch.nextFromMessageId;
-          hasMore = fromMessageId != 0 && messages.isNotEmpty;
-        } else if (batch is td.Messages) {
-          messages = batch.messages;
-          if (messages.isNotEmpty) {
-            fromMessageId = messages.last.id;
-          }
-          hasMore = messages.isNotEmpty;
-        } else {
-          hasMore = false;
-        }
-
-        for (final msg in messages) {
-          final resolvedMessage = await _resolveMediaMessageForIndex(tdlib, msg, chatId);
-          if (resolvedMessage == null) continue;
-          final mediaMessage = resolvedMessage.$1;
-          final sourceMessageId = resolvedMessage.$2;
-          final text = _extractMessageText(msg);
-          final mediaFileId = _extractMediaFileId(text);
-          if (mediaFileId != globalId) continue;
-
-          final variantId = '$globalId:$chatId:$sourceMessageId';
-          final variant = MediaVariant()
-            ..variantId = variantId
-            ..globalId = globalId
-            ..msgId = sourceMessageId
-            ..chatId = chatId
-            ..sourceScope = 'telegram'
-            ..fileName = _extractMediaFileName(mediaMessage)
-            ..mimeType = _extractMediaMimeType(mediaMessage)
-            ..fileSize = _extractMediaSize(mediaMessage)
-            ..durationSec = _extractMediaDuration(mediaMessage)
-            ..qualityLabel = null
-            ..bitrateEstimate = null
-            ..streamSupported = false
-            ..isPremiumNeeded = false
-            ..fileReferenceJson = null
-            ..createdAt = now;
-          variants.add(variant);
-        }
-      }
-    }
-
-    if (variants.isNotEmpty) {
-      final isar = await ref.read(isarProvider.future);
-      await isar.runWithRetry(
-        () => isar.writeTxn(() async {
-          for (final variant in variants) {
-            await isar.mediaVariants.put(variant);
-          }
-        }),
-        debugName: 'recoverVariantsFromTelegram',
-      );
-    }
-
-    AppDebugLog.instance.log(
-      'SingleItemScreen: recover variants done globalId=$globalId found=${variants.length}',
-    );
-    return variants;
-  }
-
-  String _extractMessageText(td.Message msg) {
-    final content = msg.content;
-    if (content is td.MessageVideo) return content.caption.text;
-    if (content is td.MessageDocument) return content.caption.text;
-    if (content is td.MessageText) return content.text.text;
-    return '';
-  }
-
-  String? _extractMediaFileId(String text) {
-    final pattern = RegExp(
-      r'MediaFileID:\s*(?:<code>)?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})',
-      caseSensitive: false,
-    );
-    return pattern.firstMatch(text)?.group(1);
-  }
-
-  Future<(td.Message, int)?> _resolveMediaMessageForIndex(
-    TdlibFacade tdlib,
-    td.Message msg,
-    int chatId,
-  ) async {
-    if (msg.content is td.MessageVideo || msg.content is td.MessageDocument) {
-      return (msg, msg.id);
-    }
-    if (msg.content is! td.MessageText) return null;
-    if (msg.replyTo is! td.MessageReplyToMessage) return null;
-    final replyToId = (msg.replyTo as td.MessageReplyToMessage).messageId;
-    final replied = await tdlib.send(td.GetMessage(chatId: chatId, messageId: replyToId));
-    if (replied is! td.Message) return null;
-    if (replied.content is td.MessageVideo || replied.content is td.MessageDocument) {
-      return (replied, replied.id);
-    }
-    return null;
-  }
-
-  String? _extractMediaFileName(td.Message msg) {
-    final content = msg.content;
-    if (content is td.MessageVideo) return content.video.fileName;
-    if (content is td.MessageDocument) return content.document.fileName;
-    return null;
-  }
-
-  String? _extractMediaMimeType(td.Message msg) {
-    final content = msg.content;
-    if (content is td.MessageVideo) return content.video.mimeType;
-    if (content is td.MessageDocument) return content.document.mimeType;
-    return null;
-  }
-
-  int? _extractMediaSize(td.Message msg) {
-    final content = msg.content;
-    if (content is td.MessageVideo) return content.video.video.expectedSize;
-    if (content is td.MessageDocument) return content.document.document.expectedSize;
-    return null;
-  }
-
-  int? _extractMediaDuration(td.Message msg) {
-    final content = msg.content;
-    if (content is td.MessageVideo) return content.video.duration;
-    return null;
-  }
-
-  Future<void> _loadEpisodesForSeason(int seasonNumber) async {
-    final isar = await ref.read(isarProvider.future);
-    final seasonKey = '${widget.globalId}:S$seasonNumber';
-    
-    await isar.runWithRetry(() async {
-      final episodes = await isar.mediaEpisodes
-          .filter()
-          .seasonKeyEqualTo(seasonKey)
-          .findAll();
-      episodes.sort((a, b) => a.episodeNumber.compareTo(b.episodeNumber));
-
+    } catch (e) {
       if (mounted) {
         setState(() {
-          _selectedSeason = seasonNumber;
-          _episodes = episodes;
+          _aggregate = null;
+          _loading = false;
         });
       }
-    }, debugName: 'SingleItemScreen:loadEpisodes');
+    }
+  }
+
+  void _loadEpisodesForSeason(int seasonNumber) {
+    if (_aggregate == null) return;
+    final episodes = _aggregate!.files.where((f) => f.season == seasonNumber).toList();
+    episodes.sort((a, b) => (a.episode ?? 0).compareTo(b.episode ?? 0));
+    setState(() {
+      _selectedSeason = seasonNumber;
+      _currentEpisodes = episodes;
+    });
   }
 
   @override
@@ -353,21 +107,36 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
       );
     }
 
-    final item = _item;
-    if (item == null) {
+    final agg = _aggregate;
+    if (agg == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Not Found')),
-        body: const Center(child: Text('Media item not found in local index.')),
+        body: const Center(child: Text('Media item not found in API.')),
       );
     }
 
-    final isSeries = item.mediaType == '#series';
+    final item = agg.media;
+    final isSeries = item.type == 'SERIES' || item.type == '#series';
+
+    // Simple backdrop resolution wrapper to preserve API layout
+    String? resolvePosterUrl(String? posterPath) {
+      final value = (posterPath ?? '').trim();
+      if (value.isEmpty) return null;
+      if (value.startsWith('http://') || value.startsWith('https://')) return value;
+      if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
+      return value;
+    }
+
+    String? backdropUrl; // Use default dark placeholder or standard empty for now
+    if (item.posterPath != null) {
+      backdropUrl = resolvePosterUrl(item.posterPath); // Placeholder as there's only posterPath
+    }
 
     return Scaffold(
       body: Stack(
         children: [
           // ── Blurred backdrop ─────────────────────────────────────────────
-          if (item.backdropUrl != null && item.backdropUrl!.isNotEmpty)
+          if (backdropUrl != null)
             Positioned.fill(
               child: ColorFiltered(
                 colorFilter: ColorFilter.mode(
@@ -375,7 +144,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
                   BlendMode.darken,
                 ),
                 child: CachedNetworkImage(
-                  imageUrl: item.backdropUrl!,
+                  imageUrl: backdropUrl,
                   fit: BoxFit.cover,
                   errorWidget: (_, __, ___) => const SizedBox(),
                 ),
@@ -387,9 +156,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _PosterPanel(
-                  item: item,
-                  variants: _variants,
-                  globalId: widget.globalId,
+                  aggregate: agg,
                   onDelete: _load,
                 ),
                 Expanded(
@@ -397,7 +164,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
                       ? _SeriesPanel(
                           item: item,
                           seasons: _seasons,
-                          episodes: _episodes,
+                          episodes: _currentEpisodes,
                           selectedSeason: _selectedSeason,
                           onSeasonSelected: _loadEpisodesForSeason,
                         )
@@ -414,22 +181,35 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
 
 class _PosterPanel extends ConsumerWidget {
   const _PosterPanel({
-    required this.item,
-    required this.variants,
-    required this.globalId,
+    required this.aggregate,
     required this.onDelete,
   });
 
-  final MediaItem item;
-  final List<MediaVariant> variants;
-  final String globalId;
+  final AppMediaAggregate aggregate;
   final VoidCallback onDelete;
+
+  String? _resolvePosterUrl(String? posterPath) {
+    final value = (posterPath ?? '').trim();
+    if (value.isEmpty) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) return value;
+    if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
+    return value;
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final dmAsync = ref.watch(downloadManagerProvider);
     final dm = dmAsync.value;
-    final state = dm?.stateFor(globalId) ?? const DownloadIdle();
+    
+    final item = aggregate.media;
+    final isSeries = item.type == 'SERIES' || item.type == '#series';
+    
+    // For movies, we just take the first file global state. For series, we don't handle a single download state here.
+    final firstFile = aggregate.files.isNotEmpty && !isSeries ? aggregate.files.first : null;
+    final globalFileId = firstFile?.id ?? item.id;
+    final state = dm?.stateFor(globalFileId) ?? const DownloadIdle();
+
+    final poster = _resolvePosterUrl(item.posterPath) ?? '';
 
     return Container(
       width: 300,
@@ -454,9 +234,9 @@ class _PosterPanel extends ConsumerWidget {
             borderRadius: BorderRadius.circular(10),
             child: AspectRatio(
               aspectRatio: 2 / 3,
-              child: (item.posterUrl != null && item.posterUrl!.isNotEmpty)
+              child: poster.isNotEmpty
                   ? CachedNetworkImage(
-                      imageUrl: item.posterUrl!,
+                      imageUrl: poster,
                       fit: BoxFit.cover,
                       placeholder: (_, __) =>
                           const Center(child: CircularProgressIndicator()),
@@ -482,45 +262,37 @@ class _PosterPanel extends ConsumerWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 6),
-          if (item.genres.isNotEmpty)
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: item.genres
-                  .take(3)
-                  .map((g) => _GenreChip(label: g))
-                  .toList(),
-            ),
           const SizedBox(height: 16),
-          if (dm == null)
-            const CircularProgressIndicator(strokeWidth: 2)
-          else
-            _DownloadPlayButton(
-              globalId: globalId,
-              state: state,
-              item: item,
-              variants: variants,
-              dm: dm,
-            ),
-          const SizedBox(height: 10),
-          if (dm != null && state is DownloadCompleted)
-            TVButton(
-              onPressed: () async {
-                await dm.deleteDownload(globalId);
-                onDelete();
-              },
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-                  SizedBox(width: 8),
-                  Text('Delete', style: TextStyle(color: Colors.redAccent)),
-                ],
+          if (!isSeries) ...[
+            if (dm == null)
+              const CircularProgressIndicator(strokeWidth: 2)
+            else
+              _DownloadPlayButton(
+                globalId: globalFileId,
+                state: state,
+                item: item,
+                file: firstFile,
+                dm: dm,
               ),
-            ),
+            const SizedBox(height: 10),
+            if (dm != null && state is DownloadCompleted)
+              TVButton(
+                onPressed: () async {
+                  await dm.deleteDownload(globalFileId);
+                  onDelete();
+                },
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                    SizedBox(width: 8),
+                    Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                  ],
+                ),
+              ),
+          ],
         ],
       ),
     );
@@ -532,14 +304,14 @@ class _DownloadPlayButton extends StatelessWidget {
     required this.globalId,
     required this.state,
     required this.item,
-    required this.variants,
+    required this.file,
     required this.dm,
   });
 
   final String globalId;
   final DownloadState state;
-  final MediaItem item;
-  final List<MediaVariant> variants;
+  final AppMedia item;
+  final AppMediaFile? file;
   final DownloadManager dm;
 
   @override
@@ -718,8 +490,7 @@ class _DownloadPlayButton extends StatelessWidget {
   }
 
   void _startDownload(BuildContext context) {
-    final best = _bestVariant();
-    if (best == null) {
+    if (file == null) {
       AppDebugLog.instance.log(
         'SingleItemScreen: startDownload blocked, no variant for globalId=$globalId',
       );
@@ -728,36 +499,24 @@ class _DownloadPlayButton extends StatelessWidget {
       );
       return;
     }
-    final isSeries = item.mediaType == '#series';
-    final year = isSeries ? '' : (_extractYearFromTags(item.tags) ?? '');
-    final seriesStem = _seriesStemFromSources(
-      tags: item.tags,
-      fallbackTitle: item.title,
-      variantFileName: best.fileName,
-    );
-    final downloadTitle = isSeries ? seriesStem : item.title;
-
+    
     dm.startDownload(
       globalId: globalId,
-      variantId: best.variantId,
-      msgId: best.msgId,
-      chatId: best.chatId,
-      title: downloadTitle,
-      year: year,
-      mimeType: best.mimeType,
-      fileSize: best.fileSize,
+      variantId: file!.id,
+      telegramFileId: file!.telegramFileId,
+      title: item.title,
+      year: item.releaseYear?.toString() ?? '',
+      fileSize: file!.size,
     );
     AppDebugLog.instance.log(
       'SingleItemScreen: startDownload requested '
-      'globalId=$globalId variantId=${best.variantId} '
-      'chatId=${best.chatId} msgId=${best.msgId}',
+      'globalId=$globalId variantId=${file!.id} '
+      'telegramFileId=${file!.telegramFileId}',
     );
   }
 
-  MediaVariant? _bestVariant() => variants.isNotEmpty ? variants.first : null;
-
   String? _bestVariantSizeLabel() {
-    final bytes = _bestVariant()?.fileSize;
+    final bytes = file?.size;
     if (bytes == null || bytes <= 0) return null;
     return _formatBytes(bytes);
   }
@@ -768,7 +527,7 @@ class _DownloadPlayButton extends StatelessWidget {
       path: path,
       title: _formatMovieIntentTitle(
         item.title,
-        _extractYearFromTags(item.tags),
+        item.releaseYear?.toString(),
       ),
     );
     if (!launched && context.mounted) {
@@ -798,51 +557,12 @@ class _DownloadPlayButton extends StatelessWidget {
     if (year.isEmpty) return name;
     return '$name ($year)';
   }
-
-  static String? _extractYearFromTags(List<String> tags) {
-    for (final tag in tags) {
-      final match = RegExp(r'^#Y(\d{4})$', caseSensitive: false).firstMatch(tag);
-      if (match != null) return match.group(1);
-    }
-    return null;
-  }
-
-  static String _seriesStemFromSources({
-    required List<String> tags,
-    required String fallbackTitle,
-    required String? variantFileName,
-  }) {
-    int? season;
-    int? episode;
-    for (final tag in tags) {
-      final s = RegExp(r'^#season_(\d+)$', caseSensitive: false).firstMatch(tag);
-      if (s != null) season = int.tryParse(s.group(1) ?? '');
-      final e = RegExp(r'^#episode_(\d+)$', caseSensitive: false).firstMatch(tag);
-      if (e != null) episode = int.tryParse(e.group(1) ?? '');
-    }
-
-    if ((season == null || episode == null) &&
-        variantFileName != null &&
-        variantFileName.isNotEmpty) {
-      final m = RegExp(r'[sS](\d{1,2})[eE](\d{1,2})').firstMatch(variantFileName);
-      if (m != null) {
-        season ??= int.tryParse(m.group(1) ?? '');
-        episode ??= int.tryParse(m.group(2) ?? '');
-      }
-    }
-
-    if (season == null || episode == null) return fallbackTitle;
-    final s2 = season.toString().padLeft(2, '0');
-    final e2 = episode.toString().padLeft(2, '0');
-    return '$fallbackTitle - S$s2'
-        'E$e2';
-  }
 }
 
 class _MovieMetaPanel extends StatelessWidget {
   const _MovieMetaPanel({required this.item});
 
-  final MediaItem item;
+  final AppMedia item;
 
   @override
   Widget build(BuildContext context) {
@@ -860,10 +580,9 @@ class _MovieMetaPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          if (item.imdbId.isNotEmpty) _MetaRow('IMDb', item.imdbId),
-          if (item.tmdbId != null) _MetaRow('TMDB', item.tmdbId!),
-          if (item.tags.isNotEmpty)
-            _MetaRow('Tags', item.tags.take(8).join('  ')),
+          if (item.imdbId != null && item.imdbId!.isNotEmpty) _MetaRow('IMDb', item.imdbId!),
+          if (item.tmdbId != null && item.tmdbId!.isNotEmpty) _MetaRow('TMDB', item.tmdbId!),
+          if (item.releaseYear != null) _MetaRow('Year', item.releaseYear.toString()),
         ],
       ),
     );
@@ -879,9 +598,9 @@ class _SeriesPanel extends StatelessWidget {
     required this.onSeasonSelected,
   });
 
-  final MediaItem item;
-  final List<MediaSeason> seasons;
-  final List<MediaEpisode> episodes;
+  final AppMedia item;
+  final List<int> seasons;
+  final List<AppMediaFile> episodes;
   final int selectedSeason;
   final void Function(int) onSeasonSelected;
 
@@ -914,12 +633,12 @@ class _SeriesPanel extends StatelessWidget {
               separatorBuilder: (_, __) => const SizedBox(width: 10),
               itemBuilder: (context, i) {
                 final s = seasons[i];
-                final isSelected = s.seasonNumber == selectedSeason;
+                final isSelected = s == selectedSeason;
                 return TVButton(
                   autofocus: i == 0,
-                  onPressed: () => onSeasonSelected(s.seasonNumber),
+                  onPressed: () => onSeasonSelected(s),
                   child: Text(
-                    s.title ?? 'Season ${s.seasonNumber}',
+                    'Season $s',
                     style: TextStyle(
                       color: isSelected
                           ? AppColors.highlight
@@ -939,7 +658,7 @@ class _SeriesPanel extends StatelessWidget {
           child: episodes.isEmpty
               ? const Center(
                   child: Text(
-                    'No episodes indexed yet.\nTrigger a sync to populate episodes.',
+                    'No episodes indexed yet.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textMuted),
                   ),
@@ -973,14 +692,12 @@ class _EpisodeCard extends ConsumerWidget {
     required this.seriesTitle,
   });
 
-  final MediaEpisode episode;
+  final AppMediaFile episode;
   final String seriesTitle;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final globalId = episode.globalId;
-    final episodeGlobalId =
-        '$globalId:S${episode.seasonNumber}:E${episode.episodeNumber}';
+    final episodeGlobalId = episode.id;
     final dm = ref.watch(downloadManagerProvider).value;
     final state = dm?.stateFor(episodeGlobalId) ?? const DownloadIdle();
 
@@ -998,7 +715,7 @@ class _EpisodeCard extends ConsumerWidget {
             ),
             alignment: Alignment.center,
             child: Text(
-              '${episode.episodeNumber}',
+              '${episode.episode ?? "?"}',
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
@@ -1013,7 +730,7 @@ class _EpisodeCard extends ConsumerWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  episode.title ?? 'Episode ${episode.episodeNumber}',
+                  'Episode ${episode.episode ?? "?"}${episode.quality != null ? " - ${episode.quality}" : ""}',
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -1022,14 +739,6 @@ class _EpisodeCard extends ConsumerWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (episode.durationSec != null)
-                  Text(
-                    _formatDuration(episode.durationSec!),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.textMuted,
-                    ),
-                  ),
               ],
             ),
           ),
@@ -1047,11 +756,6 @@ class _EpisodeCard extends ConsumerWidget {
     );
   }
 
-  static String _formatDuration(int secs) {
-    final m = secs ~/ 60;
-    final s = secs % 60;
-    return '${m}m ${s.toString().padLeft(2, '0')}s';
-  }
 }
 
 class _EpisodeMiniAction extends StatelessWidget {
@@ -1065,7 +769,7 @@ class _EpisodeMiniAction extends StatelessWidget {
 
   final String episodeGlobalId;
   final DownloadState state;
-  final MediaEpisode episode;
+  final AppMediaFile episode;
   final String seriesTitle;
   final DownloadManager dm;
 
@@ -1125,13 +829,29 @@ class _EpisodeMiniAction extends StatelessWidget {
             ),
           ],
         ),
-      DownloadCompleted(:final localFilePath) => TVButton(
-          autofocus: false,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          onPressed: () => _playEpisode(context, localFilePath),
-          child: const Icon(Icons.play_arrow,
-              size: 18, color: Colors.white),
+      DownloadCompleted(:final localFilePath) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+             TVButton(
+              autofocus: false,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              onPressed: () => _playEpisode(context, localFilePath),
+              child: const Icon(Icons.play_arrow,
+                  size: 18, color: Colors.white),
+            ),
+            const SizedBox(width: 4),
+             TVButton(
+              autofocus: false,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              onPressed: () {
+                dm.deleteDownload(episodeGlobalId);
+              },
+              child: const Icon(Icons.delete,
+                  size: 18, color: Colors.redAccent),
+            ),
+          ]
         ),
       DownloadError() => TVButton(
           padding:
@@ -1144,23 +864,13 @@ class _EpisodeMiniAction extends StatelessWidget {
   }
 
   void _downloadEpisode(BuildContext context) {
-    final msgId = episode.msgId;
-    final chatId = episode.chatId;
-    final variantId = episode.variantId;
-    if (msgId == null || chatId == null || variantId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Episode not yet indexed.')),
-      );
-      return;
-    }
     dm.startDownload(
       globalId: episodeGlobalId,
-      variantId: variantId,
-      msgId: msgId,
-      chatId: chatId,
+      variantId: episode.id,
+      telegramFileId: episode.telegramFileId,
       title: _formatSeriesIntentTitle(),
       year: '',
-      fileSize: episode.fileSize,
+      fileSize: episode.size,
     );
   }
 
@@ -1179,35 +889,11 @@ class _EpisodeMiniAction extends StatelessWidget {
   }
 
   String _formatSeriesIntentTitle() {
-    final episodeTitle = episode.title ?? 'Episode ${episode.episodeNumber}';
-    final season = episode.seasonNumber.toString().padLeft(2, '0');
-    final ep = episode.episodeNumber.toString().padLeft(2, '0');
+    final episodeTitle = 'Episode ${episode.episode}';
+    final season = episode.season?.toString().padLeft(2, '0') ?? '??';
+    final ep = episode.episode?.toString().padLeft(2, '0') ?? '??';
     return '$seriesTitle - S$season'
         'E$ep - $episodeTitle';
-  }
-}
-
-class _GenreChip extends StatelessWidget {
-  const _GenreChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: AppColors.border,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 11,
-          color: AppColors.textMuted,
-        ),
-      ),
-    );
   }
 }
 

@@ -10,7 +10,6 @@ import '../../core/auth/auth_notifier.dart';
 import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
-import '../../data/local/isar_provider.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
 
@@ -150,14 +149,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
 
     if (!kIsWeb) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        // 1. Wait for Isar to be initialized (TeleCimaApp merges it into AuthNotifier)
-        final isarAsync = ref.read(isarProvider);
-        if (isarAsync is AsyncLoading) {
-          AppDebugLog.instance.log('Welcome: waiting for Isar to initialize…');
-          await ref.read(isarProvider.future);
-        }
-
-        // 2. Wait for AuthNotifier to hydrate from SharedPreferences
+        // 1. Wait for AuthNotifier to hydrate from SharedPreferences
         AuthNotifier auth = ref.read(authNotifierProvider);
         if (!auth.ready) {
           AppDebugLog.instance
@@ -175,7 +167,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
           auth = ref.read(authNotifierProvider);
         }
 
-        // 3. One more post-frame hack to allow TeleCimaApp listener to finish mergeIsarSession
+        // 2. One more post-frame hack to allow TeleCimaApp listener to finish session processing
         await Future<void>.delayed(const Duration(milliseconds: 100));
         auth = ref.read(authNotifierProvider);
 

@@ -1,17 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
 
 import '../core/debug/app_debug_log.dart';
-import '../data/local/entities.dart';
 import '../telegram/tdlib_facade.dart';
 
 const _kDownloadPriority = 1;
 const _kDownloadLimit = 0; // 0 => unlimited/chunking handled by TDLib
+const _kPrefsKey = 'telecima_downloads';
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,70 @@ class DownloadError extends DownloadState {
   final String message;
 }
 
+// ─── Record ──────────────────────────────────────────────────────────────────
+
+class MediaDownloadRecord {
+  MediaDownloadRecord({
+    required this.id,
+    required this.globalId,
+    required this.variantId,
+    required this.fileName,
+    required this.status,
+    required this.bytesDownloaded,
+    this.totalBytes,
+    required this.updatedAt,
+    this.mimeType,
+    this.standardizedName,
+    this.tdlibFileId,
+    this.localFilePath,
+  });
+
+  String id;
+  String globalId;
+  String variantId;
+  String fileName;
+  String status;
+  int bytesDownloaded;
+  int? totalBytes;
+  int updatedAt;
+  String? mimeType;
+  String? standardizedName;
+  int? tdlibFileId;
+  String? localFilePath;
+
+  factory MediaDownloadRecord.fromJson(Map<String, dynamic> json) {
+    return MediaDownloadRecord(
+      id: json['id'] as String,
+      globalId: json['globalId'] as String,
+      variantId: json['variantId'] as String,
+      fileName: json['fileName'] as String,
+      status: json['status'] as String,
+      bytesDownloaded: json['bytesDownloaded'] as int? ?? 0,
+      totalBytes: json['totalBytes'] as int?,
+      updatedAt: json['updatedAt'] as int? ?? 0,
+      mimeType: json['mimeType'] as String?,
+      standardizedName: json['standardizedName'] as String?,
+      tdlibFileId: json['tdlibFileId'] as int?,
+      localFilePath: json['localFilePath'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'globalId': globalId,
+        'variantId': variantId,
+        'fileName': fileName,
+        'status': status,
+        'bytesDownloaded': bytesDownloaded,
+        'totalBytes': totalBytes,
+        'updatedAt': updatedAt,
+        'mimeType': mimeType,
+        'standardizedName': standardizedName,
+        'tdlibFileId': tdlibFileId,
+        'localFilePath': localFilePath,
+      };
+}
+
 // ─── Manager ─────────────────────────────────────────────────────────────────
 
 /// Manages TDLib-based downloads for a single [globalId] at a time.
@@ -74,34 +139,65 @@ class DownloadError extends DownloadState {
 class DownloadManager extends ChangeNotifier {
   DownloadManager({
     required TdlibFacade tdlib,
-    required Isar isar,
-  })  : _tdlib = tdlib,
-        _isar = isar {
+  }) : _tdlib = tdlib {
     _updateSub = tdlib.updates().listen(_onTdlibUpdate);
   }
 
   final TdlibFacade _tdlib;
-  final Isar _isar;
   StreamSubscription<Map<String, dynamic>>? _updateSub;
 
-  /// Per-globalId download state. Widgets read this to render button state.
   final Map<String, DownloadState> _states = {};
-
-  /// Maps active TDLib file IDs → globalId so [_onTdlibUpdate] can route events.
   final Map<int, String> _fileIdToGlobalId = {};
 
-  DownloadState stateFor(String globalId) =>
-      _states[globalId] ?? const DownloadIdle();
+  List<MediaDownloadRecord> _records = [];
+
+  DownloadState stateFor(String globalId) => _states[globalId] ?? const DownloadIdle();
+
+  // ─── Shared Preferences Storage ────────────────────────────────────────────
+
+  Future<void> _loadRecords() async {
+    final prefs = await SharedPreferences.getInstance();
+    final str = prefs.getString(_kPrefsKey);
+    if (str != null && str.isNotEmpty) {
+      try {
+        final list = jsonDecode(str) as List<dynamic>;
+        _records = list.map((e) => MediaDownloadRecord.fromJson(e as Map<String, dynamic>)).toList();
+      } catch (e) {
+        _records = [];
+      }
+    } else {
+      _records = [];
+    }
+  }
+
+  Future<void> _saveRecords() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = jsonEncode(_records.map((r) => r.toJson()).toList());
+    await prefs.setString(_kPrefsKey, jsonStr);
+  }
+
+  MediaDownloadRecord? _getRecordForGlobalId(String globalId) {
+    try {
+      return _records.firstWhere((r) => r.globalId == globalId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<MediaDownloadRecord> getAllRecords() {
+    final active = _records.toList();
+    active.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return active;
+  }
 
   // ─── Public API ────────────────────────────────────────────────────────────
 
-  /// Restores persisted download states (completed/paused) after app restart.
   Future<void> restorePersistedStates() async {
-    final rows = await _isar.mediaDownloads.where().findAll();
-    if (rows.isEmpty) return;
+    await _loadRecords();
+    if (_records.isEmpty) return;
 
     var changed = false;
-    for (final row in rows) {
+    for (final row in _records) {
       if (row.status == 'completed') {
         final path = row.localFilePath;
         if (path != null && await File(path).exists()) {
@@ -115,7 +211,6 @@ class DownloadManager extends ChangeNotifier {
         );
         changed = true;
       } else if (row.status == 'downloading') {
-        // On cold start, in-flight downloads should be shown as resumable.
         _states[row.globalId] = DownloadPaused(
           bytesDownloaded: row.bytesDownloaded,
           totalBytes: row.totalBytes,
@@ -127,59 +222,44 @@ class DownloadManager extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
-  /// Checks disk + db for an existing completed download.
-  /// Returns the local path if the file actually exists on disk, `null` otherwise.
-  /// Call this to decide whether to show Play or Download on page load.
   Future<String?> checkExistingFile(String globalId) async {
-    final completedRows = await _isar.mediaDownloads
-        .filter()
-        .globalIdEqualTo(globalId)
-        .statusEqualTo('completed')
-        .findAll();
-
-    for (final row in completedRows) {
-      final path = row.localFilePath;
-      if (path != null && await File(path).exists()) {
-        _setState(globalId, DownloadCompleted(localFilePath: path));
-        return path;
+    await _loadRecords();
+    final row = _getRecordForGlobalId(globalId);
+    if (row != null) {
+      if (row.status == 'completed') {
+        final path = row.localFilePath;
+        if (path != null && await File(path).exists()) {
+          _setState(globalId, DownloadCompleted(localFilePath: path));
+          return path;
+        }
+      } else if (row.status == 'paused' || row.status == 'downloading') {
+        _setState(
+          globalId,
+          DownloadPaused(
+            bytesDownloaded: row.bytesDownloaded,
+            totalBytes: row.totalBytes,
+          ),
+        );
+        return null;
       }
     }
-
-    final pausedRow = await _isar.mediaDownloads
-        .filter()
-        .globalIdEqualTo(globalId)
-        .statusEqualTo('paused')
-        .findFirst();
-    if (pausedRow != null) {
-      _setState(
-        globalId,
-        DownloadPaused(
-          bytesDownloaded: pausedRow.bytesDownloaded,
-          totalBytes: pausedRow.totalBytes,
-        ),
-      );
-      return null;
-    }
-    // File missing — ensure state is Idle
+    
     _setState(globalId, const DownloadIdle());
     return null;
   }
 
-  /// Starts a TDLib download.
-  ///
-  /// [variantId] / [msgId] / [chatId] tell us which [MediaVariant] to pull.
-  /// [title] and [year] are used to compute the standardized file name.
   Future<void> startDownload({
     required String globalId,
     required String variantId,
-    required int msgId,
-    required int chatId,
+    String? telegramFileId,
+    int? msgId,
+    int? chatId,
     required String title,
     required String year,
     String? mimeType,
     int? fileSize,
   }) async {
-    if (_states[globalId] is Downloading) return; // already running
+    if (_states[globalId] is Downloading) return;
 
     AppDebugLog.instance.log(
       'DownloadManager: startDownload globalId=$globalId variantId=$variantId',
@@ -188,36 +268,44 @@ class DownloadManager extends ChangeNotifier {
     _setState(globalId, const Downloading(bytesDownloaded: 0, totalBytes: null));
 
     try {
-      // 1. Get the TDLib message to obtain the file object
-      final msgObj =
-          await _tdlib.send(td.GetMessage(chatId: chatId, messageId: msgId));
-      if (msgObj is! td.Message) {
-        throw Exception('Could not retrieve message $msgId from chat $chatId');
-      }
-
       td.File? tdFile;
-      if (msgObj.content is td.MessageVideo) {
-        tdFile = (msgObj.content as td.MessageVideo).video.video;
-      } else if (msgObj.content is td.MessageDocument) {
-        tdFile = (msgObj.content as td.MessageDocument).document.document;
-      }
 
-      // Backward compatibility: old indexed rows may point to a metadata text
-      // message that replies to the actual media message.
-      if (tdFile == null && msgObj.replyTo is td.MessageReplyToMessage) {
-        final replyToId = (msgObj.replyTo as td.MessageReplyToMessage).messageId;
-        final repliedObj =
-            await _tdlib.send(td.GetMessage(chatId: chatId, messageId: replyToId));
-        if (repliedObj is td.Message) {
-          if (repliedObj.content is td.MessageVideo) {
-            tdFile = (repliedObj.content as td.MessageVideo).video.video;
-          } else if (repliedObj.content is td.MessageDocument) {
-            tdFile = (repliedObj.content as td.MessageDocument).document.document;
+      if (telegramFileId != null && telegramFileId.isNotEmpty) {
+        final remoteFile = await _tdlib.send(td.GetRemoteFile(remoteFileId: telegramFileId, fileType: null));
+        if (remoteFile is td.File) {
+          tdFile = remoteFile;
+        } else {
+          throw Exception('Could not resolve remote file ID: $telegramFileId');
+        }
+      } else if (msgId != null && msgId > 0 && chatId != null && chatId != 0) {
+        final msgObj =
+            await _tdlib.send(td.GetMessage(chatId: chatId, messageId: msgId));
+        if (msgObj is! td.Message) {
+          throw Exception('Could not retrieve message $msgId from chat $chatId');
+        }
+
+        if (msgObj.content is td.MessageVideo) {
+          tdFile = (msgObj.content as td.MessageVideo).video.video;
+        } else if (msgObj.content is td.MessageDocument) {
+          tdFile = (msgObj.content as td.MessageDocument).document.document;
+        }
+
+        if (tdFile == null && msgObj.replyTo is td.MessageReplyToMessage) {
+          final replyToId = (msgObj.replyTo as td.MessageReplyToMessage).messageId;
+          final repliedObj =
+              await _tdlib.send(td.GetMessage(chatId: chatId, messageId: replyToId));
+          if (repliedObj is td.Message) {
+            if (repliedObj.content is td.MessageVideo) {
+              tdFile = (repliedObj.content as td.MessageVideo).video.video;
+            } else if (repliedObj.content is td.MessageDocument) {
+              tdFile = (repliedObj.content as td.MessageDocument).document.document;
+            }
           }
         }
       }
+
       if (tdFile == null) {
-        throw Exception('Message has no downloadable file');
+        throw Exception('File metadata missing; cannot identify file to download.');
       }
 
       final ext = _extensionFromMime(mimeType) ??
@@ -225,32 +313,37 @@ class DownloadManager extends ChangeNotifier {
           'mkv';
       final standardizedName = _buildStandardizedName(title, year, ext);
 
-      // 2. Upsert the MediaDownload row
       final downloadId = '$globalId:$variantId';
       final now = DateTime.now().millisecondsSinceEpoch;
-      final row = MediaDownload()
-        ..downloadId = downloadId
-        ..globalId = globalId
-        ..variantId = variantId
-        ..fileName = standardizedName
-        ..status = 'downloading'
-        ..bytesDownloaded = tdFile.local.downloadedSize
-        ..totalBytes = fileSize ?? (tdFile.expectedSize > 0 ? tdFile.expectedSize : null)
-        ..updatedAt = now
-        ..mimeType = mimeType
-        ..standardizedName = standardizedName
-        ..tdlibFileId = tdFile.id;
-
-      await _isar.writeTxn(() => _isar.mediaDownloads.put(row));
-
+      
+      var row = _getRecordForGlobalId(globalId);
+      if (row != null) {
+        row.status = 'downloading';
+        row.bytesDownloaded = tdFile.local.downloadedSize;
+        row.totalBytes = fileSize ?? (tdFile.expectedSize > 0 ? tdFile.expectedSize : null);
+        row.updatedAt = now;
+        row.tdlibFileId = tdFile.id;
+        row.standardizedName = standardizedName;
+      } else {
+        row = MediaDownloadRecord(
+          id: downloadId,
+          globalId: globalId,
+          variantId: variantId,
+          fileName: standardizedName,
+          status: 'downloading',
+          bytesDownloaded: tdFile.local.downloadedSize,
+          totalBytes: fileSize ?? (tdFile.expectedSize > 0 ? tdFile.expectedSize : null),
+          updatedAt: now,
+          mimeType: mimeType,
+          standardizedName: standardizedName,
+          tdlibFileId: tdFile.id,
+        );
+        _records.add(row);
+      }
+      
+      await _saveRecords();
       _fileIdToGlobalId[tdFile.id] = globalId;
 
-      // 3. Kick off the TDLib download
-      AppDebugLog.instance.log(
-        'DownloadManager: td.DownloadFile tuning before/after: '
-        'priority: default/legacy(3) -> $_kDownloadPriority, '
-        'limit: default -> $_kDownloadLimit',
-      );
       await _tdlib.send(td.DownloadFile(
         fileId: tdFile.id,
         priority: _kDownloadPriority,
@@ -265,30 +358,16 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// Pause an active TDLib download while preserving partial progress.
   Future<void> pauseDownload(String globalId) async {
-    final rows = await _isar.mediaDownloads
-        .filter()
-        .globalIdEqualTo(globalId)
-        .findAll();
-    if (rows.isEmpty) return;
-
-    final row = rows.firstWhere(
-      (r) => r.status == 'downloading' && r.tdlibFileId != null,
-      orElse: () => rows.first,
-    );
-    final fileId = row.tdlibFileId;
-    if (fileId == null) return;
+    final row = _getRecordForGlobalId(globalId);
+    if (row == null || row.tdlibFileId == null || row.status != 'downloading') return;
 
     try {
-      await _tdlib.send(td.CancelDownloadFile(fileId: fileId, onlyIfPending: false));
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await _isar.writeTxn(() async {
-        row
-          ..status = 'paused'
-          ..updatedAt = now;
-        await _isar.mediaDownloads.put(row);
-      });
+      await _tdlib.send(td.CancelDownloadFile(fileId: row.tdlibFileId!, onlyIfPending: false));
+      row.status = 'paused';
+      row.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      await _saveRecords();
+      
       _setState(
         globalId,
         DownloadPaused(
@@ -303,14 +382,9 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// Resume a previously paused download.
   Future<void> resumeDownload(String globalId) async {
-    final row = await _isar.mediaDownloads
-        .filter()
-        .globalIdEqualTo(globalId)
-        .statusEqualTo('paused')
-        .findFirst();
-    if (row == null || row.tdlibFileId == null) {
+    final row = _getRecordForGlobalId(globalId);
+    if (row == null || row.tdlibFileId == null || row.status != 'paused') {
       _setState(globalId, const DownloadIdle());
       return;
     }
@@ -325,13 +399,9 @@ class DownloadManager extends ChangeNotifier {
         synchronous: false,
       ));
 
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await _isar.writeTxn(() async {
-        row
-          ..status = 'downloading'
-          ..updatedAt = now;
-        await _isar.mediaDownloads.put(row);
-      });
+      row.status = 'downloading';
+      row.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      await _saveRecords();
 
       _setState(
         globalId,
@@ -347,19 +417,14 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// Deletes the local file and clears the DB row; reverts UI to Idle.
   Future<void> deleteDownload(String globalId) async {
     AppDebugLog.instance.log('DownloadManager: deleteDownload $globalId');
-    final rows = await _isar.mediaDownloads
-        .filter()
-        .globalIdEqualTo(globalId)
-        .findAll();
-
-    for (final row in rows) {
-      final path = row.localFilePath;
-      if (path != null) {
+    
+    final row = _getRecordForGlobalId(globalId);
+    if (row != null) {
+      if (row.localFilePath != null) {
         try {
-          await File(path).delete();
+          await File(row.localFilePath!).delete();
         } catch (_) {}
       }
       if (row.tdlibFileId != null) {
@@ -371,18 +436,12 @@ class DownloadManager extends ChangeNotifier {
           ));
         } catch (_) {}
       }
+      _records.removeWhere((r) => r.globalId == globalId);
+      await _saveRecords();
     }
-
-    await _isar.writeTxn(() async {
-      for (final row in rows) {
-        await _isar.mediaDownloads.delete(row.id);
-      }
-    });
 
     _setState(globalId, const DownloadIdle());
   }
-
-  // ─── Internal: TDLib update routing ────────────────────────────────────────
 
   void _onTdlibUpdate(Map<String, dynamic> update) {
     final type = update['@type'] as String?;
@@ -433,25 +492,18 @@ class DownloadManager extends ChangeNotifier {
     );
 
     try {
-      // Fetch the current DB row to get the standardized name
-      final rows = await _isar.mediaDownloads
-          .filter()
-          .globalIdEqualTo(globalId)
-          .findAll();
-      final row = rows.firstWhere((r) => r.tdlibFileId == fileId,
-          orElse: () => rows.first);
+      final row = _getRecordForGlobalId(globalId);
+      if (row == null) return;
 
       final standardizedName = row.standardizedName ?? row.fileName;
       final destDir = await _resolveDownloadDirectory();
       final destPath = '${destDir.path}/$standardizedName';
 
-      // Rename / copy to permanent location
       String finalPath;
       try {
         await File(tdlibPath).rename(destPath);
         finalPath = destPath;
       } catch (_) {
-        // Cross-filesystem rename failed — copy + delete
         await File(tdlibPath).copy(destPath);
         await File(tdlibPath).delete();
         finalPath = destPath;
@@ -461,27 +513,11 @@ class DownloadManager extends ChangeNotifier {
         'DownloadManager: renamed to $finalPath',
       );
 
-      // Metadata injection (metadata_god / native tag writing) is intentionally
-      // skipped: rewriting MP4 atoms corrupts sample tables on some containers,
-      // causing audio/video desync in players like VLC.  Title is conveyed via
-      // the standardized file name and intent extras at playback time.
-
-      // Update DB row
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await _isar.writeTxn(() async {
-        final fresh = await _isar.mediaDownloads
-            .filter()
-            .globalIdEqualTo(globalId)
-            .findFirst();
-        if (fresh != null) {
-          fresh
-            ..status = 'completed'
-            ..localFilePath = finalPath
-            ..bytesDownloaded = row.totalBytes ?? fresh.bytesDownloaded
-            ..updatedAt = now;
-          await _isar.mediaDownloads.put(fresh);
-        }
-      });
+      row.status = 'completed';
+      row.localFilePath = finalPath;
+      row.bytesDownloaded = row.totalBytes ?? row.bytesDownloaded;
+      row.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      await _saveRecords();
 
       _fileIdToGlobalId.remove(fileId);
       _setState(globalId, DownloadCompleted(localFilePath: finalPath));
@@ -496,17 +532,13 @@ class DownloadManager extends ChangeNotifier {
   Future<void> _updateDbProgress(
       String globalId, int downloaded, int? total) async {
     try {
-      final row = await _isar.mediaDownloads
-          .filter()
-          .globalIdEqualTo(globalId)
-          .findFirst();
+      final row = _getRecordForGlobalId(globalId);
       if (row == null) return;
-      await _isar.writeTxn(() async {
-        row.bytesDownloaded = downloaded;
-        if (total != null) row.totalBytes = total;
-        row.updatedAt = DateTime.now().millisecondsSinceEpoch;
-        await _isar.mediaDownloads.put(row);
-      });
+      
+      row.bytesDownloaded = downloaded;
+      if (total != null) row.totalBytes = total;
+      row.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      await _saveRecords();
     } catch (_) {}
   }
 
@@ -515,11 +547,8 @@ class DownloadManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Helpers ───────────────────────────────────────────────────────────────
-
   static String _buildStandardizedName(
       String title, String year, String ext) {
-    // "Interstellar" + "2014" + "mkv" → "Interstellar_2014.mkv"
     final safe = title
         .replaceAll(RegExp(r'[^\w\s\-]'), '')
         .trim()

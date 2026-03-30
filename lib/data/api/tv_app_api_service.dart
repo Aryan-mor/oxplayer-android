@@ -6,51 +6,7 @@ import 'package:tdlib/td_api.dart' as td;
 import '../../core/config/app_config.dart';
 import '../../core/debug/app_debug_log.dart';
 import '../../telegram/tdlib_facade.dart';
-
-class ApiLibraryItem {
-  ApiLibraryItem({
-    required this.mediaFileId,
-    required this.title,
-    required this.type,
-    required this.releaseYear,
-    required this.imdbId,
-    required this.tmdbId,
-    required this.quality,
-    required this.videoLanguage,
-    required this.posterPath,
-    required this.summary,
-    required this.sourceId,
-  });
-
-  final String mediaFileId;
-  final String title;
-  final String type;
-  final int? releaseYear;
-  final String? imdbId;
-  final String? tmdbId;
-  final String? quality;
-  final String? videoLanguage;
-  final String? posterPath;
-  final String? summary;
-  final String? sourceId;
-
-  factory ApiLibraryItem.fromJson(Map<String, dynamic> json) {
-    return ApiLibraryItem(
-      mediaFileId: (json['mediaFileId'] ?? '').toString(),
-      title: (json['title'] ?? '').toString(),
-      type: (json['type'] ?? '').toString(),
-      releaseYear:
-          json['releaseYear'] is int ? json['releaseYear'] as int : null,
-      imdbId: json['imdbId']?.toString(),
-      tmdbId: json['tmdbId']?.toString(),
-      quality: json['quality']?.toString(),
-      videoLanguage: json['videoLanguage']?.toString(),
-      posterPath: json['posterPath']?.toString(),
-      summary: json['summary']?.toString(),
-      sourceId: json['sourceId']?.toString(),
-    );
-  }
-}
+import '../models/app_media.dart';
 
 class TvAppApiService {
   TvAppApiService();
@@ -150,7 +106,7 @@ class TvAppApiService {
     return accessToken;
   }
 
-  Future<List<ApiLibraryItem>> fetchLibrary({
+  Future<List<AppMediaAggregate>> fetchLibrary({
     required AppConfig config,
     required String accessToken,
   }) async {
@@ -167,7 +123,7 @@ class TvAppApiService {
     return items;
   }
 
-  Future<List<ApiLibraryItem>> syncLibrary({
+  Future<List<AppMediaAggregate>> syncLibrary({
     required AppConfig config,
     required String accessToken,
     required List<String> mediaFileIds,
@@ -367,13 +323,19 @@ class TvAppApiService {
     return initData;
   }
 
-  List<ApiLibraryItem> _readItems(Map<String, dynamic>? body) {
+  List<AppMediaAggregate> _readItems(Map<String, dynamic>? body) {
     final raw = body?['items'];
-    if (raw is! List) return const <ApiLibraryItem>[];
+    if (raw is! List) return const <AppMediaAggregate>[];
     return raw
         .whereType<Map<String, dynamic>>()
-        .map(ApiLibraryItem.fromJson)
-        .where((item) => item.mediaFileId.isNotEmpty && item.title.isNotEmpty)
+        .map((e) {
+          try {
+            return AppMediaAggregate.fromJson(e);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<AppMediaAggregate>()
         .toList();
   }
 

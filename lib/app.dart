@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:flutter/foundation.dart';
@@ -10,7 +9,6 @@ import 'core/debug/app_debug_log.dart';
 import 'core/debug/debug_log_fab.dart';
 import 'core/theme/app_theme.dart';
 import 'core/tv/tv_screen_wrapper.dart';
-import 'data/local/isar_provider.dart';
 import 'providers.dart';
 import 'router.dart';
 
@@ -19,11 +17,7 @@ class TeleCimaApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    ref.listen<AsyncValue<Isar>>(isarProvider, (prev, next) {
-      next.whenData((isar) {
-        unawaited(ref.read(authNotifierProvider).mergeIsarSession(isar));
-      });
-    });
+    // Session initialization is now handled by authNotifierProvider internally.
 
     ref.listen(authNotifierProvider, (prev, auth) {
       if (auth.isLoggedIn) {

@@ -1,9 +1,7 @@
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../data/local/entities.dart';
-import '../../data/local/isar_provider.dart';
+import '../../data/local/telegram_session_store.dart' as session_store;
 
 const kSessionKey = 'TELEGRAM_SESSION';
 const kApiAccessTokenKey = 'TV_APP_API_ACCESS_TOKEN';
@@ -54,28 +52,8 @@ class AuthNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// If SharedPreferences has no session yet, restore `tdlib:<userId>` from Isar (startup).
-  Future<void> mergeIsarSession(Isar isar) async {
-    final row = await isar.runWithRetry(
-      () => isar.telegramSessions.getBySingletonKey(1),
-      debugName: 'mergeIsarSession',
-    );
-    if (row != null && row.userId > 0) {
-      final prefs = await SharedPreferences.getInstance();
-      final existing = prefs.getString(kSessionKey);
-      if (existing == null || existing.isEmpty) {
-        await setSession('tdlib:${row.userId}');
-      }
-    }
-  }
-
-  /// Clears prefs session and removes the singleton TDLib session row (logout).
-  Future<void> clearTelegramIsarSession(Isar isar) async {
-    await isar.runWithRetry(
-        () => isar.writeTxn(() async {
-              await isar.telegramSessions.deleteAllBySingletonKey([1]);
-            }),
-        debugName: 'clearIsarSession');
+  Future<void> clearTelegramSession() async {
+    await session_store.clearTelegramSession();
     await clearSession();
   }
 }
