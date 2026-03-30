@@ -33,7 +33,16 @@ jobs:
         run: flutter pub get
 
       - name: Prepare environment variables
-        run: cp assets/env/default.example.env assets/env/default.env
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE_CONTENT }}
+        run: |
+          if [ -n "$ENV_FILE_CONTENT" ]; then
+            echo "Using ENV_FILE_CONTENT from GitHub Secrets."
+            echo "$ENV_FILE_CONTENT" > assets/env/default.env
+          else
+            echo "Warning: ENV_FILE_CONTENT secret is empty! Falling back to example.env."
+            cp assets/env/default.example.env assets/env/default.env
+          fi
 
       - name: Run Build Runner (Isar Generation)
         run: dart run build_runner build --delete-conflicting-outputs
