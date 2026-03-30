@@ -1,12 +1,12 @@
 import 'package:tmdb_api/tmdb_api.dart';
 
-import '../../core/config/app_config.dart';
-
 /// TMDB metadata with the same poster sizing policy as `tv-app-old` (`w500`).
 class TmdbRepository {
-  TmdbRepository({required AppConfig config})
+  TmdbRepository()
       : _tmdb = TMDB(
-          ApiKeys(config.tmdbApiKey, ''),
+          // TMDB key is no longer required for app bootstrap/config.
+          // Keep repository constructible for optional metadata experiments.
+          ApiKeys('', ''),
         );
 
   final TMDB _tmdb;

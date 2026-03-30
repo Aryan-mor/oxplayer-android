@@ -3,7 +3,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 /// Runtime configuration loaded from `assets/env/default.env` (see [bootstrap]).
 class AppConfig {
   const AppConfig({
-    required this.tmdbApiKey,
     required this.telegramApiId,
     required this.telegramApiHash,
     required this.indexTag,
@@ -13,7 +12,6 @@ class AppConfig {
     required this.tvAppWebAppUrl,
   });
 
-  final String tmdbApiKey;
   final String telegramApiId;
   final String telegramApiHash;
   final String indexTag;
@@ -25,7 +23,6 @@ class AppConfig {
   static AppConfig fromEnv() {
     String v(String key) => dotenv.env[key]?.trim() ?? '';
     return AppConfig(
-      tmdbApiKey: v('TMDB_API_KEY'),
       telegramApiId: v('TELEGRAM_API_ID'),
       telegramApiHash: v('TELEGRAM_API_HASH'),
       // When INDEX_TAG is missing (or dotenv stripped `#…` — quote INDEX_TAG in default.env).
@@ -37,7 +34,6 @@ class AppConfig {
     );
   }
 
-  bool get hasTmdb => tmdbApiKey.isNotEmpty;
   bool get hasTelegramKeys =>
       telegramApiId.isNotEmpty && telegramApiHash.isNotEmpty;
   bool get hasApiConfig =>

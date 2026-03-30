@@ -64,9 +64,7 @@ final authNotifierProvider = ChangeNotifierProvider<AuthNotifier>((ref) {
 });
 
 final tmdbRepositoryProvider = Provider<TmdbRepository?>((ref) {
-  final config = ref.watch(appConfigProvider);
-  if (!config.hasTmdb) return null;
-  return TmdbRepository(config: config);
+  return TmdbRepository();
 });
 
 final mediaListProvider = FutureProvider<List<MediaItem>>((ref) async {

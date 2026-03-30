@@ -22,9 +22,8 @@ dart run build_runner build --delete-conflicting-outputs
 flutter create . --platforms=android
 ```
 
-Configure secrets in `assets/env/default.env` (template values are safe to commit; override locally):
+Configure secrets in `assets/env/default.env` (copy from `assets/env/default.example.env` and override locally):
 
-- `TMDB_API_KEY`
 - `TELEGRAM_API_ID` / `TELEGRAM_API_HASH`
 - `INDEX_TAG`, `BOT_USERNAME` (same semantics as the Vite app)
 
