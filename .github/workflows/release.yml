@@ -32,6 +32,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Prepare environment variables
+        run: cp assets/env/default.example.env assets/env/default.env
+
+      - name: Run Build Runner (Isar Generation)
+        run: dart run build_runner build --delete-conflicting-outputs
+
       - name: Build APK
         run: flutter build apk --release
 
