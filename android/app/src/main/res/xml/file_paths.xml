@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+        Expose files in:
+        /storage/emulated/0/Android/data/<applicationId>/files/Downloads/
+        via FileProvider URI.
+    -->
+    <external-files-path
+        name="external_downloads"
+        path="Downloads/" />
+</paths>

@@ -1,0 +1,13 @@
+{
+  "name": "tv-app",
+  "private": true,
+  "scripts": {
+    "flutter": "flutter",
+    "get": "flutter pub get",
+    "codegen": "dart run build_runner build --delete-conflicting-outputs",
+    "watch": "dart run build_runner watch --delete-conflicting-outputs",
+    "dev": "flutter run",
+    "build:apk": "flutter build apk",
+    "analyze": "flutter analyze"
+  }
+}

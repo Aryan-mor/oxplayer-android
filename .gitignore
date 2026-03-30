@@ -1,0 +1,20 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+.idea/
+*.lock.hint
+
+# Env (keep .env.example)
+.env
+
+# Generated
+*.g.dart
+
+# Android
+**/local.properties
+**/key.properties
+*.jks
