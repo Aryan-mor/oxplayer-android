@@ -39,7 +39,7 @@ jobs:
         run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --split-per-abi
 
       - name: Build AppBundle
         run: flutter build appbundle --release
@@ -52,7 +52,9 @@ jobs:
           name: "Release v1.0.${{ github.run_number }}"
           body: "Automated Release triggered by push to ${{ github.ref_name }}. \nCommit: ${{ github.sha }}"
           files: |
-            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-x86_64-release.apk
             build/app/outputs/bundle/release/app-release.aab
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
