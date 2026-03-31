@@ -52,6 +52,13 @@ class AuthNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> clearApiAccessToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(kApiAccessTokenKey);
+    _apiAccessToken = null;
+    notifyListeners();
+  }
+
   Future<void> clearTelegramSession() async {
     await session_store.clearTelegramSession();
     await clearSession();

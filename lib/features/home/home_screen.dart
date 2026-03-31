@@ -127,60 +127,93 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return accessToken;
   }
 
+  bool _isUnauthorized(DioException e) {
+    final status = e.response?.statusCode;
+    return status == 401 || status == 403;
+  }
+
+  Future<void> _runSyncWithToken(String accessToken) async {
+    final api = ref.read(tvAppApiServiceProvider);
+    final config = ref.read(appConfigProvider);
+    final tdlib = ref.read(tdlibFacadeProvider);
+
+    // 1. Fetch current library from server
+    final currentLibrary = await api.fetchLibrary(
+      config: config,
+      accessToken: accessToken,
+    );
+
+    // 2. Extract existing IDs to compute the set difference
+    final existingFileIds = currentLibrary
+        .expand((agg) => agg.files)
+        .map((f) => f.id)
+        .toSet();
+
+    AppDebugLog.instance.log(
+      'HomeScreen: Found ${existingFileIds.length} existing files from server',
+    );
+
+    // 3. Search Telegram for all files
+    AppDebugLog.instance.log('HomeScreen: Scanning Telegram for file IDs...');
+    await api.collectMediaFileIdsFromTelegram(
+      tdlib: tdlib,
+      config: config,
+      onBatch: (discoveredIds) async {
+        // 4. Calculate new IDs in this batch
+        final newMediaFileIds = discoveredIds.difference(existingFileIds);
+
+        // 5. Send new files to server if any
+        if (newMediaFileIds.isNotEmpty) {
+          AppDebugLog.instance.log(
+            'HomeScreen: Found ${newMediaFileIds.length} new files to sync (Out of ${discoveredIds.length} batch collected)',
+          );
+          await api.syncLibrary(
+            config: config,
+            accessToken: accessToken,
+            mediaFileIds: newMediaFileIds.toList(),
+          );
+
+          // Register them so we avoid re-syncing if Telegram repeats a file
+          existingFileIds.addAll(newMediaFileIds);
+
+          // 6. Refresh UI state with latest library while still syncing
+          ref.invalidate(mediaListProvider);
+        } else {
+          AppDebugLog.instance.log('HomeScreen: No new files found in this batch');
+        }
+      },
+    );
+  }
+
   Future<void> _triggerSync({bool isManual = true}) async {
     if (_isSyncing) return;
     setState(() => _isSyncing = true);
     AppDebugLog.instance.log('HomeScreen: Sync started (isManual=$isManual)');
 
     try {
-      final accessToken = await _requireApiAccessToken();
-      final api = ref.read(tvAppApiServiceProvider);
-      final config = ref.read(appConfigProvider);
-      final tdlib = ref.read(tdlibFacadeProvider);
+      var accessToken = await _requireApiAccessToken();
+      try {
+        await _runSyncWithToken(accessToken);
+      } on DioException catch (e) {
+        if (!_isUnauthorized(e)) rethrow;
 
-      // 1. Fetch current library from server
-      final currentLibrary = await api.fetchLibrary(
-        config: config,
-        accessToken: accessToken,
-      );
+        AppDebugLog.instance.log(
+          'HomeScreen: API token rejected (status=${e.response?.statusCode}), refreshing once',
+        );
+        final auth = ref.read(authNotifierProvider);
+        await auth.clearApiAccessToken();
+        try {
+          accessToken = await _requireApiAccessToken();
+          await _runSyncWithToken(accessToken);
+        } catch (refreshError) {
+          AppDebugLog.instance.log(
+            'HomeScreen: token refresh/retry failed, logging out: $refreshError',
+          );
+          await auth.clearSession();
+          rethrow;
+        }
+      }
 
-      // 2. Extract existing IDs to compute the set difference
-      final existingFileIds = currentLibrary
-          .expand((agg) => agg.files)
-          .map((f) => f.id)
-          .toSet();
-      
-      AppDebugLog.instance.log('HomeScreen: Found ${existingFileIds.length} existing files from server');
-
-      // 3. Search Telegram for all files
-      AppDebugLog.instance.log('HomeScreen: Scanning Telegram for file IDs...');
-      await api.collectMediaFileIdsFromTelegram(
-        tdlib: tdlib,
-        config: config,
-        onBatch: (discoveredIds) async {
-          // 4. Calculate new IDs in this batch
-          final newMediaFileIds = discoveredIds.difference(existingFileIds);
-
-          // 5. Send new files to server if any
-          if (newMediaFileIds.isNotEmpty) {
-            AppDebugLog.instance.log('HomeScreen: Found ${newMediaFileIds.length} new files to sync (Out of ${discoveredIds.length} batch collected)');
-            await api.syncLibrary(
-              config: config,
-              accessToken: accessToken,
-              mediaFileIds: newMediaFileIds.toList(),
-            );
-            
-            // Register them so we avoid re-syncing if Telegram repeats a file
-            existingFileIds.addAll(newMediaFileIds);
-
-            // 6. Refresh UI state with latest library while still syncing!
-            ref.invalidate(mediaListProvider);
-          } else {
-            AppDebugLog.instance.log('HomeScreen: No new files found in this batch');
-          }
-        },
-      );
-      
       if (mounted) setState(() => _lastSyncTime = DateTime.now());
       AppDebugLog.instance.log('HomeScreen: Sync completed successfully');
     } catch (e) {
