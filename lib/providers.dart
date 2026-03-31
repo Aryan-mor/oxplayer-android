@@ -9,7 +9,7 @@ import 'data/models/app_media.dart';
 import 'data/local/telegram_session_store.dart';
 import 'data/tmdb/tmdb_repository.dart';
 import 'download/download_manager.dart';
-import 'telegram/tdlib_controller.dart';
+import 'telegram/tdlib_controller.dart' if (dart.library.html) 'telegram/tdlib_controller_web.dart';
 import 'telegram/tdlib_facade.dart';
 
 final appConfigProvider = Provider<AppConfig>((ref) => AppConfig.fromEnv());

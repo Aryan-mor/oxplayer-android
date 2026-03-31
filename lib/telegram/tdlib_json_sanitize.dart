@@ -54,6 +54,10 @@ void _walk(dynamic node) {
       if (node['user_id'] == null) node['user_id'] = 0;
     } else if (t == 'messageSenderChat') {
       if (node['chat_id'] == null) node['chat_id'] = 0;
+    } else if (t == 'reactionTypeEmoji') {
+      _patchReactionTypeEmoji(node);
+    } else if (t == 'reactionTypeCustomEmoji') {
+      _patchReactionTypeCustomEmoji(node);
     } else if (t == 'userFullInfo') {
       _patchUserFullInfo(node);
     } else if (t == 'file') {
@@ -197,6 +201,40 @@ void _patchMessageInteractionInfo(Map<String, dynamic> info) {
     final inner = r['reactions'];
     info['reactions'] = inner is List ? inner : <dynamic>[];
   }
+}
+
+/// Newer TDLib may send [emoji] as [formattedText]; [ReactionTypeEmoji.fromJson] expects a [String].
+void _patchReactionTypeEmoji(Map<String, dynamic> m) {
+  final e = m['emoji'];
+  if (e is String) return;
+  m['emoji'] = _stringFromFormattedTextOrString(e);
+}
+
+/// [ReactionTypeCustomEmoji.fromJson] uses [int.parse] on [custom_emoji_id] (JSON string).
+void _patchReactionTypeCustomEmoji(Map<String, dynamic> m) {
+  final id = m['custom_emoji_id'];
+  if (id == null) {
+    m['custom_emoji_id'] = '0';
+  } else if (id is num) {
+    m['custom_emoji_id'] = id.toString();
+  }
+}
+
+String _stringFromFormattedTextOrString(dynamic v) {
+  if (v is String) return v;
+  if (v is Map<String, dynamic>) {
+    if (v['@type'] == 'formattedText') {
+      final t = v['text'];
+      return t is String ? t : '';
+    }
+    final nested = v['text'];
+    if (nested is String) return nested;
+    if (nested is Map<String, dynamic>) {
+      final inner = nested['text'];
+      return inner is String ? inner : '';
+    }
+  }
+  return '';
 }
 
 void _patchChatPosition(Map<String, dynamic> p) {

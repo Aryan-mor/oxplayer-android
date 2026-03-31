@@ -28,23 +28,38 @@ class AppMedia {
   final DateTime updatedAt;
 
   factory AppMedia.fromJson(Map<String, dynamic> json) {
+    final resolvedId = (json['id'] ??
+            json['mediaId'] ??
+            json['media_id'] ??
+            json['globalId'] ??
+            json['global_id'] ??
+            '')
+        .toString()
+        .trim();
     return AppMedia(
-      id: (json['id'] ?? '').toString(),
+      id: resolvedId,
       imdbId: json['imdbId']?.toString() ?? json['imdb_id']?.toString(),
       tmdbId: json['tmdbId']?.toString() ?? json['tmdb_id']?.toString(),
       title: (json['title'] ?? '').toString(),
       type: (json['type'] ?? 'UNKNOWN').toString(),
       releaseYear: json['releaseYear'] as int? ?? json['release_year'] as int?,
-      originalLanguage: json['originalLanguage']?.toString() ?? json['original_language']?.toString(),
-      posterPath: json['posterPath']?.toString() ?? json['poster_path']?.toString(),
+      originalLanguage: json['originalLanguage']?.toString() ??
+          json['original_language']?.toString(),
+      posterPath:
+          json['posterPath']?.toString() ?? json['poster_path']?.toString(),
       summary: json['summary']?.toString(),
-      rawDetails: json['rawDetails']?.toString() ?? json['raw_details']?.toString(),
-      createdAt: json['createdAt'] != null 
-          ? DateTime.parse(json['createdAt'].toString()) 
-          : (json['created_at'] != null ? DateTime.parse(json['created_at'].toString()) : DateTime.now()),
-      updatedAt: json['updatedAt'] != null 
-          ? DateTime.parse(json['updatedAt'].toString()) 
-          : (json['updated_at'] != null ? DateTime.parse(json['updated_at'].toString()) : DateTime.now()),
+      rawDetails:
+          json['rawDetails']?.toString() ?? json['raw_details']?.toString(),
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'].toString())
+          : (json['created_at'] != null
+              ? DateTime.parse(json['created_at'].toString())
+              : DateTime.now()),
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.parse(json['updatedAt'].toString())
+          : (json['updated_at'] != null
+              ? DateTime.parse(json['updated_at'].toString())
+              : DateTime.now()),
     );
   }
 }
@@ -72,12 +87,16 @@ class AppSource {
       chatId: json['chatId'] as int? ?? json['chat_id'] as int? ?? 0,
       name: (json['name'] ?? '').toString(),
       thumbnail: json['thumbnail']?.toString(),
-      createdAt: json['createdAt'] != null 
-          ? DateTime.parse(json['createdAt'].toString()) 
-          : (json['created_at'] != null ? DateTime.parse(json['created_at'].toString()) : DateTime.now()),
-      updatedAt: json['updatedAt'] != null 
-          ? DateTime.parse(json['updatedAt'].toString()) 
-          : (json['updated_at'] != null ? DateTime.parse(json['updated_at'].toString()) : DateTime.now()),
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'].toString())
+          : (json['created_at'] != null
+              ? DateTime.parse(json['created_at'].toString())
+              : DateTime.now()),
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.parse(json['updatedAt'].toString())
+          : (json['updated_at'] != null
+              ? DateTime.parse(json['updated_at'].toString())
+              : DateTime.now()),
     );
   }
 }
@@ -115,7 +134,7 @@ class AppMediaFile {
   final int? episode;
   final DateTime createdAt;
   final DateTime updatedAt;
-  
+
   // Extended fields for client usage
   final String? telegramFileId;
 
@@ -124,21 +143,29 @@ class AppMediaFile {
       id: (json['id'] ?? '').toString(),
       mediaId: (json['mediaId'] ?? json['media_id'] ?? '').toString(),
       sourceId: json['sourceId']?.toString() ?? json['source_id']?.toString(),
-      fileUniqueId: (json['fileUniqueId'] ?? json['file_unique_id'] ?? '').toString(),
-      videoLanguage: json['videoLanguage']?.toString() ?? json['video_language']?.toString(),
+      fileUniqueId:
+          (json['fileUniqueId'] ?? json['file_unique_id'] ?? '').toString(),
+      videoLanguage: json['videoLanguage']?.toString() ??
+          json['video_language']?.toString(),
       quality: json['quality']?.toString(),
       size: json['size'] as int?,
-      versionTag: json['versionTag']?.toString() ?? json['version_tag']?.toString(),
+      versionTag:
+          json['versionTag']?.toString() ?? json['version_tag']?.toString(),
       language: json['language']?.toString(),
       season: json['season'] as int?,
       episode: json['episode'] as int?,
-      createdAt: json['createdAt'] != null 
-          ? DateTime.parse(json['createdAt'].toString()) 
-          : (json['created_at'] != null ? DateTime.parse(json['created_at'].toString()) : DateTime.now()),
-      updatedAt: json['updatedAt'] != null 
-          ? DateTime.parse(json['updatedAt'].toString()) 
-          : (json['updated_at'] != null ? DateTime.parse(json['updated_at'].toString()) : DateTime.now()),
-      telegramFileId: json['telegramFileId']?.toString() ?? json['telegram_file_id']?.toString(),
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'].toString())
+          : (json['created_at'] != null
+              ? DateTime.parse(json['created_at'].toString())
+              : DateTime.now()),
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.parse(json['updatedAt'].toString())
+          : (json['updated_at'] != null
+              ? DateTime.parse(json['updated_at'].toString())
+              : DateTime.now()),
+      telegramFileId: json['telegramFileId']?.toString() ??
+          json['telegram_file_id']?.toString(),
     );
   }
 }

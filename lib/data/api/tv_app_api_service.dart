@@ -142,9 +142,10 @@ class TvAppApiService {
     return items;
   }
 
-  Future<Set<String>> collectMediaFileIdsFromTelegram({
+  Future<void> collectMediaFileIdsFromTelegram({
     required TdlibFacade tdlib,
     required AppConfig config,
+    required Future<void> Function(Set<String> discoveredIds) onBatch,
   }) async {
     AppDebugLog.instance.log(
       'Sync discover start: bot=${config.botUsername}, query=${config.indexTag}',
@@ -157,7 +158,7 @@ class TvAppApiService {
     );
     if (resolved is! td.Chat || resolved.type is! td.ChatTypePrivate) {
       AppDebugLog.instance.log('Sync discover: BOT_USERNAME did not resolve to private chat');
-      return <String>{};
+      return;
     }
     final botUserId = (resolved.type as td.ChatTypePrivate).userId;
 
@@ -176,12 +177,29 @@ class TvAppApiService {
     }
     AppDebugLog.instance.log('Sync discover: scanning chats=${chatIds.length}');
 
-    final ids = <String>{};
+    int totalCollected = 0;
+    final currentBatch = <String>{};
+    final timer = Stopwatch()..start();
+
+    Future<void> flushBatch() async {
+      if (currentBatch.isEmpty) return;
+      try {
+        await onBatch(Set.of(currentBatch));
+        totalCollected += currentBatch.length;
+      } catch (e) {
+        AppDebugLog.instance.log('Sync discover: onBatch failed with $e');
+      }
+      currentBatch.clear();
+      timer.reset();
+    }
+
     for (final chatId in chatIds) {
       var fromMessageId = 0;
       var hasMore = true;
+      var pageCount = 0;
 
-      while (hasMore) {
+      while (hasMore && pageCount < 20) {
+        pageCount++;
         final batch = await tdlib.send(
           td.SearchChatMessages(
             chatId: chatId,
@@ -203,7 +221,10 @@ class TvAppApiService {
           for (final msg in batch.messages) {
             final text = _extractText(msg);
             final mediaFileId = _extractMediaFileId(text);
-            if (mediaFileId != null) ids.add(mediaFileId);
+            if (mediaFileId != null) currentBatch.add(mediaFileId);
+          }
+          if (timer.elapsed.inSeconds >= 10 && currentBatch.isNotEmpty) {
+            await flushBatch();
           }
           fromMessageId = batch.nextFromMessageId;
           if (fromMessageId == 0) hasMore = false;
@@ -218,17 +239,25 @@ class TvAppApiService {
           for (final msg in batch.messages) {
             final text = _extractText(msg);
             final mediaFileId = _extractMediaFileId(text);
-            if (mediaFileId != null) ids.add(mediaFileId);
-            fromMessageId = msg.id;
+            if (mediaFileId != null) currentBatch.add(mediaFileId);
           }
+          if (timer.elapsed.inSeconds >= 10 && currentBatch.isNotEmpty) {
+            await flushBatch();
+          }
+          fromMessageId = batch.messages.last.id;
           continue;
         }
 
         hasMore = false;
       }
     }
-    AppDebugLog.instance.log('Sync discover done: mediaFileIds=${ids.length}');
-    return ids;
+    
+    // Final flush
+    if (currentBatch.isNotEmpty) {
+      await flushBatch();
+    }
+    
+    AppDebugLog.instance.log('Sync discover done: total mediaFileIds=$totalCollected');
   }
 
   Future<String> _fetchSignedInitData({

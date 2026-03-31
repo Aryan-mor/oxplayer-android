@@ -50,6 +50,14 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           return SingleItemScreen(globalId: globalId);
         },
       ),
+      GoRoute(
+        path: '/item',
+        builder: (context, state) {
+          return const Scaffold(
+            body: Center(child: Text('Invalid item. Missing item id.')),
+          );
+        },
+      ),
       // ── Deprecated: stub kept so old push('/play') calls don't crash ──────
       GoRoute(
         path: '/play',

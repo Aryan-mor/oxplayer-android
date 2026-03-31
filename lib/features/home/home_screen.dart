@@ -10,7 +10,6 @@ import 'package:go_router/go_router.dart';
 import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
-import '../../data/api/tv_app_api_service.dart';
 import '../../data/models/app_media.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
@@ -80,13 +79,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Future<void> _checkAutoSync() async {
     final auth = ref.read(authNotifierProvider);
     if (auth.apiAccessToken != null && auth.apiAccessToken!.isNotEmpty) {
-      // Library is auto fetched from API via generic providers,
-      // but we might want to manually refresh
-    }
-    
-    // Check if we need to sync manually
-    if (_lastSyncTime == null) {
-       await _triggerSync();
+      try {
+        final currentLibrary = await ref.read(mediaListProvider.future);
+        AppDebugLog.instance.log('HomeScreen: Initial library fetch returned ${currentLibrary.length} items');
+
+        if (_lastSyncTime == null) {
+          if (currentLibrary.isEmpty) {
+              AppDebugLog.instance.log('HomeScreen: Library is empty, auto-triggering Telegram sync');
+              await _triggerSync(isManual: false);
+          } else {
+              AppDebugLog.instance.log('HomeScreen: Library is not empty, skipping auto Telegram sync');
+              if (mounted) setState(() => _lastSyncTime = DateTime.now());
+          }
+        }
+      } catch (e) {
+        AppDebugLog.instance.log('HomeScreen: Failed to fetch initial library provider: $e');
+      }
     }
   }
 
@@ -119,18 +127,61 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return accessToken;
   }
 
-  Future<void> _triggerSync() async {
+  Future<void> _triggerSync({bool isManual = true}) async {
     if (_isSyncing) return;
     setState(() => _isSyncing = true);
-    AppDebugLog.instance.log('HomeScreen: Sync started');
+    AppDebugLog.instance.log('HomeScreen: Sync started (isManual=$isManual)');
 
     try {
-      await _requireApiAccessToken();
+      final accessToken = await _requireApiAccessToken();
+      final api = ref.read(tvAppApiServiceProvider);
+      final config = ref.read(appConfigProvider);
+      final tdlib = ref.read(tdlibFacadeProvider);
+
+      // 1. Fetch current library from server
+      final currentLibrary = await api.fetchLibrary(
+        config: config,
+        accessToken: accessToken,
+      );
+
+      // 2. Extract existing IDs to compute the set difference
+      final existingFileIds = currentLibrary
+          .expand((agg) => agg.files)
+          .map((f) => f.id)
+          .toSet();
       
-      // Since it's server driven, "syncing" just means fetching the latest from the server.
-      ref.invalidate(mediaListProvider);
+      AppDebugLog.instance.log('HomeScreen: Found ${existingFileIds.length} existing files from server');
+
+      // 3. Search Telegram for all files
+      AppDebugLog.instance.log('HomeScreen: Scanning Telegram for file IDs...');
+      await api.collectMediaFileIdsFromTelegram(
+        tdlib: tdlib,
+        config: config,
+        onBatch: (discoveredIds) async {
+          // 4. Calculate new IDs in this batch
+          final newMediaFileIds = discoveredIds.difference(existingFileIds);
+
+          // 5. Send new files to server if any
+          if (newMediaFileIds.isNotEmpty) {
+            AppDebugLog.instance.log('HomeScreen: Found ${newMediaFileIds.length} new files to sync (Out of ${discoveredIds.length} batch collected)');
+            await api.syncLibrary(
+              config: config,
+              accessToken: accessToken,
+              mediaFileIds: newMediaFileIds.toList(),
+            );
+            
+            // Register them so we avoid re-syncing if Telegram repeats a file
+            existingFileIds.addAll(newMediaFileIds);
+
+            // 6. Refresh UI state with latest library while still syncing!
+            ref.invalidate(mediaListProvider);
+          } else {
+            AppDebugLog.instance.log('HomeScreen: No new files found in this batch');
+          }
+        },
+      );
       
-      _lastSyncTime = DateTime.now();
+      if (mounted) setState(() => _lastSyncTime = DateTime.now());
       AppDebugLog.instance.log('HomeScreen: Sync completed successfully');
     } catch (e) {
       AppDebugLog.instance.log('HomeScreen: Sync failed: $e');
@@ -277,7 +328,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _openItem(BuildContext context, AppMediaAggregate item) {
-    context.push('/item/${Uri.encodeComponent(item.media.id)}');
+    final id = item.media.id.trim().isNotEmpty
+        ? item.media.id.trim()
+        : (item.files.isNotEmpty ? item.files.first.mediaId.trim() : '');
+    if (id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open item: missing id.')),
+      );
+      return;
+    }
+    context.push('/item/${Uri.encodeComponent(id)}');
   }
 
   @override
@@ -343,7 +403,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       }
                       return KeyEventResult.ignored;
                     },
-                    onPressed: _isSyncing ? null : _triggerSync,
+                    onPressed: _isSyncing ? null : () => _triggerSync(isManual: true),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
