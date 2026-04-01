@@ -39,6 +39,7 @@ class DiscoveredMediaRef {
     required this.captionText,
     required this.telegramFileId,
     required this.telegramDate,
+    this.fileSizeBytes,
   });
 
   final String mediaFileId;
@@ -48,6 +49,8 @@ class DiscoveredMediaRef {
   final String? telegramFileId;
   /// `Message.date` from TDLib (Unix seconds); for ordering / incremental logic.
   final int telegramDate;
+  /// TDLib [File.size] / [File.expectedSize] for the media attachment when known.
+  final int? fileSizeBytes;
 
   Map<String, dynamic> toPersistenceJson() => {
         'mediaFileId': mediaFileId,
@@ -57,6 +60,8 @@ class DiscoveredMediaRef {
         'captionText': captionText,
         'telegramFileId': telegramFileId,
         'telegramDate': telegramDate,
+        if (fileSizeBytes != null && fileSizeBytes! > 0)
+          'fileSizeBytes': fileSizeBytes,
       };
 
   static DiscoveredMediaRef? fromPersistenceJson(Object? raw) {
@@ -72,6 +77,10 @@ class DiscoveredMediaRef {
     final cap = j['captionText']?.toString() ?? '';
     final td = j['telegramDate'];
     final date = td is int ? td : int.tryParse(td?.toString() ?? '') ?? 0;
+    final fs = j['fileSizeBytes'];
+    final fileSize = fs is int
+        ? fs
+        : (fs != null ? int.tryParse(fs.toString()) : null);
     return DiscoveredMediaRef(
       mediaFileId: mid,
       sourceChatId: chatId,
@@ -79,6 +88,7 @@ class DiscoveredMediaRef {
       captionText: cap,
       telegramFileId: tf,
       telegramDate: date,
+      fileSizeBytes: (fileSize != null && fileSize > 0) ? fileSize : null,
     );
   }
 }
@@ -258,6 +268,8 @@ class TvAppApiService {
               'sourceChatId': r.sourceChatId,
               'sourceMessageId': r.sourceMessageId,
               'captionText': r.captionText,
+              if (r.fileSizeBytes != null && r.fileSizeBytes! > 0)
+                'fileSizeBytes': r.fileSizeBytes,
             },
           )
           .toList(growable: false);
@@ -332,7 +344,18 @@ class TvAppApiService {
       final existing = byMediaFileId[id];
       if (existing != null) {
         if (next.telegramDate <= existing.telegramDate) return false;
-        byMediaFileId[id] = next;
+        final mergedSize = (next.fileSizeBytes != null && next.fileSizeBytes! > 0)
+            ? next.fileSizeBytes
+            : existing.fileSizeBytes;
+        byMediaFileId[id] = DiscoveredMediaRef(
+          mediaFileId: next.mediaFileId,
+          sourceChatId: next.sourceChatId,
+          sourceMessageId: next.sourceMessageId,
+          captionText: next.captionText,
+          telegramFileId: next.telegramFileId,
+          telegramDate: next.telegramDate,
+          fileSizeBytes: mergedSize,
+        );
         return true;
       }
       if (byMediaFileId.length >= _kMaxSyncDiscoverItems) return false;
@@ -367,6 +390,14 @@ class TvAppApiService {
         final mediaFileId = _extractMediaFileId(text);
         if (mediaFileId == null) continue;
         final telegramFileId = await _resolveTelegramFileId(tdlib, msg);
+        var fileSizeBytes =
+            await _resolveMediaFileSizeBytes(tdlib: tdlib, msg: msg);
+        final tid = telegramFileId;
+        if ((fileSizeBytes == null || fileSizeBytes <= 0) &&
+            tid != null &&
+            tid.isNotEmpty) {
+          fileSizeBytes = await _fileSizeFromRemoteFileId(tdlib, tid);
+        }
         // Captioner replies with [MessageText] that references the user's video; TDLib
         // download needs the **media** message id, not the bot caption message id.
         final locatorMessageId = _locatorMessageIdForSync(msg);
@@ -378,6 +409,7 @@ class TvAppApiService {
             captionText: text,
             telegramFileId: telegramFileId,
             telegramDate: msg.date,
+            fileSizeBytes: fileSizeBytes,
           ),
         );
       }
@@ -545,7 +577,9 @@ class TvAppApiService {
     return null;
   }
 
-  /// TDLib [GetMessage] / server locator must target the message that **contains** the file.
+  /// Locator must target the message that **contains** the file. Captioner replies with
+  /// [MessageText] that **replies to** the user's media; search returns that text message,
+  /// so we use the replied-to [messageId] for [sourceMessageId].
   static int _locatorMessageIdForSync(td.Message msg) {
     final rt = msg.replyTo;
     if (rt is td.MessageReplyToMessage) {
@@ -554,8 +588,72 @@ class TvAppApiService {
     return msg.id;
   }
 
-  /// Captioner-bot replies with [td.MessageText] that **replies to** the user's video/document.
-  /// `searchMessages` returns that text message, so we load the replied-to message for `remote.id`.
+  int? _nonzeroFileSize(td.File f) {
+    if (f.size > 0) return f.size;
+    if (f.expectedSize > 0) return f.expectedSize;
+    return null;
+  }
+
+  int? _extractMediaFileSizeBytes(td.Message msg) {
+    try {
+      final content = msg.content;
+      if (content is td.MessageVideo) {
+        return _nonzeroFileSize(content.video.video);
+      }
+      if (content is td.MessageDocument) {
+        return _nonzeroFileSize(content.document.document);
+      }
+      if (content is td.MessageAnimation) {
+        return _nonzeroFileSize(content.animation.animation);
+      }
+      if (content is td.MessageVideoNote) {
+        return _nonzeroFileSize(content.videoNote.video);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Resolves byte size from the message that carries the media (follows reply-to like [_resolveTelegramFileId]).
+  Future<int?> _resolveMediaFileSizeBytes({
+    required TdlibFacade tdlib,
+    required td.Message msg,
+  }) async {
+    final direct = _extractMediaFileSizeBytes(msg);
+    if (direct != null && direct > 0) return direct;
+
+    final rt = msg.replyTo;
+    if (rt is! td.MessageReplyToMessage) return null;
+
+    var chatId = rt.chatId;
+    if (chatId == 0) chatId = msg.chatId;
+
+    try {
+      final got = await tdlib.send(
+        td.GetMessage(chatId: chatId, messageId: rt.messageId),
+      );
+      if (got is! td.Message) return null;
+      return _extractMediaFileSizeBytes(got);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// When [GetMessage] on the media row fails, [GetRemoteFile] still exposes [File.size].
+  Future<int?> _fileSizeFromRemoteFileId(
+    TdlibFacade tdlib,
+    String remoteFileId,
+  ) async {
+    final id = remoteFileId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final obj = await tdlib.send(
+        td.GetRemoteFile(remoteFileId: id, fileType: null),
+      );
+      if (obj is td.File) return _nonzeroFileSize(obj);
+    } catch (_) {}
+    return null;
+  }
+
   Future<String?> _resolveTelegramFileId(
     TdlibFacade tdlib,
     td.Message msg,

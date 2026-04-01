@@ -9,11 +9,15 @@ class TvExpandableSection extends StatefulWidget {
     required this.title,
     required this.child,
     this.initiallyExpanded = false,
+    this.spacingAfter = 6,
   });
 
   final String title;
   final Widget child;
   final bool initiallyExpanded;
+
+  /// Vertical gap before the next sibling (stacked accordions).
+  final double spacingAfter;
 
   @override
   State<TvExpandableSection> createState() => _TvExpandableSectionState();
@@ -24,7 +28,7 @@ class _TvExpandableSectionState extends State<TvExpandableSection> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final section = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TVButton(
@@ -51,10 +55,15 @@ class _TvExpandableSectionState extends State<TvExpandableSection> {
         ),
         if (_expanded)
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
             child: widget.child,
           ),
       ],
+    );
+    if (widget.spacingAfter <= 0) return section;
+    return Padding(
+      padding: EdgeInsets.only(bottom: widget.spacingAfter),
+      child: section,
     );
   }
 }

@@ -34,6 +34,15 @@ bool _extraMatchesGetMe(dynamic extra) =>
 ///
 /// Requires `libtdjson.so` under `android/app/src/main/jniLibs/<abi>/`.
 class TelegramTdlibFacade implements TdlibFacade {
+  /// Last facade that successfully called [tdJsonClientCreate] for this process.
+  /// Used by [_forceReclaimNativeClient] to tear down a stale sibling whose
+  /// async [dispose] may never have completed (e.g. Back-pressed on Android TV
+  /// where the Dart event loop stops processing after Activity.onDestroy).
+  static TelegramTdlibFacade? _nativeClientOwner;
+
+  /// Serialises [init] across all facade instances in this process.
+  static Future<void> _globalInitSerial = Future.value();
+
   TelegramTdlibFacade({
     this.onUserAuthorized,
     this.onRequiresInteractiveLogin,
@@ -47,6 +56,8 @@ class TelegramTdlibFacade implements TdlibFacade {
 
   int? _clientId;
   bool _receiveLoopRunning = false;
+  /// Completed when [AuthorizationStateClosed] arrives after [td.Close].
+  Completer<void>? _closeHandshakeCompleter;
   Isolate? _receiveIsolate;
   ReceivePort? _receiveMainPort;
   StreamSubscription<dynamic>? _receiveSub;
@@ -73,9 +84,6 @@ class TelegramTdlibFacade implements TdlibFacade {
   var _authCompleter = Completer<void>();
   /// Serializes [getMe] finalization so [UpdateUser] + [User] do not run [onUserAuthorized] twice.
   Future<void> _finalizeChain = Future.value();
-
-  /// Ensures only one [init] runs at a time (avoids two clients locking `td.binlog`).
-  Future<void> _initExclusive = Future.value();
 
   @override
   Future<void> ensureAuthorized() => _authCompleter.future;
@@ -139,21 +147,67 @@ class TelegramTdlibFacade implements TdlibFacade {
     if (apiId <= 0 || apiHash.isEmpty) {
       throw StateError('TDLib: set TELEGRAM_API_ID and TELEGRAM_API_HASH in assets/env/default.env');
     }
-    final previous = _initExclusive;
-    final done = Completer<void>();
-    _initExclusive = done.future;
-    await previous.catchError((Object _, StackTrace __) {});
+    _tdlog(
+      'TDLib: init() enter facade=${identityHashCode(this)} '
+      'isInitialized=$isInitialized',
+    );
+    final previousGlobal = _globalInitSerial;
+    final doneGlobal = Completer<void>();
+    _globalInitSerial = doneGlobal.future;
+    try {
+      await previousGlobal.catchError((Object _, StackTrace __) {});
+    } catch (_) {}
+    final initSw = DateTime.now();
     try {
       await _performInit(
         apiId: apiId,
         apiHash: apiHash,
         sessionString: sessionString,
       );
+      _tdlog(
+        'TDLib: init() finished in '
+        '${DateTime.now().difference(initSw).inMilliseconds}ms '
+        'client=$_clientId',
+      );
     } finally {
-      if (!done.isCompleted) {
-        done.complete();
+      if (!doneGlobal.isCompleted) {
+        doneGlobal.complete();
       }
     }
+  }
+
+  /// Force-kills any stale native TDLib client left by a previous facade whose
+  /// [dispose] may never have completed (e.g. Android TV Back-press kills the
+  /// event loop before async shutdown finishes). This accesses the sibling's
+  /// instance fields directly — no async waiting, no Completers.
+  static Future<void> _forceReclaimNativeClient(TelegramTdlibFacade caller) async {
+    final sibling = _nativeClientOwner;
+    if (sibling == null || identical(sibling, caller)) return;
+
+    final staleId = sibling._clientId;
+    _tdlog(
+      'TDLib: force-reclaim stale client=$staleId '
+      'sibling=${identityHashCode(sibling)} '
+      '→ this=${identityHashCode(caller)}',
+    );
+
+    sibling._receiveLoopRunning = false;
+    try { await sibling._receiveSub?.cancel(); } catch (_) {}
+    sibling._receiveSub = null;
+    sibling._receiveIsolate?.kill(priority: Isolate.immediate);
+    sibling._receiveIsolate = null;
+    sibling._receiveMainPort?.close();
+    sibling._receiveMainPort = null;
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    if (staleId != null) {
+      sibling._clientId = null;
+      try { tdJsonClientSend(staleId, const td.Close()); } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      try { tdJsonClientDestroy(staleId); } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    _nativeClientOwner = null;
   }
 
   Future<void> _performInit({
@@ -165,10 +219,14 @@ class TelegramTdlibFacade implements TdlibFacade {
       await _shutdownClient();
     }
 
+    await _forceReclaimNativeClient(this);
+
     _clientId = tdJsonClientCreate();
     if (_clientId == null || _clientId == 0) {
       throw StateError('TDLib: tdJsonClientCreate failed (is libtdjson.so in jniLibs?)');
     }
+    _nativeClientOwner = this;
+    _tdlog('TDLib: tdJsonClientCreate ok client=$_clientId facade=${identityHashCode(this)}');
 
     if (sessionString.isNotEmpty && kDebugMode) {
       debugPrint('TDLib: ignoring GramJS session string; using TDLib database files.');
@@ -621,6 +679,12 @@ class TelegramTdlibFacade implements TdlibFacade {
       if (!_cloudPassword.isClosed) {
         _cloudPassword.add(TdlibCloudPasswordChallenge(hint: state.passwordHint));
       }
+    } else if (state is td.AuthorizationStateClosed) {
+      _tdlog('TDLib[client=$_clientId]: State = Closed (shutdown handshake)');
+      final c = _closeHandshakeCompleter;
+      if (c != null && !c.isCompleted) {
+        c.complete();
+      }
     } else {
       debugPrint('TDLib auth state: ${state.runtimeType}');
       _tdlog('TDLib[client=$_clientId]: UNHANDLED auth state ${state.runtimeType}');
@@ -686,6 +750,50 @@ class TelegramTdlibFacade implements TdlibFacade {
   }
 
   Future<void> _shutdownClient() async {
+    final id = _clientId;
+    if (id == null) {
+      _receiveLoopRunning = false;
+      await _receiveSub?.cancel();
+      _receiveSub = null;
+      _receiveIsolate?.kill(priority: Isolate.immediate);
+      _receiveIsolate = null;
+      _receiveMainPort?.close();
+      _receiveMainPort = null;
+      return;
+    }
+
+    // TDLib: send [Close] and wait for [AuthorizationStateClosed] before killing
+    // the receive isolate / [tdJsonClientDestroy], or the next client can hit
+    // td.binlog lock (see tdlib/td#2506).
+    final canHandshake = _receiveIsolate != null && _receiveSub != null;
+    if (canHandshake) {
+      _closeHandshakeCompleter = Completer<void>();
+      try {
+        _tdlog('TDLib[client=$id]: Close → await AuthorizationStateClosed…');
+        tdJsonClientSend(id, const td.Close());
+      } catch (e) {
+        _tdlog('TDLib: Close send failed: $e');
+        if (!(_closeHandshakeCompleter?.isCompleted ?? true)) {
+          _closeHandshakeCompleter?.complete();
+        }
+      }
+      try {
+        await _closeHandshakeCompleter!.future.timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => _tdlog(
+            'TDLib: AuthorizationStateClosed timeout — forcing teardown',
+          ),
+        );
+      } catch (_) {}
+      _closeHandshakeCompleter = null;
+    } else {
+      try {
+        _tdlog('TDLib[client=$id]: Close (no receive loop) + short delay');
+        tdJsonClientSend(id, const td.Close());
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+
     _receiveLoopRunning = false;
     await _receiveSub?.cancel();
     _receiveSub = null;
@@ -693,8 +801,7 @@ class TelegramTdlibFacade implements TdlibFacade {
     _receiveIsolate = null;
     _receiveMainPort?.close();
     _receiveMainPort = null;
-    // Receive isolate must stop calling [tdJsonClientReceive] before [Close]/[destroy].
-    await Future<void>.delayed(const Duration(milliseconds: 220));
+    await Future<void>.delayed(const Duration(milliseconds: 350));
 
     _paramsSent = false;
     _transportTuningApplied = false;
@@ -704,30 +811,32 @@ class TelegramTdlibFacade implements TdlibFacade {
     _pendingApiHash = null;
     _dbDir = null;
     _filesDir = null;
-    final id = _clientId;
     _clientId = null;
-    if (id != null) {
-      try {
-        tdJsonClientSend(id, const td.Close());
-      } catch (_) {}
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-      try {
-        tdJsonClientDestroy(id);
-      } catch (_) {}
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+    if (identical(_nativeClientOwner, this)) {
+      _nativeClientOwner = null;
     }
+    try {
+      tdJsonClientDestroy(id);
+    } catch (e) {
+      _tdlog('TDLib: tdJsonClientDestroy error: $e');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 120));
   }
 
   @override
   Future<void> dispose() async {
-    await _shutdownClient();
-    await _updates.close();
-    await _qrPayload.close();
-    await _cloudPassword.close();
-    await _smsCodeChallenge.close();
-    await _authWaitPhoneNumber.close();
-    await _authUserId.close();
-    await _functionErrors.close();
+    try {
+      await _shutdownClient();
+      await _updates.close();
+      await _qrPayload.close();
+      await _cloudPassword.close();
+      await _smsCodeChallenge.close();
+      await _authWaitPhoneNumber.close();
+      await _authUserId.close();
+      await _functionErrors.close();
+    } catch (e, st) {
+      _tdlog('TDLib: dispose error: $e\n$st');
+    }
   }
 }
 
@@ -745,8 +854,11 @@ TelegramTdlibFacade createTdlibFromConfig(AppConfig config) {
   return TelegramTdlibFacade();
 }
 
-/// Passed to [tdlibReceiveIsolateMain]: `libtdjson.so` on Android/desktop, or
-/// `null` to use [ffi.DynamicLibrary.process] (e.g. iOS/macOS).
+/// Passed to [tdlibReceiveIsolateMain]: explicit `.so` path per platform.
+///
+/// On Android, [DynamicLibrary.process] does **not** export `td_json_client_*`
+/// from `libtdjson.so` (JNI loads it separately), so the receive isolate must
+/// use [DynamicLibrary.open] like the main isolate — same as tdlib 1.6 examples.
 String? _nativeLibPathForReceiveIsolate() {
   if (kIsWeb) return null;
   if (Platform.isAndroid || Platform.isLinux || Platform.isWindows) {
@@ -767,6 +879,9 @@ void tdlibReceiveIsolateMain(List<Object?> message) {
   } else {
     TdPlugin.instance = td_native.TdNativePlugin(ffi.DynamicLibrary.process());
   }
+  debugPrint(
+    'TDLib recv isolate: lib=${libPath ?? "process()"} clientPtr=$clientId',
+  );
 
   while (true) {
     try {

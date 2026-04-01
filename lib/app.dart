@@ -28,7 +28,8 @@ class TeleCimaApp extends ConsumerWidget {
           final apiId = int.tryParse(apiIdStr) ?? 0;
           if (apiId > 0) {
             AppDebugLog.instance.log(
-              'TeleCimaApp: Auto-initializing TDLib for active session',
+              'TeleCimaApp: Auto-initializing TDLib '
+              'facade=${identityHashCode(facade)} isInitialized=${facade.isInitialized}',
               category: AppDebugLogCategory.app,
             );
             unawaited(facade.init(

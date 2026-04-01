@@ -14,6 +14,8 @@ import '../../data/models/app_media.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
 
+const _kBackExitWindow = Duration(seconds: 3);
+
 void _homeLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
 void _homeSyncLog(String m) =>
@@ -31,6 +33,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   static const double _gridRowExtent = 390;
   bool _isSyncing = false;
   DateTime? _lastSyncTime;
+  DateTime? _lastBackPress;
+  bool _isExiting = false;
   final ScrollController _gridScrollController = ScrollController();
   final ScrollController _sidebarScrollController = ScrollController();
   final FocusScopeNode _sidebarScopeNode =
@@ -323,6 +327,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return '${diff.inDays}d ago';
   }
 
+  Future<void> _gracefulExit() async {
+    if (_isExiting) return;
+    setState(() => _isExiting = true);
+    _homeLog('HomeScreen: graceful exit — shutting down TDLib');
+    try {
+      final facade = ref.read(tdlibFacadeProvider);
+      await facade.dispose().timeout(
+            const Duration(seconds: 4),
+            onTimeout: () =>
+                _homeLog('HomeScreen: TDLib dispose timeout, exiting anyway'),
+          );
+    } catch (e) {
+      _homeLog('HomeScreen: TDLib dispose error on exit: $e');
+    }
+    _homeLog('HomeScreen: closing app via SystemNavigator.pop');
+    await SystemNavigator.pop();
+  }
+
   void _openItem(BuildContext context, AppMediaAggregate item) {
     final id = item.media.id.trim().isNotEmpty
         ? item.media.id.trim()
@@ -362,7 +384,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       gridCount: filtered.length,
     );
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _isExiting) return;
+        final now = DateTime.now();
+        if (_lastBackPress != null &&
+            now.difference(_lastBackPress!) < _kBackExitWindow) {
+          unawaited(_gracefulExit());
+          return;
+        }
+        _lastBackPress = now;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Press back again to exit'),
+            duration: _kBackExitWindow,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      },
+      child: Scaffold(
       body: Row(
         children: [
           Container(
@@ -604,6 +645,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ],
       ),
+    ),
     );
   }
 }

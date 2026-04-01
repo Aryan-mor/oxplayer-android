@@ -318,7 +318,6 @@ class _DetailsPanel extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
                     if (isSeries)
                       _SeriesVariantsSection(aggregate: aggregate)
                     else
@@ -571,26 +570,61 @@ class _VariantAction extends StatelessWidget {
   final String downloadTitle;
   final String downloadGlobalId;
 
+  Widget _serverInfoButton(BuildContext context) {
+    return TVButton(
+      onPressed: () => _showServerFileInfoDialog(
+        context,
+        media: media,
+        file: file,
+        isSeriesMedia: isSeriesMedia,
+        downloadTitle: downloadTitle,
+      ),
+      child: const Icon(Icons.info_outline, color: Colors.lightBlueAccent),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return switch (state) {
-      DownloadIdle() => TVButton(
-          onPressed: () => _startDownload(context),
-          child: const Icon(Icons.download, color: Colors.white),
+      DownloadIdle() => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TVButton(
+              onPressed: () => _startDownload(context),
+              child: const Icon(Icons.download, color: Colors.white),
+            ),
+            const SizedBox(width: 6),
+            _serverInfoButton(context),
+          ],
         ),
-      DownloadRecovering() => const SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppColors.highlight,
-          ),
+      DownloadRecovering() => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.highlight,
+              ),
+            ),
+            const SizedBox(width: 6),
+            _serverInfoButton(context),
+          ],
         ),
-      DownloadUnavailable() => const Text(
-          'Not available',
-          style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+      DownloadUnavailable() => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Not available',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+            const SizedBox(width: 8),
+            _serverInfoButton(context),
+          ],
         ),
       Downloading(:final percent) => Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.highlight)),
             const SizedBox(width: 8),
@@ -598,9 +632,12 @@ class _VariantAction extends StatelessWidget {
               onPressed: () => dm.pauseDownload(downloadGlobalId),
               child: const Icon(Icons.pause, color: Colors.white),
             ),
+            const SizedBox(width: 6),
+            _serverInfoButton(context),
           ],
         ),
       DownloadPaused(:final percent) => Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.textMuted)),
             const SizedBox(width: 8),
@@ -619,14 +656,19 @@ class _VariantAction extends StatelessWidget {
               ),
               child: const Icon(Icons.delete, color: Colors.redAccent),
             ),
+            const SizedBox(width: 6),
+            _serverInfoButton(context),
           ],
         ),
       DownloadCompleted(:final localFilePath) => Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             TVButton(
               onPressed: () => _play(context, localFilePath),
               child: const Icon(Icons.play_arrow, color: Colors.white),
             ),
+            const SizedBox(width: 6),
+            _serverInfoButton(context),
             if (kDebugMode) ...[
               const SizedBox(width: 6),
               TVButton(
@@ -640,7 +682,7 @@ class _VariantAction extends StatelessWidget {
                   downloadGlobalId: downloadGlobalId,
                   localPath: localFilePath,
                 ),
-                child: const Icon(Icons.info_outline, color: Colors.lightBlueAccent),
+                child: const Icon(Icons.bug_report, color: Colors.orangeAccent),
               ),
             ],
             const SizedBox(width: 6),
@@ -656,9 +698,16 @@ class _VariantAction extends StatelessWidget {
             ),
           ],
         ),
-      DownloadError() => TVButton(
-          onPressed: () => _startDownload(context),
-          child: const Icon(Icons.refresh, color: Colors.redAccent),
+      DownloadError() => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TVButton(
+              onPressed: () => _startDownload(context),
+              child: const Icon(Icons.refresh, color: Colors.redAccent),
+            ),
+            const SizedBox(width: 6),
+            _serverInfoButton(context),
+          ],
         ),
     };
   }
@@ -736,6 +785,115 @@ String? _seasonEpisodeLine(bool isSeries, AppMediaFile file) {
       ? file.episode!.clamp(0, 999)
       : 0;
   return 'S${s.toString().padLeft(2, '0')}E${e.toString().padLeft(2, '0')}';
+}
+
+String _truncateForInfo(String? s, {int max = 120}) {
+  if (s == null) return '(null)';
+  final t = s.trim();
+  if (t.isEmpty) return '(empty)';
+  if (t.length <= max) return t;
+  return '${t.substring(0, max)}… (${t.length} chars)';
+}
+
+Future<void> _showServerFileInfoDialog(
+  BuildContext context, {
+  required AppMedia media,
+  required AppMediaFile file,
+  required bool isSeriesMedia,
+  required String downloadTitle,
+}) async {
+  final r = StringBuffer();
+  r.writeln('=== API MEDIA (library item) ===');
+  r.writeln('id: ${media.id}');
+  r.writeln('title: ${media.title}');
+  r.writeln('type: ${media.type}');
+  r.writeln('releaseYear: ${media.releaseYear}');
+  r.writeln('tmdbId: ${media.tmdbId}');
+  r.writeln('imdbId: ${media.imdbId}');
+  r.writeln('originalLanguage: ${media.originalLanguage}');
+  r.writeln('posterPath: ${media.posterPath}');
+  r.writeln('summary: ${_truncateForInfo(media.summary, max: 200)}');
+  r.writeln('rawDetails: ${_truncateForInfo(media.rawDetails, max: 160)}');
+  r.writeln('createdAt: ${media.createdAt.toIso8601String()}');
+  r.writeln('updatedAt: ${media.updatedAt.toIso8601String()}');
+  r.writeln('');
+  r.writeln('=== VARIANT (file row from API) ===');
+  r.writeln('id (variant): ${file.id}');
+  r.writeln('mediaId: ${file.mediaId}');
+  r.writeln('sourceId: ${file.sourceId}');
+  r.writeln('sourceChatId: ${file.sourceChatId}');
+  r.writeln('fileUniqueId: ${file.fileUniqueId}');
+  r.writeln('videoLanguage: ${file.videoLanguage}');
+  r.writeln('quality: ${file.quality}');
+  r.writeln('size (bytes, API): ${file.size}');
+  r.writeln('versionTag: ${file.versionTag}');
+  r.writeln('language: ${file.language}');
+  r.writeln('season: ${file.season}');
+  r.writeln('episode: ${file.episode}');
+  r.writeln('createdAt: ${file.createdAt.toIso8601String()}');
+  r.writeln('updatedAt: ${file.updatedAt.toIso8601String()}');
+  r.writeln('');
+  r.writeln('=== TELEGRAM / LOCATOR (from API) ===');
+  r.writeln(
+    'telegramFileId: ${_truncateForInfo(file.telegramFileId, max: 96)}',
+  );
+  r.writeln('locatorType: ${file.locatorType}');
+  r.writeln('locatorChatId: ${file.locatorChatId}');
+  r.writeln('locatorMessageId: ${file.locatorMessageId}');
+  r.writeln('locatorBotUsername: ${file.locatorBotUsername}');
+  r.writeln(
+    'locatorRemoteFileId: ${_truncateForInfo(file.locatorRemoteFileId, max: 96)}',
+  );
+  r.writeln('');
+  r.writeln('=== DISPLAY (how this row is labeled in the app) ===');
+  r.writeln('inferred isSeriesMedia: $isSeriesMedia');
+  r.writeln('displayTitle (player / tags): $downloadTitle');
+  r.writeln('seasonEpisode line: ${_seasonEpisodeLine(isSeriesMedia, file)}');
+
+  final text = r.toString();
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppColors.card,
+      title: const Text(
+        'File info (from server)',
+        style: TextStyle(color: Colors.white),
+      ),
+      content: SizedBox(
+        width: 560,
+        height: 420,
+        child: SingleChildScrollView(
+          child: SelectableText(
+            text,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              height: 1.35,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: text));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Copied to clipboard')),
+              );
+            }
+          },
+          child: const Text('Copy'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 }
 
 Future<void> _showDownloadDebugDialog(
