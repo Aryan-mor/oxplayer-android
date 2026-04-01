@@ -22,3 +22,4 @@ assets/env/*.env
 **/local.properties
 **/key.properties
 *.jks
+android/app/.ci-keystore-secrets-temp.txt
