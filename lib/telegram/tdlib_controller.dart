@@ -65,6 +65,8 @@ class TelegramTdlibFacade implements TdlibFacade {
   final _updates = StreamController<Map<String, dynamic>>.broadcast();
   final _qrPayload = StreamController<String?>.broadcast();
   final _cloudPassword = StreamController<TdlibCloudPasswordChallenge?>.broadcast();
+  final _smsCodeChallenge = StreamController<TdlibSmsCodeChallenge?>.broadcast();
+  final _authWaitPhoneNumber = StreamController<bool>.broadcast();
   final _authUserId = StreamController<int>.broadcast();
   final _functionErrors = StreamController<String?>.broadcast();
   final _pendingRequests = <String, Completer<td.TdObject>>{};
@@ -98,6 +100,12 @@ class TelegramTdlibFacade implements TdlibFacade {
 
   @override
   Stream<TdlibCloudPasswordChallenge?> get cloudPasswordChallenge => _cloudPassword.stream;
+
+  @override
+  Stream<TdlibSmsCodeChallenge?> get smsCodeChallenge => _smsCodeChallenge.stream;
+
+  @override
+  Stream<bool> get authorizationWaitPhoneNumber => _authWaitPhoneNumber.stream;
 
   @override
   Stream<int> get authenticatedUserId => _authUserId.stream;
@@ -221,6 +229,32 @@ class TelegramTdlibFacade implements TdlibFacade {
     tdJsonClientSend(
       _clientId!,
       td.CheckAuthenticationPassword(password: password),
+    );
+  }
+
+  @override
+  Future<void> submitAuthenticationPhoneNumber(String phoneNumber) async {
+    if (_clientId == null) {
+      throw StateError('TDLib: call init() first');
+    }
+    final n = phoneNumber.trim();
+    if (n.isEmpty) return;
+    tdJsonClientSend(
+      _clientId!,
+      td.SetAuthenticationPhoneNumber(phoneNumber: n),
+    );
+  }
+
+  @override
+  Future<void> submitAuthenticationCode(String code) async {
+    if (_clientId == null) {
+      throw StateError('TDLib: call init() first');
+    }
+    final c = code.trim();
+    if (c.isEmpty) return;
+    tdJsonClientSend(
+      _clientId!,
+      td.CheckAuthenticationCode(code: c),
     );
   }
 
@@ -505,16 +539,47 @@ class TelegramTdlibFacade implements TdlibFacade {
       _tdlog('TDLib[client=$_clientId]: State = WaitPhoneNumber');
       _failEnsureAuthorizedIfPending('WaitPhoneNumber');
       unawaited(_invokeRequiresInteractiveLogin());
-      tdJsonClientSend(
-        _clientId!,
-        const td.RequestQrCodeAuthentication(otherUserIds: []),
-      );
+      if (!_authWaitPhoneNumber.isClosed) {
+        _authWaitPhoneNumber.add(true);
+      }
+      if (!_smsCodeChallenge.isClosed) {
+        _smsCodeChallenge.add(null);
+      }
+      // QR is started from the welcome screen when the user chooses "Sign in with QR".
+    } else if (state is td.AuthorizationStateWaitCode) {
+      _tdlog('TDLib[client=$_clientId]: State = WaitCode');
+      _failEnsureAuthorizedIfPending('WaitCode');
+      unawaited(_invokeRequiresInteractiveLogin());
+      if (!_authWaitPhoneNumber.isClosed) {
+        _authWaitPhoneNumber.add(false);
+      }
+      if (!_qrPayload.isClosed) {
+        _qrPayload.add(null);
+      }
+      if (!_cloudPassword.isClosed) {
+        _cloudPassword.add(null);
+      }
+      if (!_smsCodeChallenge.isClosed) {
+        final info = state.codeInfo;
+        _smsCodeChallenge.add(
+          TdlibSmsCodeChallenge(
+            phoneNumber: info.phoneNumber,
+            resendTimeoutSeconds: info.timeout,
+          ),
+        );
+      }
     } else if (state is td.AuthorizationStateWaitOtherDeviceConfirmation) {
       _tdlog(
         'TDLib[client=$_clientId]: State = WaitOtherDeviceConfirmation (QR Link: ${state.link.substring(0, 10)}...)',
       );
       _failEnsureAuthorizedIfPending('WaitOtherDeviceConfirmation');
       unawaited(_invokeRequiresInteractiveLogin());
+      if (!_authWaitPhoneNumber.isClosed) {
+        _authWaitPhoneNumber.add(false);
+      }
+      if (!_smsCodeChallenge.isClosed) {
+        _smsCodeChallenge.add(null);
+      }
       if (!_cloudPassword.isClosed) {
         _cloudPassword.add(null);
       }
@@ -529,6 +594,12 @@ class TelegramTdlibFacade implements TdlibFacade {
       if (!_cloudPassword.isClosed) {
         _cloudPassword.add(null);
       }
+      if (!_smsCodeChallenge.isClosed) {
+        _smsCodeChallenge.add(null);
+      }
+      if (!_authWaitPhoneNumber.isClosed) {
+        _authWaitPhoneNumber.add(false);
+      }
       if (!_qrPayload.isClosed) {
         _qrPayload.add(null);
       }
@@ -538,6 +609,12 @@ class TelegramTdlibFacade implements TdlibFacade {
     } else if (state is td.AuthorizationStateWaitPassword) {
       debugPrint('TDLib: 2FA password required (authorizationStateWaitPassword)');
       _tdlog('TDLib: WaitPassword (2FA)');
+      if (!_authWaitPhoneNumber.isClosed) {
+        _authWaitPhoneNumber.add(false);
+      }
+      if (!_smsCodeChallenge.isClosed) {
+        _smsCodeChallenge.add(null);
+      }
       if (!_qrPayload.isClosed) {
         _qrPayload.add(null);
       }
@@ -647,6 +724,8 @@ class TelegramTdlibFacade implements TdlibFacade {
     await _updates.close();
     await _qrPayload.close();
     await _cloudPassword.close();
+    await _smsCodeChallenge.close();
+    await _authWaitPhoneNumber.close();
     await _authUserId.close();
     await _functionErrors.close();
   }

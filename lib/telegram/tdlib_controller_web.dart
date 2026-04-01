@@ -37,6 +37,12 @@ class TelegramTdlibFacade implements TdlibFacade {
       const Stream.empty();
 
   @override
+  Stream<TdlibSmsCodeChallenge?> get smsCodeChallenge => const Stream.empty();
+
+  @override
+  Stream<bool> get authorizationWaitPhoneNumber => const Stream.empty();
+
+  @override
   Stream<int> get authenticatedUserId => const Stream.empty();
 
   @override
@@ -54,6 +60,12 @@ class TelegramTdlibFacade implements TdlibFacade {
 
   @override
   Future<void> submitCloudPassword(String password) async {}
+
+  @override
+  Future<void> submitAuthenticationPhoneNumber(String phoneNumber) async {}
+
+  @override
+  Future<void> submitAuthenticationCode(String code) async {}
 
   @override
   Future<void> resetLocalSessionForQrLogin() async {}
