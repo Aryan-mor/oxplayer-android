@@ -29,7 +29,7 @@ Configure secrets in `assets/env/default.env` (copy from `assets/env/default.exa
 
 **Android TV** is configured in `android/app/src/main/AndroidManifest.xml`:
 
-- `touchscreen` not required, `leanback` required.
+- `touchscreen` not required, `leanback` required
 - `MAIN` + `LEANBACK_LAUNCHER`
 - `android:banner="@drawable/tv_banner"` (16:9 PNG at `android/app/src/main/res/drawable/tv_banner.png`, synced from `assets/Banner.png`)
 - Launcher mipmaps from `assets/AppIcons/android/mipmap-*`
