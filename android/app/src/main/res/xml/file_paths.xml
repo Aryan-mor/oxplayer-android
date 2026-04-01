@@ -8,4 +8,13 @@
     <external-files-path
         name="external_downloads"
         path="Downloads/" />
+
+    <!--
+        TDLib saves under getApplicationSupportDirectory()/tdlib_files/ which on
+        Android is Context.getFilesDir()/tdlib_files/ (path_provider_android).
+        External players need this root for FileProvider URIs.
+    -->
+    <files-path
+        name="tdlib_files"
+        path="tdlib_files/" />
 </paths>
