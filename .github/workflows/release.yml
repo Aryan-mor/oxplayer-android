@@ -11,6 +11,9 @@ jobs:
   build_and_release:
     name: Build & Release
     runs-on: ubuntu-latest
+    # Optional: to use Settings → Environments → [name] variables, add:
+    #   environment: your-env-name
+    # (or set repo variable and use environment: ${{ vars.TELE_CIMA_GITHUB_ENVIRONMENT }} if non-empty)
     permissions:
       contents: write # Required for creating releases
 
@@ -32,16 +35,42 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # Option A: one secret ENV_FILE_CONTENT = full contents of default.env
+      # Option B: repository or environment Variables + Secrets below (TELEGRAM_API_HASH should be a Secret, not a Variable)
       - name: Prepare environment variables
         env:
           ENV_FILE_CONTENT: ${{ secrets.ENV_FILE_CONTENT }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || vars.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || vars.TELEGRAM_API_HASH }}
+          INDEX_TAG: ${{ vars.INDEX_TAG }}
+          BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+          PROVIDER_BOT_USERNAME: ${{ vars.PROVIDER_BOT_USERNAME }}
+          REQUIRED_CHANNEL_USERNAME: ${{ vars.REQUIRED_CHANNEL_USERNAME }}
+          TV_APP_API_BASE_URL: ${{ vars.TV_APP_API_BASE_URL }}
+          TV_APP_WEBAPP_SHORT_NAME: ${{ vars.TV_APP_WEBAPP_SHORT_NAME }}
+          TV_APP_WEBAPP_URL: ${{ vars.TV_APP_WEBAPP_URL }}
         run: |
           if [ -n "$ENV_FILE_CONTENT" ]; then
-            echo "Using ENV_FILE_CONTENT from GitHub Secrets."
+            echo "Using ENV_FILE_CONTENT secret for assets/env/default.env"
             echo "$ENV_FILE_CONTENT" > assets/env/default.env
+          elif [ -n "$TELEGRAM_API_ID" ] && [ -n "$TELEGRAM_API_HASH" ]; then
+            echo "Building assets/env/default.env from TELEGRAM_* and Actions vars"
+            INDEX_VAL="${INDEX_TAG:-"#seeOnTV"}"
+            {
+              printf 'TELEGRAM_API_ID=%s\n' "$TELEGRAM_API_ID"
+              printf 'TELEGRAM_API_HASH=%s\n' "$TELEGRAM_API_HASH"
+              printf 'INDEX_TAG="%s"\n' "$INDEX_VAL"
+              printf 'BOT_USERNAME=%s\n' "$BOT_USERNAME"
+              printf 'PROVIDER_BOT_USERNAME=%s\n' "$PROVIDER_BOT_USERNAME"
+              printf 'REQUIRED_CHANNEL_USERNAME=%s\n' "$REQUIRED_CHANNEL_USERNAME"
+              printf 'TV_APP_API_BASE_URL=%s\n' "$TV_APP_API_BASE_URL"
+              printf 'TV_APP_WEBAPP_SHORT_NAME=%s\n' "$TV_APP_WEBAPP_SHORT_NAME"
+              printf 'TV_APP_WEBAPP_URL=%s\n' "$TV_APP_WEBAPP_URL"
+            } > assets/env/default.env
           else
-            echo "Warning: ENV_FILE_CONTENT secret is empty! Falling back to example.env."
+            echo "::error::No app env for CI. Set secret ENV_FILE_CONTENT (full default.env), or set TELEGRAM_API_ID and TELEGRAM_API_HASH (repository/environment Secrets or Variables). See workflow comments."
             cp assets/env/default.example.env assets/env/default.env
+            exit 1
           fi
 
       - name: Run Build Runner (Isar Generation)
