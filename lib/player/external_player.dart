@@ -6,7 +6,7 @@ import '../core/debug/app_debug_log.dart';
 ///
 /// The native side (MainActivity.kt) handles:
 ///   - `launchVideo(path)` — fires ACTION_VIEW with a FileProvider URI and video/* MIME.
-///   - `injectMetadata(path, title, year)` — writes MP4 tags (MKV is no-op for v1).
+///   - `injectMetadata(...)` — best-effort container tags (MP4 when supported; else log).
 class ExternalPlayer {
   ExternalPlayer._();
 
@@ -37,20 +37,29 @@ class ExternalPlayer {
     }
   }
 
-  /// Injects MP4 metadata tags. No-op for MKV/other in v1.
+  /// Best-effort metadata for the saved file (title/year/series hints for native tagging).
   static Future<void> injectMetadata({
     required String path,
     required String title,
     required String year,
+    String? mediaTitle,
+    String? displayTitle,
+    String? subtitle,
+    bool isSeries = false,
   }) async {
     try {
       AppDebugLog.instance.log(
-        'ExternalPlayer: injectMetadata title=$title year=$year path=$path',
+        'ExternalPlayer: injectMetadata path=$path title="$title" year=$year '
+        'isSeries=$isSeries subtitle=$subtitle',
       );
       await _metaChannel.invokeMethod<void>('injectMetadata', {
         'path': path,
         'title': title,
         'year': year,
+        if (mediaTitle != null) 'mediaTitle': mediaTitle,
+        if (displayTitle != null) 'displayTitle': displayTitle,
+        if (subtitle != null) 'subtitle': subtitle,
+        'isSeries': isSeries,
       });
     } on PlatformException catch (e) {
       AppDebugLog.instance.log(

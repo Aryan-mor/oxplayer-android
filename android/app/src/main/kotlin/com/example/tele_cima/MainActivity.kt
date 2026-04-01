@@ -87,30 +87,33 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "injectMetadata" -> {
                         @Suppress("UNCHECKED_CAST")
-                        val args = call.arguments as? Map<String, String>
-                        val path  = args?.get("path")
-                        val title = args?.get("title") ?: ""
-                        val year  = args?.get("year")  ?: ""
+                        val args = call.arguments as? Map<String, Any?>
+                        val path = args?.get("path") as? String
+                        val title = (args?.get("title") as? String) ?: ""
+                        val year = (args?.get("year") as? String) ?: ""
+                        val mediaTitle = args?.get("mediaTitle") as? String
+                        val displayTitle = args?.get("displayTitle") as? String
+                        val subtitle = args?.get("subtitle") as? String
+                        val isSeries = args?.get("isSeries") as? Boolean ?: false
 
                         if (path == null) {
                             result.error("INVALID_ARG", "path is null", null)
                             return@setMethodCallHandler
                         }
 
+                        android.util.Log.d(
+                            "TeleCima",
+                            "injectMetadata: path=$path title='$title' year='$year' " +
+                                "mediaTitle='$mediaTitle' displayTitle='$displayTitle' " +
+                                "subtitle='$subtitle' isSeries=$isSeries",
+                        )
+
                         val ext = File(path).extension.lowercase()
                         if (ext == "mp4" || ext == "m4v") {
-                            // MediaMetadataRetriever cannot write — use mp4parser or
-                            // a native approach for full tag injection.
-                            // For v1 we set the title via a best-effort rename that is
-                            // already done in Dart; actual tag writing requires mp4parser
-                            // (coM.googlecode.mp4parser:isoparser) added to build.gradle.
-                            // Log and return "ok" — tags will display in external player
-                            // via the file name which is already standardized.
-                            android.util.Log.d("TeleCima", "injectMetadata: mp4 title='$title' year='$year' path=$path (v1: tag writing via filename)")
+                            // MP4 tag atoms: add isoparser if we need on-device moov/udta writes.
+                            // Filename + intent extras already carry the display title for many players.
                             result.success("ok")
                         } else {
-                            // MKV / WebM / AVI: no-op for v1
-                            android.util.Log.d("TeleCima", "injectMetadata: skipping $ext (not mp4) path=$path")
                             result.success("unsupported")
                         }
                     }

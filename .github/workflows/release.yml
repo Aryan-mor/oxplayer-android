@@ -47,10 +47,32 @@ jobs:
       - name: Run Build Runner (Isar Generation)
         run: dart run build_runner build --delete-conflicting-outputs
 
+      # Secrets: ANDROID_KEYSTORE_BASE64 (base64 of .jks/.keystore), ANDROID_KEYSTORE_PASSWORD,
+      # ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD — release is signed with this key (distinct from local debug).
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::Set GitHub secret ANDROID_KEYSTORE_BASE64 (base64-encoded upload keystore)."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/ci-release.keystore
+
       - name: Build APK
+        env:
+          TELE_CIMA_RELEASE_STORE_FILE: ${{ github.workspace }}/android/app/ci-release.keystore
+          TELE_CIMA_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TELE_CIMA_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TELE_CIMA_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: flutter build apk --release --split-per-abi
 
       - name: Build AppBundle
+        env:
+          TELE_CIMA_RELEASE_STORE_FILE: ${{ github.workspace }}/android/app/ci-release.keystore
+          TELE_CIMA_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TELE_CIMA_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TELE_CIMA_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: flutter build appbundle --release
 
       - name: Create Release

@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:io' show File;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
@@ -349,6 +353,7 @@ class _MovieVariantsSection extends StatelessWidget {
           _VariantRow(
             media: aggregate.media,
             file: file,
+            inSeriesSection: false,
             downloadTitle: aggregate.media.title,
             downloadGlobalId: file.id,
           ),
@@ -405,6 +410,7 @@ class _SeriesVariantsSection extends StatelessWidget {
                         _VariantRow(
                           media: aggregate.media,
                           file: file,
+                          inSeriesSection: true,
                           downloadTitle:
                               '${aggregate.media.title} - S${season.toString().padLeft(2, '0')}E${(ep <= 0 ? 0 : ep).toString().padLeft(2, '0')}',
                           downloadGlobalId: file.id,
@@ -424,17 +430,21 @@ class _VariantRow extends ConsumerWidget {
   const _VariantRow({
     required this.media,
     required this.file,
+    required this.inSeriesSection,
     required this.downloadTitle,
     required this.downloadGlobalId,
   });
 
   final AppMedia media;
   final AppMediaFile file;
+  /// True when this row lives under the series seasons UI (also used with API type / file ep).
+  final bool inSeriesSection;
   final String downloadTitle;
   final String downloadGlobalId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isSeriesMedia = _effectiveIsSeriesMedia(media, file, inSeriesSection);
     final dm = ref.watch(downloadManagerProvider).value;
     final state = dm?.stateFor(downloadGlobalId) ?? const DownloadIdle();
     final quality = (file.quality ?? '').trim().isEmpty ? 'Unknown quality' : file.quality!.trim();
@@ -465,6 +475,7 @@ class _VariantRow extends ConsumerWidget {
               state: state,
               media: media,
               file: file,
+              isSeriesMedia: isSeriesMedia,
               downloadTitle: downloadTitle,
               downloadGlobalId: downloadGlobalId,
             ),
@@ -480,6 +491,7 @@ class _VariantAction extends StatelessWidget {
     required this.state,
     required this.media,
     required this.file,
+    required this.isSeriesMedia,
     required this.downloadTitle,
     required this.downloadGlobalId,
   });
@@ -488,6 +500,7 @@ class _VariantAction extends StatelessWidget {
   final DownloadState state;
   final AppMedia media;
   final AppMediaFile file;
+  final bool isSeriesMedia;
   final String downloadTitle;
   final String downloadGlobalId;
 
@@ -530,6 +543,22 @@ class _VariantAction extends StatelessWidget {
               onPressed: () => _play(context, localFilePath),
               child: const Icon(Icons.play_arrow, color: Colors.white),
             ),
+            if (kDebugMode) ...[
+              const SizedBox(width: 6),
+              TVButton(
+                onPressed: () => _showDownloadDebugDialog(
+                  context,
+                  dm: dm,
+                  media: media,
+                  file: file,
+                  isSeriesMedia: isSeriesMedia,
+                  downloadTitle: downloadTitle,
+                  downloadGlobalId: downloadGlobalId,
+                  localPath: localFilePath,
+                ),
+                child: const Icon(Icons.info_outline, color: Colors.lightBlueAccent),
+              ),
+            ],
             const SizedBox(width: 6),
             TVButton(
               onPressed: () => dm.deleteDownload(downloadGlobalId),
@@ -566,14 +595,28 @@ class _VariantAction extends StatelessWidget {
         locatorMessageId: file.locatorMessageId,
         locatorBotUsername: file.locatorBotUsername,
         locatorRemoteFileId: file.locatorRemoteFileId,
-        title: downloadTitle,
-        year: media.releaseYear?.toString() ?? '',
+        mediaTitle: media.title,
+        displayTitle: downloadTitle,
+        releaseYear: media.releaseYear?.toString() ?? '',
+        isSeriesMedia: isSeriesMedia,
+        season: file.season,
+        episode: file.episode,
+        quality: file.quality,
         fileSize: file.size,
       ),
     );
   }
 
   Future<void> _play(BuildContext context, String path) async {
+    await ExternalPlayer.injectMetadata(
+      path: path,
+      title: downloadTitle,
+      year: media.releaseYear?.toString() ?? '',
+      mediaTitle: media.title,
+      displayTitle: downloadTitle,
+      subtitle: _seasonEpisodeLine(isSeriesMedia, file),
+      isSeries: isSeriesMedia,
+    );
     final launched = await ExternalPlayer.launchVideo(path: path, title: downloadTitle);
     if (!launched && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -581,6 +624,148 @@ class _VariantAction extends StatelessWidget {
       );
     }
   }
+}
+
+bool _effectiveIsSeriesMedia(
+  AppMedia media,
+  AppMediaFile file,
+  bool inSeriesUi,
+) {
+  final t = media.type.toUpperCase();
+  if (t == 'SERIES' || t == '#SERIES') return true;
+  if (inSeriesUi) return true;
+  if ((file.season ?? 0) > 0) return true;
+  if ((file.episode ?? 0) > 0) return true;
+  return false;
+}
+
+String? _seasonEpisodeLine(bool isSeries, AppMediaFile file) {
+  if (!isSeries) return null;
+  final s = (file.season ?? 1).clamp(0, 999);
+  final e = (file.episode != null && file.episode! > 0)
+      ? file.episode!.clamp(0, 999)
+      : 0;
+  return 'S${s.toString().padLeft(2, '0')}E${e.toString().padLeft(2, '0')}';
+}
+
+Future<void> _showDownloadDebugDialog(
+  BuildContext context, {
+  required DownloadManager dm,
+  required AppMedia media,
+  required AppMediaFile file,
+  required bool isSeriesMedia,
+  required String downloadTitle,
+  required String downloadGlobalId,
+  required String localPath,
+}) async {
+  final record = dm.downloadRecordFor(downloadGlobalId);
+  final disk = StringBuffer();
+  try {
+    final f = File(localPath);
+    if (await f.exists()) {
+      disk.writeln('exists: true');
+      disk.writeln('length_bytes: ${await f.length()}');
+      disk.writeln('path: $localPath');
+    } else {
+      disk.writeln('exists: false');
+      disk.writeln('path: $localPath');
+    }
+  } catch (e) {
+    disk.writeln('stat_error: $e');
+  }
+
+  final r = StringBuffer();
+  r.writeln('=== API MEDIA (library item) ===');
+  r.writeln('media.id: ${media.id}');
+  r.writeln('media.title: ${media.title}');
+  r.writeln('media.type: ${media.type}');
+  r.writeln('media.releaseYear: ${media.releaseYear}');
+  r.writeln('media.tmdbId: ${media.tmdbId}');
+  r.writeln('');
+  r.writeln('=== VARIANT (file row from API) ===');
+  r.writeln('file.id (variant / download globalId): ${file.id}');
+  r.writeln('file.mediaId: ${file.mediaId}');
+  r.writeln('file.season: ${file.season}');
+  r.writeln('file.episode: ${file.episode}');
+  r.writeln('file.quality: ${file.quality}');
+  r.writeln('file.size (API): ${file.size}');
+  r.writeln('file.mime/telegram: telegramFileId set=${(file.telegramFileId ?? '').isNotEmpty}');
+  r.writeln('locatorType: ${file.locatorType}');
+  r.writeln('locatorChatId/messageId: ${file.locatorChatId} / ${file.locatorMessageId}');
+  r.writeln('');
+  r.writeln('=== UI / NAMING INPUTS ===');
+  r.writeln('inferred isSeriesMedia: $isSeriesMedia');
+  r.writeln('displayTitle (player / tags): $downloadTitle');
+  r.writeln('seasonEpisode line: ${_seasonEpisodeLine(isSeriesMedia, file)}');
+  r.writeln('');
+  r.writeln('=== PERSISTED DOWNLOAD RECORD ===');
+  if (record == null) {
+    r.writeln('(no record)');
+  } else {
+    r.writeln('standardizedName: ${record.standardizedName}');
+    r.writeln('fileName: ${record.fileName}');
+    r.writeln('localFilePath: ${record.localFilePath}');
+    r.writeln('displayTitle: ${record.displayTitle}');
+    r.writeln('mediaTitle: ${record.mediaTitle}');
+    r.writeln('releaseYear: ${record.releaseYear}');
+    r.writeln('isSeriesMedia: ${record.isSeriesMedia}');
+    r.writeln('season/episode: ${record.season} / ${record.episode}');
+    r.writeln('quality: ${record.quality}');
+    r.writeln('mimeType: ${record.mimeType}');
+    r.writeln('status: ${record.status}');
+  }
+  r.writeln('');
+  r.writeln('=== ON DISK (this session path) ===');
+  r.writeln(disk.toString().trimRight());
+  r.writeln('');
+  r.writeln('=== COMPARE ===');
+  r.writeln('basename(localPath): ${p.basename(localPath)}');
+  r.writeln('basenameWithoutExtension: ${p.basenameWithoutExtension(localPath)}');
+
+  final text = r.toString();
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppColors.card,
+      title: const Text(
+        'Download debug',
+        style: TextStyle(color: Colors.white),
+      ),
+      content: SizedBox(
+        width: 560,
+        height: 420,
+        child: SingleChildScrollView(
+          child: SelectableText(
+            text,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              height: 1.35,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: text));
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Copied to clipboard')),
+              );
+            }
+          },
+          child: const Text('Copy'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// TDLib needs a locator or `locatorRemoteFileId`; backup `telegramFileId` alone is often Bot API.

@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
 
 import '../core/debug/app_debug_log.dart';
+import '../player/external_player.dart';
 import '../telegram/tdlib_facade.dart';
 
 void _dmglog(String m) =>
@@ -118,6 +120,13 @@ class MediaDownloadRecord {
     this.standardizedName,
     this.tdlibFileId,
     this.localFilePath,
+    this.displayTitle,
+    this.mediaTitle,
+    this.releaseYear,
+    this.isSeriesMedia = false,
+    this.season,
+    this.episode,
+    this.quality,
   });
 
   String id;
@@ -133,7 +142,20 @@ class MediaDownloadRecord {
   int? tdlibFileId;
   String? localFilePath;
 
+  /// Full line for players / MP4 tags (e.g. `Show - S01E05` or movie title).
+  String? displayTitle;
+  String? mediaTitle;
+  String? releaseYear;
+  bool isSeriesMedia;
+  int? season;
+  int? episode;
+  String? quality;
+
   factory MediaDownloadRecord.fromJson(Map<String, dynamic> json) {
+    final seriesRaw = json['isSeriesMedia'];
+    final isSeries = seriesRaw is bool
+        ? seriesRaw
+        : (seriesRaw is num ? seriesRaw != 0 : false);
     return MediaDownloadRecord(
       id: json['id'] as String,
       globalId: json['globalId'] as String,
@@ -147,6 +169,13 @@ class MediaDownloadRecord {
       standardizedName: json['standardizedName'] as String?,
       tdlibFileId: json['tdlibFileId'] as int?,
       localFilePath: json['localFilePath'] as String?,
+      displayTitle: json['displayTitle'] as String?,
+      mediaTitle: json['mediaTitle'] as String?,
+      releaseYear: json['releaseYear'] as String?,
+      isSeriesMedia: isSeries,
+      season: json['season'] as int?,
+      episode: json['episode'] as int?,
+      quality: json['quality'] as String?,
     );
   }
 
@@ -163,6 +192,13 @@ class MediaDownloadRecord {
         'standardizedName': standardizedName,
         'tdlibFileId': tdlibFileId,
         'localFilePath': localFilePath,
+        'displayTitle': displayTitle,
+        'mediaTitle': mediaTitle,
+        'releaseYear': releaseYear,
+        'isSeriesMedia': isSeriesMedia,
+        'season': season,
+        'episode': episode,
+        'quality': quality,
       };
 }
 
@@ -231,6 +267,10 @@ class DownloadManager extends ChangeNotifier {
       return null;
     }
   }
+
+  /// Persisted row for this variant ([globalId] is [AppMediaFile.id]).
+  MediaDownloadRecord? downloadRecordFor(String globalId) =>
+      _getRecordForGlobalId(globalId);
 
   List<MediaDownloadRecord> getAllRecords() {
     final active = _records.toList();
@@ -309,8 +349,16 @@ class DownloadManager extends ChangeNotifier {
     String? locatorRemoteFileId,
     int? msgId,
     int? chatId,
-    required String title,
-    required String year,
+    /// Show / movie title (base name only; no SxxExx — used for saved filename).
+    required String mediaTitle,
+    /// UI / player label (may include `S01E05`).
+    required String displayTitle,
+    /// Release year string (movie); optional for series (often show year).
+    String releaseYear = '',
+    bool isSeriesMedia = false,
+    int? season,
+    int? episode,
+    String? quality,
     String? mimeType,
     int? fileSize,
     bool allowBackupRecovery = true,
@@ -434,7 +482,15 @@ class DownloadManager extends ChangeNotifier {
       final ext = _extensionFromMime(mimeType) ??
           _extensionFromFileName(tdFile.local.path) ??
           'mkv';
-      final standardizedName = _buildStandardizedName(title, year, ext);
+      final standardizedName = _buildDownloadFileName(
+        mediaTitle: mediaTitle,
+        releaseYear: releaseYear,
+        isSeriesMedia: isSeriesMedia,
+        season: season,
+        episode: episode,
+        quality: quality,
+        ext: ext,
+      );
 
       final downloadId = '$globalId:$variantId';
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -447,6 +503,14 @@ class DownloadManager extends ChangeNotifier {
         row.updatedAt = now;
         row.tdlibFileId = tdFile.id;
         row.standardizedName = standardizedName;
+        row.fileName = standardizedName;
+        row.displayTitle = displayTitle;
+        row.mediaTitle = mediaTitle;
+        row.releaseYear = releaseYear;
+        row.isSeriesMedia = isSeriesMedia;
+        row.season = season;
+        row.episode = episode;
+        row.quality = quality;
       } else {
         row = MediaDownloadRecord(
           id: downloadId,
@@ -460,6 +524,13 @@ class DownloadManager extends ChangeNotifier {
           mimeType: mimeType,
           standardizedName: standardizedName,
           tdlibFileId: tdFile.id,
+          displayTitle: displayTitle,
+          mediaTitle: mediaTitle,
+          releaseYear: releaseYear,
+          isSeriesMedia: isSeriesMedia,
+          season: season,
+          episode: episode,
+          quality: quality,
         );
         _records.add(row);
       }
@@ -538,8 +609,13 @@ class DownloadManager extends ChangeNotifier {
         locatorRemoteFileId: fresh?.locatorRemoteFileId ?? locatorRemoteFileId,
         msgId: msgId,
         chatId: chatId,
-        title: title,
-        year: year,
+        mediaTitle: mediaTitle,
+        displayTitle: displayTitle,
+        releaseYear: releaseYear,
+        isSeriesMedia: isSeriesMedia,
+        season: season,
+        episode: episode,
+        quality: quality,
         mimeType: mimeType,
         fileSize: fileSize,
         allowBackupRecovery: false,
@@ -757,7 +833,7 @@ class DownloadManager extends ChangeNotifier {
     final downloadedPath = _readString(local, key: 'path') ?? '';
 
     if (isCompleted) {
-      _onDownloadCompleted(globalId, fileId, downloadedPath);
+      unawaited(_onDownloadCompleted(globalId, fileId, downloadedPath));
     } else {
       final expectedSize =
           _readInt(fileMap, snake: 'expected_size', camel: 'expectedSize');
@@ -767,6 +843,15 @@ class DownloadManager extends ChangeNotifier {
       );
       _updateDbProgress(globalId, downloadedSize, expectedSize);
     }
+  }
+
+  String? _seasonEpisodeSubtitle(MediaDownloadRecord row) {
+    if (!row.isSeriesMedia) return null;
+    final s = (row.season ?? 1).clamp(0, 999);
+    final e = (row.episode != null && row.episode! > 0)
+        ? row.episode!.clamp(0, 999)
+        : 0;
+    return 'S${s.toString().padLeft(2, '0')}E${e.toString().padLeft(2, '0')}';
   }
 
   Future<void> _onDownloadCompleted(
@@ -782,9 +867,31 @@ class DownloadManager extends ChangeNotifier {
       final row = _getRecordForGlobalId(globalId);
       if (row == null) return;
 
-      final standardizedName = row.standardizedName ?? row.fileName;
+      var plannedName = row.standardizedName ?? row.fileName;
+      final actualExt = _extensionFromFileName(tdlibPath);
+      if (actualExt != null &&
+          actualExt.isNotEmpty &&
+          (row.mediaTitle ?? '').trim().isNotEmpty) {
+        plannedName = _buildDownloadFileName(
+          mediaTitle: row.mediaTitle!.trim(),
+          releaseYear: row.releaseYear ?? '',
+          isSeriesMedia: row.isSeriesMedia,
+          season: row.season,
+          episode: row.episode,
+          quality: row.quality,
+          ext: actualExt,
+        );
+      } else if (actualExt != null && actualExt.isNotEmpty) {
+        final dot = plannedName.lastIndexOf('.');
+        final stem = dot > 0 ? plannedName.substring(0, dot) : plannedName;
+        plannedName = '$stem.$actualExt';
+      }
+      row.standardizedName = plannedName;
+      row.fileName = plannedName;
+
       final destDir = await _resolveDownloadDirectory();
-      final destPath = '${destDir.path}/$standardizedName';
+      final desiredPath = p.join(destDir.path, plannedName);
+      final destPath = await _allocateUniqueDestinationPath(desiredPath);
 
       String finalPath;
       try {
@@ -802,9 +909,30 @@ class DownloadManager extends ChangeNotifier {
 
       row.status = 'completed';
       row.localFilePath = finalPath;
+      if (p.basename(finalPath) != plannedName) {
+        row.fileName = p.basename(finalPath);
+        row.standardizedName = p.basename(finalPath);
+      }
       row.bytesDownloaded = row.totalBytes ?? row.bytesDownloaded;
       row.updatedAt = DateTime.now().millisecondsSinceEpoch;
       await _saveRecords();
+
+      final tagTitle = (row.displayTitle ?? '').trim().isNotEmpty
+          ? row.displayTitle!.trim()
+          : p.basenameWithoutExtension(finalPath);
+      try {
+        await ExternalPlayer.injectMetadata(
+          path: finalPath,
+          title: tagTitle,
+          year: (row.releaseYear ?? '').trim(),
+          mediaTitle: row.mediaTitle,
+          displayTitle: row.displayTitle,
+          subtitle: _seasonEpisodeSubtitle(row),
+          isSeries: row.isSeriesMedia,
+        );
+      } catch (e) {
+        _dmglog('DownloadManager: injectMetadata non-fatal: $e');
+      }
 
       _fileIdToGlobalId.remove(fileId);
       _unavailableGlobalIds.remove(globalId);
@@ -835,14 +963,97 @@ class DownloadManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  static String _buildStandardizedName(
-      String title, String year, String ext) {
-    final safe = title
-        .replaceAll(RegExp(r'[^\w\s\-]'), '')
-        .trim()
-        .replaceAll(RegExp(r'\s+'), '_');
-    final suffix = year.isNotEmpty ? '_$year' : '';
-    return '$safe$suffix.$ext';
+  /// Human-readable filename: movie `Title (2024).mp4`, series `Title S01E02.mkv`.
+  static String _buildDownloadFileName({
+    required String mediaTitle,
+    String releaseYear = '',
+    bool isSeriesMedia = false,
+    int? season,
+    int? episode,
+    String? quality,
+    required String ext,
+  }) {
+    final base = _sanitizeFileNameStem(mediaTitle);
+    final year = releaseYear.trim();
+
+    String stem;
+    if (isSeriesMedia) {
+      final s = (season ?? 1).clamp(0, 999);
+      final e = (episode != null && episode > 0) ? episode.clamp(0, 999) : 0;
+      final sStr = s.toString().padLeft(2, '0');
+      final eStr = e.toString().padLeft(2, '0');
+      stem = '$base S${sStr}E$eStr';
+    } else if (year.isNotEmpty) {
+      stem = '$base ($year)';
+    } else {
+      stem = base;
+    }
+
+    final q = (quality ?? '').trim();
+    if (q.isNotEmpty) {
+      final qs = _sanitizeFileNameStem(q).replaceAll(RegExp(r'\s+'), '');
+      if (qs.isNotEmpty) {
+        stem = '$stem $qs';
+      }
+    }
+
+    final safeExt =
+        ext.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toLowerCase();
+    final extUse = safeExt.isEmpty ? 'mkv' : safeExt;
+    return '$stem.$extUse';
+  }
+
+  /// Keeps Unicode letters/numbers; strips path-forbidden characters.
+  static String _sanitizeFileNameStem(String raw) {
+    var s = raw.trim();
+    if (s.isEmpty) return 'video';
+    final buf = StringBuffer();
+    for (final rune in s.runes) {
+      final c = String.fromCharCode(rune);
+      if (rune == 0) continue;
+      if (rune < 32) continue;
+      if ('<>:"/\\|?*'.contains(c)) {
+        buf.write('_');
+      } else {
+        buf.write(c);
+      }
+    }
+    s = buf.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    while (s.endsWith(' ') || s.endsWith('.')) {
+      s = s.substring(0, s.length - 1);
+    }
+    s = s.trim();
+    if (s.isEmpty) return 'video';
+    if (s.length > 180) {
+      s = s.substring(0, 180).trim();
+    }
+    return s;
+  }
+
+  static Future<String> _allocateUniqueDestinationPath(
+    String desiredPath,
+  ) async {
+    if (!await File(desiredPath).exists()) return desiredPath;
+
+    final dir = p.dirname(desiredPath);
+    final filename = p.basename(desiredPath);
+    final dot = filename.lastIndexOf('.');
+    late final String stem;
+    late final String extWithDot;
+    if (dot > 0) {
+      stem = filename.substring(0, dot);
+      extWithDot = filename.substring(dot);
+    } else {
+      stem = filename;
+      extWithDot = '';
+    }
+
+    for (var n = 2; n < 10000; n++) {
+      final candidate = p.join(dir, '$stem ($n)$extWithDot');
+      if (!await File(candidate).exists()) return candidate;
+    }
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    return p.join(dir, '$stem $stamp$extWithDot');
   }
 
   static String? _extensionFromMime(String? mime) {
