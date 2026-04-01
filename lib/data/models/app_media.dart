@@ -106,6 +106,7 @@ class AppMediaFile {
     required this.id,
     required this.mediaId,
     this.sourceId,
+    this.sourceChatId,
     required this.fileUniqueId,
     this.videoLanguage,
     this.quality,
@@ -119,11 +120,17 @@ class AppMediaFile {
     // Note: To play via TDLib, the app might need telegramFileId from file_backups.
     // If backend provides it in the response, we parse it here.
     this.telegramFileId,
+    this.locatorType,
+    this.locatorChatId,
+    this.locatorMessageId,
+    this.locatorBotUsername,
+    this.locatorRemoteFileId,
   });
 
   final String id;
   final String mediaId;
   final String? sourceId;
+  final int? sourceChatId;
   final String fileUniqueId;
   final String? videoLanguage;
   final String? quality;
@@ -137,12 +144,20 @@ class AppMediaFile {
 
   // Extended fields for client usage
   final String? telegramFileId;
+  final String? locatorType;
+  final int? locatorChatId;
+  final int? locatorMessageId;
+  final String? locatorBotUsername;
+  final String? locatorRemoteFileId;
 
   factory AppMediaFile.fromJson(Map<String, dynamic> json) {
     return AppMediaFile(
       id: (json['id'] ?? '').toString(),
       mediaId: (json['mediaId'] ?? json['media_id'] ?? '').toString(),
       sourceId: json['sourceId']?.toString() ?? json['source_id']?.toString(),
+      sourceChatId: _parseNullableInt(
+        json['sourceChatId'] ?? json['source_chat_id'],
+      ),
       fileUniqueId:
           (json['fileUniqueId'] ?? json['file_unique_id'] ?? '').toString(),
       videoLanguage: json['videoLanguage']?.toString() ??
@@ -166,8 +181,26 @@ class AppMediaFile {
               : DateTime.now()),
       telegramFileId: json['telegramFileId']?.toString() ??
           json['telegram_file_id']?.toString(),
+      locatorType:
+          json['locatorType']?.toString() ?? json['locator_type']?.toString(),
+      locatorChatId:
+          _parseNullableInt(json['locatorChatId'] ?? json['locator_chat_id']),
+      locatorMessageId: _parseNullableInt(
+        json['locatorMessageId'] ?? json['locator_message_id'],
+      ),
+      locatorBotUsername: json['locatorBotUsername']?.toString() ??
+          json['locator_bot_username']?.toString(),
+      locatorRemoteFileId: json['locatorRemoteFileId']?.toString() ??
+          json['locator_remote_file_id']?.toString(),
     );
   }
+}
+
+int? _parseNullableInt(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  return int.tryParse(raw.toString());
 }
 
 /// Represents the aggregate response from the library endpoint

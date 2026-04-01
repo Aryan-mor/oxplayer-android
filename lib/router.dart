@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'features/detail/single_item_screen.dart';
+import 'features/gate/membership_gate_shell.dart';
 import 'features/home/home_screen.dart';
 import 'features/player/player_route_args.dart';
 import 'features/player/player_screen.dart';
@@ -33,43 +34,47 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         path: '/welcome',
         builder: (context, state) => const WelcomeScreen(),
       ),
-      GoRoute(
-        path: '/',
-        builder: (context, state) => const HomeScreen(),
-      ),
-      // ── Detail page (replaces /play for download-to-play flow) ────────────
-      GoRoute(
-        path: '/item/:globalId',
-        builder: (context, state) {
-          final globalId = state.pathParameters['globalId'] ?? '';
-          if (globalId.isEmpty) {
-            return const Scaffold(
-              body: Center(child: Text('Invalid item.')),
-            );
-          }
-          return SingleItemScreen(globalId: globalId);
-        },
-      ),
-      GoRoute(
-        path: '/item',
-        builder: (context, state) {
-          return const Scaffold(
-            body: Center(child: Text('Invalid item. Missing item id.')),
-          );
-        },
-      ),
-      // ── Deprecated: stub kept so old push('/play') calls don't crash ──────
-      GoRoute(
-        path: '/play',
-        builder: (context, state) {
-          final extra = state.extra as PlayerRouteArgs?;
-          if (extra == null) {
-            return const Scaffold(
-              body: Center(child: Text('Missing playback arguments.')),
-            );
-          }
-          return PlayerScreen(args: extra);
-        },
+      ShellRoute(
+        builder: (context, state, child) =>
+            MembershipGateShell(child: child),
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) => const HomeScreen(),
+          ),
+          GoRoute(
+            path: '/item/:globalId',
+            builder: (context, state) {
+              final globalId = state.pathParameters['globalId'] ?? '';
+              if (globalId.isEmpty) {
+                return const Scaffold(
+                  body: Center(child: Text('Invalid item.')),
+                );
+              }
+              return SingleItemScreen(globalId: globalId);
+            },
+          ),
+          GoRoute(
+            path: '/item',
+            builder: (context, state) {
+              return const Scaffold(
+                body: Center(child: Text('Invalid item. Missing item id.')),
+              );
+            },
+          ),
+          GoRoute(
+            path: '/play',
+            builder: (context, state) {
+              final extra = state.extra as PlayerRouteArgs?;
+              if (extra == null) {
+                return const Scaffold(
+                  body: Center(child: Text('Missing playback arguments.')),
+                );
+              }
+              return PlayerScreen(args: extra);
+            },
+          ),
+        ],
       ),
     ],
   );

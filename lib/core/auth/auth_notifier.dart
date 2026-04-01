@@ -19,12 +19,16 @@ class AuthNotifier extends ChangeNotifier {
   bool get ready => _ready;
   String? get session => _session;
   String? get apiAccessToken => _apiAccessToken;
-  bool get isLoggedIn => (_session ?? '').isNotEmpty;
+  bool get hasTelegramSession => (_session ?? '').isNotEmpty;
+  bool get hasApiAccessToken => (_apiAccessToken ?? '').isNotEmpty;
+  bool get isLoggedIn => hasTelegramSession && hasApiAccessToken;
 
   Future<void> hydrate() async {
     final prefs = await SharedPreferences.getInstance();
     _session = prefs.getString(kSessionKey);
-    _apiAccessToken = prefs.getString(kApiAccessTokenKey);
+    // Always force fresh server verification on each app launch.
+    await prefs.remove(kApiAccessTokenKey);
+    _apiAccessToken = null;
     _ready = true;
     notifyListeners();
   }

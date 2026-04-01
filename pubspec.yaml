@@ -28,6 +28,7 @@ dependencies:
 
   intl: ^0.20.1
   collection: ^1.19.0
+  # Native libtdjson.so in android/app/src/main/jniLibs must match this package (see jniLibs/README.txt). "Wrong version 54" = replace .so.
   tdlib: ^1.6.0
   qr_flutter: ^4.1.0
 

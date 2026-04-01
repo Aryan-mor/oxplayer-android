@@ -13,6 +13,9 @@ import '../../core/theme/tv_button.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
 
+void _welcomeLog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
+
 /// Pulls `tg://` link from TDLib JSON maps (same shape as [TdObject.toJson]).
 String? _qrLinkFromTdlibUpdateMap(Map<String, dynamic> doc) {
   if (doc['@type'] != 'updateAuthorizationState') return null;
@@ -61,6 +64,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
   TdlibCloudPasswordChallenge? _cloudPasswordStep;
   final TextEditingController _passwordController = TextEditingController();
   bool _tdlibBusy = false;
+  bool _serverAuthBusy = false;
   bool _passwordSubmitting = false;
   String? _configError;
 
@@ -68,9 +72,9 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     if (!mounted) return;
     if (kDebugMode) {
       if (link != null && link.isNotEmpty) {
-        AppDebugLog.instance.log('Welcome: QR payload len=${link.length}');
+        _welcomeLog('Welcome: QR payload len=${link.length}');
       } else {
-        AppDebugLog.instance.log('Welcome: QR payload cleared');
+        _welcomeLog('Welcome: QR payload cleared');
       }
     }
     setState(() => _qrData = link);
@@ -100,12 +104,11 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
       _qrData = null;
     });
 
-    AppDebugLog.instance.log('Welcome: bootstrap TDLib init…');
+    _welcomeLog('Welcome: bootstrap TDLib init…');
     try {
       final auth = ref.read(authNotifierProvider);
-      if (auth.isLoggedIn) {
-        AppDebugLog.instance
-            .log('Welcome: skipping bootstrap, session already exists');
+      if (auth.hasTelegramSession) {
+        _welcomeLog('Welcome: skipping bootstrap, session already exists');
         return;
       }
 
@@ -115,14 +118,41 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
         apiHash: config.telegramApiHash,
         sessionString: '',
       );
-      AppDebugLog.instance.log('Welcome: TDLib init() returned');
+      _welcomeLog('Welcome: TDLib init() returned');
     } catch (e) {
       if (mounted) {
-        AppDebugLog.instance.log('Welcome: TDLib init FAILED: $e');
+        _welcomeLog('Welcome: TDLib init FAILED: $e');
         setState(() => _configError = 'TDLib: $e');
       }
     } finally {
       if (mounted) setState(() => _tdlibBusy = false);
+    }
+  }
+
+  Future<void> _ensureServerAuthAndEnterHome() async {
+    if (!mounted || _serverAuthBusy) return;
+    setState(() => _serverAuthBusy = true);
+    try {
+      final config = ref.read(appConfigProvider);
+      if (!config.hasApiConfig) {
+        throw StateError(
+          'TV_APP_API_BASE_URL and one of TV_APP_WEBAPP_SHORT_NAME / TV_APP_WEBAPP_URL must be set in assets/env/default.env',
+        );
+      }
+      final tdlib = ref.read(tdlibFacadeProvider);
+      await tdlib.ensureAuthorized();
+      final api = ref.read(tvAppApiServiceProvider);
+      final accessToken =
+          await api.authenticateWithTelegram(tdlib: tdlib, config: config);
+      await ref.read(authNotifierProvider).setApiAccessToken(accessToken);
+      if (!mounted) return;
+      context.go('/');
+    } catch (e) {
+      _welcomeLog('Welcome: server auth failed: $e');
+      if (!mounted) return;
+      setState(() => _configError = 'Server auth failed: $e');
+    } finally {
+      if (mounted) setState(() => _serverAuthBusy = false);
     }
   }
 
@@ -136,8 +166,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     _qrSub = facade.qrLoginPayload.listen(_setQr);
     _cloudPwdSub = facade.cloudPasswordChallenge.listen(_setCloudPasswordStep);
     _authSub = facade.authenticatedUserId.listen((_) {
-      if (!mounted) return;
-      context.go('/');
+      unawaited(_ensureServerAuthAndEnterHome());
     });
     _tdErrSub = facade.functionErrors.listen((msg) {
       if (!mounted || msg == null || msg.isEmpty) return;
@@ -152,8 +181,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
         // 1. Wait for AuthNotifier to hydrate from SharedPreferences
         AuthNotifier auth = ref.read(authNotifierProvider);
         if (!auth.ready) {
-          AppDebugLog.instance
-              .log('Welcome: waiting for AuthNotifier to hydrate…');
+          _welcomeLog('Welcome: waiting for AuthNotifier to hydrate…');
           final completer = Completer<void>();
           void listener() {
             if (ref.read(authNotifierProvider).ready) {
@@ -171,11 +199,12 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         auth = ref.read(authNotifierProvider);
 
-        if (!auth.isLoggedIn && mounted) {
+        if (!auth.hasTelegramSession && mounted) {
           unawaited(_bootstrapTelegram());
         } else {
-          AppDebugLog.instance.log(
-              'Welcome: session active (isLoggedIn=${auth.isLoggedIn}), skipping bootstrap');
+          _welcomeLog(
+              'Welcome: Telegram session active (hasTelegramSession=${auth.hasTelegramSession}), ensuring server auth');
+          unawaited(_ensureServerAuthAndEnterHome());
         }
       });
     }
@@ -316,8 +345,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                             errorCorrectionLevel: QrErrorCorrectLevel.M,
                             gapless: true,
                             errorStateBuilder: (context, err) {
-                              AppDebugLog.instance
-                                  .log('QrImageView build error: $err');
+                              _welcomeLog('QrImageView build error: $err');
                               return Padding(
                                 padding: const EdgeInsets.all(16),
                                 child: Text(
@@ -349,7 +377,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        _tdlibBusy
+                        (_tdlibBusy || _serverAuthBusy)
                             ? 'Connecting to Telegram…'
                             : 'Preparing QR code…',
                         style: const TextStyle(

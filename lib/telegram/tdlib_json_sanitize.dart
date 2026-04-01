@@ -34,10 +34,18 @@ void _walk(dynamic node) {
       _patchChatPosition(node);
     } else if (t == 'chat') {
       _patchChat(node);
+    } else if (t == 'draftMessage') {
+      _patchDraftMessage(node);
+    } else if (t == 'inputMessageText') {
+      _patchInputMessageText(node);
     } else if (t == 'videoChat') {
       _patchVideoChat(node);
     } else if (t == 'message') {
       _patchMessage(node);
+    } else if (t == 'messageSendingStateFailed') {
+      _patchMessageSendingStateFailed(node);
+    } else if (t == 'messageSendingStatePending') {
+      if (node['sending_id'] == null) node['sending_id'] = 0;
     } else if (t == 'user') {
       _patchUser(node);
     } else if (t == 'usernames') {
@@ -123,6 +131,37 @@ void _patchChatPermissions(Map<String, dynamic> p) {
 
 void _patchVideoChat(Map<String, dynamic> v) {
   if (v['has_participants'] == null) v['has_participants'] = false;
+}
+
+/// TDLib 1.8+ uses nested [error] {code,message}; bindings 1.6 expect [error_code] / [error_message].
+void _patchMessageSendingStateFailed(Map<String, dynamic> m) {
+  final err = m['error'];
+  if (m['error_code'] == null && err is Map<String, dynamic>) {
+    final c = err['code'];
+    if (c is int) {
+      m['error_code'] = c;
+    } else if (c is num) {
+      m['error_code'] = c.toInt();
+    } else {
+      m['error_code'] = 0;
+    }
+  }
+  if (m['error_code'] == null) m['error_code'] = 0;
+
+  if (m['error_message'] == null && err is Map<String, dynamic>) {
+    final msg = err['message'];
+    m['error_message'] = msg is String ? msg : '';
+  }
+  if (m['error_message'] == null) m['error_message'] = '';
+
+  if (m['can_retry'] == null) m['can_retry'] = false;
+  if (m['need_another_sender'] == null) m['need_another_sender'] = false;
+  final ra = m['retry_after'];
+  if (ra == null) {
+    m['retry_after'] = 0.0;
+  } else if (ra is int) {
+    m['retry_after'] = ra.toDouble();
+  }
 }
 
 /// Newer TDLib adds fields; older bindings still require every legacy bool / string.
@@ -247,6 +286,34 @@ void _patchChatPosition(Map<String, dynamic> p) {
   }
 }
 
+/// Newer TDLib uses [reply_to] (inputMessageReplyToMessage); bindings expect [reply_to_message_id].
+void _patchDraftMessage(Map<String, dynamic> d) {
+  if (d['reply_to_message_id'] == null && d['reply_to'] is Map<String, dynamic>) {
+    final rt = d['reply_to'] as Map<String, dynamic>;
+    final rtype = rt['@type'];
+    if (rtype == 'inputMessageReplyToMessage' || rtype == 'messageReplyToMessage') {
+      final mid = rt['message_id'];
+      if (mid is int) {
+        d['reply_to_message_id'] = mid;
+      } else if (mid is num) {
+        d['reply_to_message_id'] = mid.toInt();
+      } else {
+        d['reply_to_message_id'] = 0;
+      }
+    } else {
+      d['reply_to_message_id'] = 0;
+    }
+  }
+  if (d['reply_to_message_id'] == null) d['reply_to_message_id'] = 0;
+  if (d['date'] == null) d['date'] = 0;
+}
+
+/// TDLib 1.8+ may omit [disable_web_page_preview]; [InputMessageText.fromJson] requires bools.
+void _patchInputMessageText(Map<String, dynamic> m) {
+  if (m['disable_web_page_preview'] == null) m['disable_web_page_preview'] = false;
+  if (m['clear_draft'] == null) m['clear_draft'] = false;
+}
+
 void _patchChat(Map<String, dynamic> c) {
   if (c['title'] == null) c['title'] = '';
   if (c['theme_name'] == null) c['theme_name'] = '';
@@ -275,6 +342,40 @@ void _patchChat(Map<String, dynamic> c) {
     'reply_markup_message_id',
   ]) {
     if (c[k] == null) c[k] = 0;
+  }
+  // TDLib 1.8+ may omit these; [Chat.fromJson] passes them to non-null parsers.
+  if (c['video_chat'] == null) {
+    c['video_chat'] = <String, dynamic>{
+      '@type': 'videoChat',
+      'group_call_id': 0,
+      'has_participants': false,
+    };
+  }
+  if (c['notification_settings'] == null) {
+    c['notification_settings'] = <String, dynamic>{
+      '@type': 'chatNotificationSettings',
+      'use_default_mute_for': true,
+      'mute_for': 0,
+      'use_default_sound': true,
+      'sound_id': '0',
+      'use_default_show_preview': true,
+      'show_preview': true,
+      'use_default_mute_stories': true,
+      'mute_stories': false,
+      'use_default_story_sound': true,
+      'story_sound_id': '0',
+      'use_default_show_story_sender': true,
+      'show_story_sender': true,
+      'use_default_disable_pinned_message_notifications': true,
+      'disable_pinned_message_notifications': false,
+      'use_default_disable_mention_notifications': true,
+      'disable_mention_notifications': false,
+    };
+  }
+  if (c['available_reactions'] == null) {
+    c['available_reactions'] = <String, dynamic>{
+      '@type': 'chatAvailableReactionsAll',
+    };
   }
 }
 

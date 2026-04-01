@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +11,9 @@ import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../player/external_player.dart';
 import '../../providers.dart';
+
+void _itemLog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
 
 // ─── Route args ──────────────────────────────────────────────────────────────
 
@@ -32,10 +35,6 @@ class SingleItemScreen extends ConsumerStatefulWidget {
 
 class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
   AppMediaAggregate? _aggregate;
-  List<AppMediaFile> _files = [];
-  List<int> _seasons = [];
-  List<AppMediaFile> _currentEpisodes = [];
-  int _selectedSeason = 1;
   bool _loading = true;
 
   @override
@@ -45,41 +44,49 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
   }
 
   Future<void> _load() async {
-    AppDebugLog.instance.log('SingleItemScreen: load start globalId=${widget.globalId}');
+    _itemLog('SingleItemScreen: load start globalId=${widget.globalId}');
     
     final allMedia = await ref.read(mediaListProvider.future);
+    final totalFiles = allMedia.fold<int>(0, (sum, it) => sum + it.files.length);
+    final sample = allMedia
+        .take(5)
+        .map((e) => '${e.media.id}:${e.files.length}')
+        .join(', ');
+    _itemLog(
+      'SingleItemScreen: mediaList loaded items=${allMedia.length} totalFiles=$totalFiles '
+      'sample(mediaId:files)=[$sample]',
+    );
     
     // Find the requested media
     try {
       final item = allMedia.firstWhere((m) => m.media.id == widget.globalId);
-      final isSeries = item.media.type == 'SERIES' || item.media.type == '#series';
-      
-      List<int> seasons = [];
-      List<AppMediaFile> episodes = [];
-      int selected = 1;
-
-      if (isSeries) {
-        final rawSeasons = item.files.map((f) => f.season).whereType<int>().toSet().toList();
-        rawSeasons.sort();
-        seasons = rawSeasons;
-        if (seasons.isNotEmpty) {
-          selected = seasons.first;
-          episodes = item.files.where((f) => f.season == selected).toList();
-          episodes.sort((a, b) => (a.episode ?? 0).compareTo(b.episode ?? 0));
-        }
+      _itemLog(
+        'SingleItemScreen: selected media id=${item.media.id} title="${item.media.title}" '
+        'type=${item.media.type} files=${item.files.length}',
+      );
+      if (item.files.isNotEmpty) {
+        final first = item.files.first;
+        _itemLog(
+          'SingleItemScreen: first file sample id=${first.id} '
+          'season=${first.season} episode=${first.episode} quality=${first.quality} '
+          'lang=${first.videoLanguage ?? first.language} size=${first.size} '
+          'hasTelegramFileId=${(first.telegramFileId ?? '').isNotEmpty}',
+        );
+      } else {
+        _itemLog(
+          'SingleItemScreen: selected media has zero files; likely server library shape/data issue',
+        );
       }
-
       if (mounted) {
         setState(() {
           _aggregate = item;
-          _files = item.files;
-          _seasons = seasons;
-          _selectedSeason = selected;
-          _currentEpisodes = episodes;
           _loading = false;
         });
       }
     } catch (e) {
+      _itemLog(
+        'SingleItemScreen: target media not found for globalId=${widget.globalId} error=$e',
+      );
       if (mounted) {
         setState(() {
           _aggregate = null;
@@ -87,16 +94,6 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
         });
       }
     }
-  }
-
-  void _loadEpisodesForSeason(int seasonNumber) {
-    if (_aggregate == null) return;
-    final episodes = _aggregate!.files.where((f) => f.season == seasonNumber).toList();
-    episodes.sort((a, b) => (a.episode ?? 0).compareTo(b.episode ?? 0));
-    setState(() {
-      _selectedSeason = seasonNumber;
-      _currentEpisodes = episodes;
-    });
   }
 
   @override
@@ -140,7 +137,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
             Positioned.fill(
               child: ColorFiltered(
                 colorFilter: ColorFilter.mode(
-                  Colors.black.withOpacity(0.72),
+                  Colors.black.withValues(alpha: 0.72),
                   BlendMode.darken,
                 ),
                 child: CachedNetworkImage(
@@ -160,15 +157,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
                   onDelete: _load,
                 ),
                 Expanded(
-                  child: isSeries
-                      ? _SeriesPanel(
-                          item: item,
-                          seasons: _seasons,
-                          episodes: _currentEpisodes,
-                          selectedSeason: _selectedSeason,
-                          onSeasonSelected: _loadEpisodesForSeason,
-                        )
-                      : _MovieMetaPanel(item: item),
+                  child: _DetailsPanel(aggregate: agg, isSeries: isSeries),
                 ),
               ],
             ),
@@ -199,15 +188,11 @@ class _PosterPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final dmAsync = ref.watch(downloadManagerProvider);
-    final dm = dmAsync.value;
-    
     final item = aggregate.media;
-    final isSeries = item.type == 'SERIES' || item.type == '#series';
-    
-    // For movies, we just take the first file global state. For series, we don't handle a single download state here.
-    final firstFile = aggregate.files.isNotEmpty && !isSeries ? aggregate.files.first : null;
-    final globalFileId = firstFile?.id ?? item.id;
-    final state = dm?.stateFor(globalFileId) ?? const DownloadIdle();
+    final dm = dmAsync.value;
+    final downloadedCount = aggregate.files
+        .where((f) => dm?.stateFor(f.id) is DownloadCompleted)
+        .length;
 
     final poster = _resolvePosterUrl(item.posterPath) ?? '';
 
@@ -262,673 +247,362 @@ class _PosterPanel extends ConsumerWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 16),
-          if (!isSeries) ...[
-            if (dm == null)
-              const CircularProgressIndicator(strokeWidth: 2)
-            else
-              _DownloadPlayButton(
-                globalId: globalFileId,
-                state: state,
-                item: item,
-                file: firstFile,
-                dm: dm,
-              ),
-            const SizedBox(height: 10),
-            if (dm != null && state is DownloadCompleted)
-              TVButton(
-                onPressed: () async {
-                  await dm.deleteDownload(globalFileId);
-                  onDelete();
-                },
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-                    SizedBox(width: 8),
-                    Text('Delete', style: TextStyle(color: Colors.redAccent)),
-                  ],
-                ),
-              ),
-          ],
+          const SizedBox(height: 10),
+          Text(
+            'Available files: ${aggregate.files.length}',
+            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+          ),
+          Text(
+            'Downloaded: $downloadedCount',
+            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+          ),
         ],
       ),
     );
   }
 }
 
-class _DownloadPlayButton extends StatelessWidget {
-  const _DownloadPlayButton({
-    required this.globalId,
-    required this.state,
-    required this.item,
-    required this.file,
-    required this.dm,
-  });
+class _DetailsPanel extends StatelessWidget {
+  const _DetailsPanel({required this.aggregate, required this.isSeries});
 
-  final String globalId;
-  final DownloadState state;
-  final AppMedia item;
-  final AppMediaFile? file;
-  final DownloadManager dm;
+  final AppMediaAggregate aggregate;
+  final bool isSeries;
 
   @override
   Widget build(BuildContext context) {
-    return switch (state) {
-      DownloadIdle() => Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TVButton(
-              autofocus: false,
-              onPressed: () => _startDownload(context),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.download, color: Colors.white),
-                  SizedBox(width: 8),
-                  Text('Download', style: TextStyle(color: Colors.white)),
-                ],
-              ),
-            ),
-            if (_bestVariantSizeLabel() != null) ...[
-              const SizedBox(width: 10),
-              Text(
-                _bestVariantSizeLabel()!,
-                style: const TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ],
-        ),
-      Downloading(
-        :final bytesDownloaded,
-        :final totalBytes,
-        :final progress,
-        :final percent
-      ) =>
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Downloading… $percent%',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-            ),
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 6,
-                backgroundColor: AppColors.border,
-                color: AppColors.highlight,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${_formatBytes(bytesDownloaded)} / ${totalBytes != null ? _formatBytes(totalBytes) : '?'}',
-              style: const TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const TVButton(
-                  enabled: false,
-                  onPressed: null,
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.download, color: AppColors.textMuted),
-                      SizedBox(width: 6),
-                      Text(
-                        'Downloading',
-                        style: TextStyle(color: AppColors.textMuted),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                TVButton(
-                  onPressed: () => dm.pauseDownload(globalId),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.pause, color: Colors.white),
-                      SizedBox(width: 6),
-                      Text('Pause', style: TextStyle(color: Colors.white)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      DownloadPaused(
-        :final bytesDownloaded,
-        :final totalBytes,
-        :final percent
-      ) =>
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Paused at $percent%',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${_formatBytes(bytesDownloaded)} / ${totalBytes != null ? _formatBytes(totalBytes) : '?'}',
-              style: const TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TVButton(
-              onPressed: () => dm.resumeDownload(globalId),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.play_arrow, color: Colors.white),
-                  SizedBox(width: 8),
-                  Text('Resume', style: TextStyle(color: Colors.white)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      DownloadCompleted(:final localFilePath) => TVButton(
-          autofocus: true,
-          onPressed: () => _play(context, localFilePath),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.play_arrow, color: Colors.white),
-              SizedBox(width: 8),
-              Text('Play', style: TextStyle(color: Colors.white)),
-            ],
-          ),
-        ),
-      DownloadError(:final message) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
-                SizedBox(width: 6),
-                Text('Download failed',
-                    style: TextStyle(color: Colors.redAccent)),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              message,
-              style:
-                  const TextStyle(color: AppColors.textMuted, fontSize: 11),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 8),
-            TVButton(
-              onPressed: () => _startDownload(context),
-              child: const Text('Retry',
-                  style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-    };
-  }
-
-  void _startDownload(BuildContext context) {
-    if (file == null) {
-      AppDebugLog.instance.log(
-        'SingleItemScreen: startDownload blocked, no variant for globalId=$globalId',
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No downloadable variant found.')),
-      );
-      return;
-    }
-    
-    dm.startDownload(
-      globalId: globalId,
-      variantId: file!.id,
-      telegramFileId: file!.telegramFileId,
-      title: item.title,
-      year: item.releaseYear?.toString() ?? '',
-      fileSize: file!.size,
-    );
-    AppDebugLog.instance.log(
-      'SingleItemScreen: startDownload requested '
-      'globalId=$globalId variantId=${file!.id} '
-      'telegramFileId=${file!.telegramFileId}',
-    );
-  }
-
-  String? _bestVariantSizeLabel() {
-    final bytes = file?.size;
-    if (bytes == null || bytes <= 0) return null;
-    return _formatBytes(bytes);
-  }
-
-  Future<void> _play(BuildContext context, String path) async {
-    AppDebugLog.instance.log('SingleItemScreen: launching external player for $path');
-    final launched = await ExternalPlayer.launchVideo(
-      path: path,
-      title: _formatMovieIntentTitle(
-        item.title,
-        item.releaseYear?.toString(),
-      ),
-    );
-    if (!launched && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No player found.',
-          ),
-        ),
-      );
-    }
-  }
-
-  static String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-  }
-
-  static String _formatMovieIntentTitle(String rawTitle, String? explicitYear) {
-    final normalized = rawTitle.trim();
-    final name = normalized;
-    final year = (explicitYear ?? '').trim();
-    if (year.isEmpty) return name;
-    return '$name ($year)';
-  }
-}
-
-class _MovieMetaPanel extends StatelessWidget {
-  const _MovieMetaPanel({required this.item});
-
-  final AppMedia item;
-
-  @override
-  Widget build(BuildContext context) {
+    final item = aggregate.media;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Details',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
+          Text(
+            item.title,
+            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              if (item.releaseYear != null) _chip('Year ${item.releaseYear}'),
+              _chip(isSeries ? 'Series' : 'Movie'),
+              if (item.originalLanguage != null && item.originalLanguage!.isNotEmpty)
+                _chip(item.originalLanguage!.toUpperCase()),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ExpansionTile(
+            title: const Text('Overview', style: TextStyle(color: Colors.white)),
+            collapsedIconColor: Colors.white,
+            iconColor: Colors.white,
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            children: [
+              Text(
+                (item.summary ?? '').trim().isEmpty
+                    ? 'No description available.'
+                    : item.summary!.trim(),
+                style: const TextStyle(color: AppColors.textMuted, height: 1.45),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
-          if (item.imdbId != null && item.imdbId!.isNotEmpty) _MetaRow('IMDb', item.imdbId!),
-          if (item.tmdbId != null && item.tmdbId!.isNotEmpty) _MetaRow('TMDB', item.tmdbId!),
-          if (item.releaseYear != null) _MetaRow('Year', item.releaseYear.toString()),
+          if (isSeries)
+            _SeriesVariantsSection(aggregate: aggregate)
+          else
+            _MovieVariantsSection(aggregate: aggregate),
         ],
       ),
     );
   }
 }
 
-class _SeriesPanel extends StatelessWidget {
-  const _SeriesPanel({
-    required this.item,
-    required this.seasons,
-    required this.episodes,
-    required this.selectedSeason,
-    required this.onSeasonSelected,
-  });
+Widget _chip(String text) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: AppColors.card,
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: AppColors.border),
+    ),
+    child: Text(text, style: const TextStyle(fontSize: 12, color: Colors.white)),
+  );
+}
 
-  final AppMedia item;
-  final List<int> seasons;
-  final List<AppMediaFile> episodes;
-  final int selectedSeason;
-  final void Function(int) onSeasonSelected;
+class _MovieVariantsSection extends StatelessWidget {
+  const _MovieVariantsSection({required this.aggregate});
+
+  final AppMediaAggregate aggregate;
 
   @override
   Widget build(BuildContext context) {
+    if (aggregate.files.isEmpty) {
+      return const Text('No files indexed yet.', style: TextStyle(color: AppColors.textMuted));
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (seasons.length > 1) ...[
-          const Padding(
-            padding:
-                EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            child: Text(
-              'Seasons',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textMuted,
-                letterSpacing: 1.1,
-              ),
-            ),
+        const Text('Available versions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        for (final file in aggregate.files)
+          _VariantRow(
+            media: aggregate.media,
+            file: file,
+            downloadTitle: aggregate.media.title,
+            downloadGlobalId: file.id,
           ),
-          SizedBox(
-            height: 64,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24),
-              itemCount: seasons.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (context, i) {
-                final s = seasons[i];
-                final isSelected = s == selectedSeason;
-                return TVButton(
-                  autofocus: i == 0,
-                  onPressed: () => onSeasonSelected(s),
-                  child: Text(
-                    'Season $s',
-                    style: TextStyle(
-                      color: isSelected
-                          ? AppColors.highlight
-                          : Colors.white,
-                      fontWeight: isSelected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-        Expanded(
-          child: episodes.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No episodes indexed yet.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.textMuted),
-                  ),
-                )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 300,
-                    childAspectRatio: 2.6,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                  ),
-                  itemCount: episodes.length,
-                  itemBuilder: (context, i) {
-                    return _EpisodeCard(
-                      episode: episodes[i],
-                      seriesTitle: item.title,
-                    );
-                  },
-                ),
-        ),
       ],
     );
   }
 }
 
-class _EpisodeCard extends ConsumerWidget {
-  const _EpisodeCard({
-    required this.episode,
-    required this.seriesTitle,
+class _SeriesVariantsSection extends StatelessWidget {
+  const _SeriesVariantsSection({required this.aggregate});
+
+  final AppMediaAggregate aggregate;
+
+  @override
+  Widget build(BuildContext context) {
+    if (aggregate.files.isEmpty) {
+      return const Text('No episodes indexed yet.', style: TextStyle(color: AppColors.textMuted));
+    }
+
+    final grouped = <int, Map<int, List<AppMediaFile>>>{};
+    for (final file in aggregate.files) {
+      final season = file.season ?? 1;
+      final episode = file.episode ?? 0;
+      grouped.putIfAbsent(season, () => <int, List<AppMediaFile>>{});
+      grouped[season]!.putIfAbsent(episode, () => <AppMediaFile>[]);
+      grouped[season]![episode]!.add(file);
+    }
+    final seasons = grouped.keys.toList()..sort();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Seasons', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        for (final season in seasons)
+          ExpansionTile(
+            title: Text('Season $season', style: const TextStyle(color: Colors.white)),
+            collapsedIconColor: Colors.white,
+            iconColor: Colors.white,
+            childrenPadding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+            children: [
+              ...(() {
+                final byEpisode = grouped[season]!;
+                final episodeNumbers = byEpisode.keys.toList()..sort();
+                return episodeNumbers.map((ep) {
+                  final variants = byEpisode[ep]!;
+                  return ExpansionTile(
+                    title: Text('Episode ${ep <= 0 ? '?' : ep}', style: const TextStyle(color: Colors.white)),
+                    collapsedIconColor: Colors.white70,
+                    iconColor: Colors.white70,
+                    childrenPadding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+                    children: [
+                      for (final file in variants)
+                        _VariantRow(
+                          media: aggregate.media,
+                          file: file,
+                          downloadTitle:
+                              '${aggregate.media.title} - S${season.toString().padLeft(2, '0')}E${(ep <= 0 ? 0 : ep).toString().padLeft(2, '0')}',
+                          downloadGlobalId: file.id,
+                        ),
+                    ],
+                  );
+                });
+              })(),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _VariantRow extends ConsumerWidget {
+  const _VariantRow({
+    required this.media,
+    required this.file,
+    required this.downloadTitle,
+    required this.downloadGlobalId,
   });
 
-  final AppMediaFile episode;
-  final String seriesTitle;
+  final AppMedia media;
+  final AppMediaFile file;
+  final String downloadTitle;
+  final String downloadGlobalId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final episodeGlobalId = episode.id;
     final dm = ref.watch(downloadManagerProvider).value;
-    final state = dm?.stateFor(episodeGlobalId) ?? const DownloadIdle();
+    final state = dm?.stateFor(downloadGlobalId) ?? const DownloadIdle();
+    final quality = (file.quality ?? '').trim().isEmpty ? 'Unknown quality' : file.quality!.trim();
+    final lang = (file.videoLanguage ?? file.language ?? '').trim();
+    final size = _formatBytes(file.size);
 
-    return TVButton(
-      onPressed: null,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border),
+        color: AppColors.card,
+      ),
       child: Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              '${episode.episode ?? "?"}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-                color: Colors.white,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'Episode ${episode.episode ?? "?"}${episode.quality != null ? " - ${episode.quality}" : ""}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              '$quality  •  ${lang.isEmpty ? 'Unknown lang' : lang.toUpperCase()}  •  ${size ?? '?'}',
+              style: const TextStyle(color: Colors.white, fontSize: 13),
             ),
           ),
-          const SizedBox(width: 8),
-          if (dm != null)
-            _EpisodeMiniAction(
-              episodeGlobalId: episodeGlobalId,
-              state: state,
-              episode: episode,
-              seriesTitle: seriesTitle,
+          if (dm == null)
+            const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+          else
+            _VariantAction(
               dm: dm,
+              state: state,
+              media: media,
+              file: file,
+              downloadTitle: downloadTitle,
+              downloadGlobalId: downloadGlobalId,
             ),
         ],
       ),
     );
   }
-
 }
 
-class _EpisodeMiniAction extends StatelessWidget {
-  const _EpisodeMiniAction({
-    required this.episodeGlobalId,
-    required this.state,
-    required this.episode,
-    required this.seriesTitle,
+class _VariantAction extends StatelessWidget {
+  const _VariantAction({
     required this.dm,
+    required this.state,
+    required this.media,
+    required this.file,
+    required this.downloadTitle,
+    required this.downloadGlobalId,
   });
 
-  final String episodeGlobalId;
-  final DownloadState state;
-  final AppMediaFile episode;
-  final String seriesTitle;
   final DownloadManager dm;
+  final DownloadState state;
+  final AppMedia media;
+  final AppMediaFile file;
+  final String downloadTitle;
+  final String downloadGlobalId;
 
   @override
   Widget build(BuildContext context) {
     return switch (state) {
       DownloadIdle() => TVButton(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          onPressed: () => _downloadEpisode(context),
-          child: const Icon(Icons.download, size: 18, color: Colors.white),
+          onPressed: () => _startDownload(context),
+          child: const Icon(Icons.download, color: Colors.white),
+        ),
+      DownloadRecovering() => const SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.highlight,
+          ),
+        ),
+      DownloadUnavailable() => const Text(
+          'Not available',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 12),
         ),
       Downloading(:final percent) => Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 48,
-              child: Text(
-                '$percent%',
-                style: const TextStyle(
-                  color: AppColors.highlight,
-                  fontSize: 12,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 6),
-            TVButton(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              onPressed: () => dm.pauseDownload(episodeGlobalId),
-              child: const Icon(Icons.pause, size: 18, color: Colors.white),
-            ),
+            Text('$percent%', style: const TextStyle(color: AppColors.highlight)),
+            const SizedBox(width: 8),
+            TVButton(onPressed: () => dm.pauseDownload(downloadGlobalId), child: const Icon(Icons.pause, color: Colors.white)),
           ],
         ),
       DownloadPaused(:final percent) => Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 48,
-              child: Text(
-                '$percent%',
-                style: const TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 12,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 6),
-            TVButton(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              onPressed: () => dm.resumeDownload(episodeGlobalId),
-              child:
-                  const Icon(Icons.play_arrow, size: 18, color: Colors.white),
-            ),
+            Text('$percent%', style: const TextStyle(color: AppColors.textMuted)),
+            const SizedBox(width: 8),
+            TVButton(onPressed: () => dm.resumeDownload(downloadGlobalId), child: const Icon(Icons.play_arrow, color: Colors.white)),
           ],
         ),
       DownloadCompleted(:final localFilePath) => Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-             TVButton(
-              autofocus: false,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              onPressed: () => _playEpisode(context, localFilePath),
-              child: const Icon(Icons.play_arrow,
-                  size: 18, color: Colors.white),
+            TVButton(
+              onPressed: () => _play(context, localFilePath),
+              child: const Icon(Icons.play_arrow, color: Colors.white),
             ),
-            const SizedBox(width: 4),
-             TVButton(
-              autofocus: false,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              onPressed: () {
-                dm.deleteDownload(episodeGlobalId);
-              },
-              child: const Icon(Icons.delete,
-                  size: 18, color: Colors.redAccent),
+            const SizedBox(width: 6),
+            TVButton(
+              onPressed: () => dm.deleteDownload(downloadGlobalId),
+              child: const Icon(Icons.delete, color: Colors.redAccent),
             ),
-          ]
+          ],
         ),
       DownloadError() => TVButton(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          onPressed: () => _downloadEpisode(context),
-          child:
-              const Icon(Icons.refresh, size: 18, color: Colors.redAccent),
+          onPressed: () => _startDownload(context),
+          child: const Icon(Icons.refresh, color: Colors.redAccent),
         ),
     };
   }
 
-  void _downloadEpisode(BuildContext context) {
-    dm.startDownload(
-      globalId: episodeGlobalId,
-      variantId: episode.id,
-      telegramFileId: episode.telegramFileId,
-      title: _formatSeriesIntentTitle(),
-      year: '',
-      fileSize: episode.size,
-    );
-  }
-
-  Future<void> _playEpisode(BuildContext context, String path) async {
-    final launched = await ExternalPlayer.launchVideo(
-      path: path,
-      title: _formatSeriesIntentTitle(),
-    );
-    if (!launched && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No player found.'),
-        ),
+  void _startDownload(BuildContext context) {
+    if (!_fileMayBeDownloadable(file)) {
+      _itemLog(
+        'SingleItemScreen: startDownload blocked for file=${file.id}',
       );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This file is not downloadable yet.')),
+      );
+      return;
     }
-  }
-
-  String _formatSeriesIntentTitle() {
-    final episodeTitle = 'Episode ${episode.episode}';
-    final season = episode.season?.toString().padLeft(2, '0') ?? '??';
-    final ep = episode.episode?.toString().padLeft(2, '0') ?? '??';
-    return '$seriesTitle - S$season'
-        'E$ep - $episodeTitle';
-  }
-}
-
-class _MetaRow extends StatelessWidget {
-  const _MetaRow(this.label, this.value);
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-            ),
-          ),
-        ],
+    unawaited(
+      dm.startDownload(
+        globalId: downloadGlobalId,
+        variantId: file.id,
+        telegramFileId: file.telegramFileId,
+        sourceChatId: file.sourceChatId,
+        mediaFileId: file.id,
+        locatorType: file.locatorType,
+        locatorChatId: file.locatorChatId,
+        locatorMessageId: file.locatorMessageId,
+        locatorBotUsername: file.locatorBotUsername,
+        locatorRemoteFileId: file.locatorRemoteFileId,
+        title: downloadTitle,
+        year: media.releaseYear?.toString() ?? '',
+        fileSize: file.size,
       ),
     );
   }
+
+  Future<void> _play(BuildContext context, String path) async {
+    final launched = await ExternalPlayer.launchVideo(path: path, title: downloadTitle);
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No player found.')),
+      );
+    }
+  }
+}
+
+/// TDLib needs a locator or `locatorRemoteFileId`; backup `telegramFileId` alone is often Bot API.
+bool _fileMayBeDownloadable(AppMediaFile file) {
+  if ((file.locatorRemoteFileId ?? '').trim().isNotEmpty) return true;
+  final t = (file.locatorType ?? '').trim();
+  if (t == 'CHAT_MESSAGE' &&
+      file.locatorChatId != null &&
+      file.locatorMessageId != null) {
+    return true;
+  }
+  if (t == 'BOT_PRIVATE_RUNTIME' &&
+      (file.locatorBotUsername ?? '').trim().isNotEmpty) {
+    return true;
+  }
+  return (file.telegramFileId ?? '').trim().isNotEmpty;
+}
+
+String? _formatBytes(int? bytes) {
+  if (bytes == null || bytes <= 0) return null;
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }

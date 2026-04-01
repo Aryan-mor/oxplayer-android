@@ -8,7 +8,84 @@ import '../../core/debug/app_debug_log.dart';
 import '../../telegram/tdlib_facade.dart';
 import '../models/app_media.dart';
 
+void _apilog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.api);
+
+class SyncLibraryResult {
+  const SyncLibraryResult({
+    required this.items,
+    this.lastIndexedAt,
+  });
+
+  final List<AppMediaAggregate> items;
+  final DateTime? lastIndexedAt;
+}
+
+class LibraryFetchResult {
+  const LibraryFetchResult({
+    required this.items,
+    this.lastIndexedAt,
+  });
+
+  final List<AppMediaAggregate> items;
+  final DateTime? lastIndexedAt;
+}
+
+class DiscoveredMediaRef {
+  DiscoveredMediaRef({
+    required this.mediaFileId,
+    required this.sourceChatId,
+    required this.sourceMessageId,
+    required this.captionText,
+    required this.telegramFileId,
+    required this.telegramDate,
+  });
+
+  final String mediaFileId;
+  final int sourceChatId;
+  final int sourceMessageId;
+  final String captionText;
+  final String? telegramFileId;
+  /// `Message.date` from TDLib (Unix seconds); for ordering / incremental logic.
+  final int telegramDate;
+
+  Map<String, dynamic> toPersistenceJson() => {
+        'mediaFileId': mediaFileId,
+        // Stringify so JSON never truncates large TDLib message ids.
+        'sourceChatId': sourceChatId.toString(),
+        'sourceMessageId': sourceMessageId.toString(),
+        'captionText': captionText,
+        'telegramFileId': telegramFileId,
+        'telegramDate': telegramDate,
+      };
+
+  static DiscoveredMediaRef? fromPersistenceJson(Object? raw) {
+    if (raw is! Map) return null;
+    final j = Map<String, dynamic>.from(raw);
+    final mid = j['mediaFileId']?.toString() ?? '';
+    final tf = j['telegramFileId']?.toString().trim() ?? '';
+    if (mid.isEmpty || tf.isEmpty) return null;
+    final sc = j['sourceChatId'];
+    final sm = j['sourceMessageId'];
+    final chatId = sc is int ? sc : int.tryParse(sc?.toString() ?? '') ?? 0;
+    final msgId = sm is int ? sm : int.tryParse(sm?.toString() ?? '') ?? 0;
+    final cap = j['captionText']?.toString() ?? '';
+    final td = j['telegramDate'];
+    final date = td is int ? td : int.tryParse(td?.toString() ?? '') ?? 0;
+    return DiscoveredMediaRef(
+      mediaFileId: mid,
+      sourceChatId: chatId,
+      sourceMessageId: msgId,
+      captionText: cap,
+      telegramFileId: tf,
+      telegramDate: date,
+    );
+  }
+}
+
 class TvAppApiService {
+  static const int _kMaxSyncDiscoverItems = 500;
+
   TvAppApiService();
   int _requestCounter = 0;
 
@@ -33,7 +110,7 @@ class TvAppApiService {
           final startedAt = DateTime.now().microsecondsSinceEpoch;
           options.extra['reqId'] = reqId;
           options.extra['startedAtUs'] = startedAt;
-          AppDebugLog.instance.log(
+          _apilog(
             'API[$reqId] -> ${options.method} ${options.uri} '
             'headers=${_summarizeHeaders(options.headers)} '
             'body=${_summarizePayload(options.data)}',
@@ -47,7 +124,7 @@ class TvAppApiService {
               ? -1
               : ((DateTime.now().microsecondsSinceEpoch - startedAt) / 1000)
                     .round();
-          AppDebugLog.instance.log(
+          _apilog(
             'API[$reqId] <- ${response.statusCode} ${response.requestOptions.uri} '
             'in ${elapsedMs}ms '
             'body=${_summarizePayload(response.data)}',
@@ -62,7 +139,7 @@ class TvAppApiService {
               : ((DateTime.now().microsecondsSinceEpoch - startedAt) / 1000)
                     .round();
           final status = error.response?.statusCode;
-          AppDebugLog.instance.log(
+          _apilog(
             'API[$reqId] !! ${error.type} status=$status '
             '${error.requestOptions.method} ${error.requestOptions.uri} '
             'in ${elapsedMs}ms '
@@ -81,13 +158,13 @@ class TvAppApiService {
     required TdlibFacade tdlib,
     required AppConfig config,
   }) async {
-    AppDebugLog.instance.log(
+    _apilog(
       'API auth start: baseUrl=${config.tvAppApiBaseUrl}, '
       'bot=${config.botUsername}, shortName=${config.tvAppWebAppShortName}, '
       'fallbackUrlSet=${config.tvAppWebAppUrl.isNotEmpty}',
     );
     final initData = await _fetchSignedInitData(tdlib: tdlib, config: config);
-    AppDebugLog.instance.log(
+    _apilog(
       'API auth: extracted initData length=${initData.length}',
     );
     final dio = _dio(config.tvAppApiBaseUrl);
@@ -100,17 +177,25 @@ class TvAppApiService {
     if (accessToken.isEmpty) {
       throw StateError('API did not return accessToken');
     }
-    AppDebugLog.instance.log(
+    _apilog(
       'API auth success: tokenLength=${accessToken.length}',
     );
     return accessToken;
   }
 
-  Future<List<AppMediaAggregate>> fetchLibrary({
+  DateTime? _parseLastIndexedAt(Map<String, dynamic>? body) {
+    final raw = body?['lastIndexedAt'];
+    if (raw == null) return null;
+    final s = raw.toString().trim();
+    if (s.isEmpty) return null;
+    return DateTime.tryParse(s);
+  }
+
+  Future<LibraryFetchResult> fetchLibrary({
     required AppConfig config,
     required String accessToken,
   }) async {
-    AppDebugLog.instance.log(
+    _apilog(
       'API fetchLibrary start: tokenLength=${accessToken.length}',
     );
     final dio = _dio(config.tvAppApiBaseUrl);
@@ -118,146 +203,195 @@ class TvAppApiService {
       '/me/library',
       options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
     );
+    final rawItems = response.data?['items'];
+    if (rawItems is List && rawItems.isNotEmpty && rawItems.first is Map<String, dynamic>) {
+      final first = rawItems.first as Map<String, dynamic>;
+      final firstKeys = first.keys.toList()..sort();
+      final hasMedia = first['media'] is Map<String, dynamic>;
+      final hasFiles = first['files'] is List;
+      final filesLen = hasFiles ? (first['files'] as List).length : -1;
+      _apilog(
+        'API fetchLibrary raw shape: items=${rawItems.length} '
+        'firstKeys=$firstKeys hasMedia=$hasMedia hasFiles=$hasFiles firstFilesLen=$filesLen',
+      );
+      if (!hasMedia || !hasFiles) {
+        _apilog(
+          'API fetchLibrary raw shape mismatch: expected aggregate `{media, files[]}` from server',
+        );
+      }
+    } else {
+      _apilog(
+        'API fetchLibrary raw shape: items is ${rawItems.runtimeType} '
+        'value=${_summarizePayload(rawItems)}',
+      );
+    }
     final items = _readItems(response.data);
-    AppDebugLog.instance.log('API fetchLibrary success: items=${items.length}');
-    return items;
+    final lastIndexedAt = _parseLastIndexedAt(response.data);
+    final parsedFilesTotal = items.fold<int>(0, (sum, e) => sum + e.files.length);
+    _apilog(
+      'API fetchLibrary success: items=${items.length} parsedFilesTotal=$parsedFilesTotal '
+      'lastIndexedAt=$lastIndexedAt',
+    );
+    return LibraryFetchResult(items: items, lastIndexedAt: lastIndexedAt);
   }
 
-  Future<List<AppMediaAggregate>> syncLibrary({
+  Future<SyncLibraryResult> syncLibrary({
     required AppConfig config,
     required String accessToken,
     required List<String> mediaFileIds,
+    List<DiscoveredMediaRef>? refs,
   }) async {
-    AppDebugLog.instance.log(
+    _apilog(
       'API syncLibrary start: ids=${mediaFileIds.length}, tokenLength=${accessToken.length}',
     );
     final dio = _dio(config.tvAppApiBaseUrl);
+    final body = <String, dynamic>{
+      'mediaFileIds': mediaFileIds,
+    };
+    if (refs != null && refs.isNotEmpty) {
+      body['refs'] = refs
+          .map(
+            (r) => <String, dynamic>{
+              'mediaFileId': r.mediaFileId,
+              if (r.telegramFileId != null && r.telegramFileId!.isNotEmpty)
+                'telegramFileId': r.telegramFileId,
+              'sourceChatId': r.sourceChatId,
+              'sourceMessageId': r.sourceMessageId,
+              'captionText': r.captionText,
+            },
+          )
+          .toList(growable: false);
+    }
     final response = await dio.post<Map<String, dynamic>>(
       '/me/sync',
-      data: {'mediaFileIds': mediaFileIds},
-      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+      data: body,
+      options: Options(
+        headers: {'Authorization': 'Bearer $accessToken'},
+        validateStatus: (s) => s != null && s < 500,
+      ),
     );
+    final code = response.statusCode ?? 0;
     final items = _readItems(response.data);
-    AppDebugLog.instance.log('API syncLibrary success: items=${items.length}');
-    return items;
+    final lastIndexedAt = _parseLastIndexedAt(response.data);
+    _apilog(
+      'API syncLibrary done: status=$code items=${items.length} lastIndexedAt=$lastIndexedAt',
+    );
+    return SyncLibraryResult(items: items, lastIndexedAt: lastIndexedAt);
   }
 
+  /// Asks [tv-app-api] → provider bot to copy the file from backup channels into the user chat.
+  Future<bool> recoverMediaFileFromBackup({
+    required AppConfig config,
+    required String accessToken,
+    required String mediaFileId,
+  }) async {
+    final dio = _dio(config.tvAppApiBaseUrl);
+    _apilog(
+      'API recoverFromBackup start mediaFileId=$mediaFileId',
+    );
+    final response = await dio.post<dynamic>(
+      '/me/recover-from-backup',
+      data: {'mediaFileId': mediaFileId},
+      options: Options(
+        headers: {'Authorization': 'Bearer $accessToken'},
+        validateStatus: (_) => true,
+      ),
+    );
+    final code = response.statusCode ?? 0;
+    final ok = code == 200;
+    _apilog(
+      'API recoverFromBackup done status=$code recovered=$ok',
+    );
+    return ok;
+  }
+
+  /// Global hashtag search via TDLib `searchMessages` (all non-secret chats).
+  /// Results are **reverse chronological** (newest first) per TDLib.
+  /// [minMessageDateUtc]: only messages with `date >=` this instant (incremental sync).
   Future<void> collectMediaFileIdsFromTelegram({
     required TdlibFacade tdlib,
     required AppConfig config,
-    required Future<void> Function(Set<String> discoveredIds) onBatch,
+    required Future<void> Function(List<DiscoveredMediaRef> discoveredRefs) onBatch,
+    DateTime? minMessageDateUtc,
   }) async {
-    AppDebugLog.instance.log(
-      'Sync discover start: bot=${config.botUsername}, query=${config.indexTag}',
+    final minDateUnix = minMessageDateUtc != null
+        ? (minMessageDateUtc.toUtc().millisecondsSinceEpoch ~/ 1000)
+        : 0;
+    _apilog(
+      'Sync discover: searchMessages query=${config.indexTag} maxItems=$_kMaxSyncDiscoverItems '
+      'minDateUnix=$minDateUnix',
     );
     await tdlib.ensureAuthorized();
-    final chatIds = <int>{};
 
-    final resolved = await tdlib.send(
-      td.SearchPublicChat(username: config.botUsername),
-    );
-    if (resolved is! td.Chat || resolved.type is! td.ChatTypePrivate) {
-      AppDebugLog.instance.log('Sync discover: BOT_USERNAME did not resolve to private chat');
-      return;
-    }
-    final botUserId = (resolved.type as td.ChatTypePrivate).userId;
+    final byMediaFileId = <String, DiscoveredMediaRef>{};
 
-    final privateChat = await tdlib.send(
-      td.CreatePrivateChat(userId: botUserId, force: false),
-    );
-    if (privateChat is td.Chat) {
-      chatIds.add(privateChat.id);
-    }
-
-    final groups = await tdlib.send(
-      td.GetGroupsInCommon(userId: botUserId, offsetChatId: 0, limit: 100),
-    );
-    if (groups is td.Chats) {
-      chatIds.addAll(groups.chatIds);
-    }
-    AppDebugLog.instance.log('Sync discover: scanning chats=${chatIds.length}');
-
-    int totalCollected = 0;
-    final currentBatch = <String>{};
-    final timer = Stopwatch()..start();
-
-    Future<void> flushBatch() async {
-      if (currentBatch.isEmpty) return;
-      try {
-        await onBatch(Set.of(currentBatch));
-        totalCollected += currentBatch.length;
-      } catch (e) {
-        AppDebugLog.instance.log('Sync discover: onBatch failed with $e');
+    bool mergeRef(DiscoveredMediaRef next) {
+      final id = next.mediaFileId.trim();
+      final tf = next.telegramFileId?.trim() ?? '';
+      if (id.isEmpty || tf.isEmpty) return false;
+      final existing = byMediaFileId[id];
+      if (existing != null) {
+        if (next.telegramDate <= existing.telegramDate) return false;
+        byMediaFileId[id] = next;
+        return true;
       }
-      currentBatch.clear();
-      timer.reset();
+      if (byMediaFileId.length >= _kMaxSyncDiscoverItems) return false;
+      byMediaFileId[id] = next;
+      return true;
     }
 
-    for (final chatId in chatIds) {
-      var fromMessageId = 0;
-      var hasMore = true;
-      var pageCount = 0;
+    var offset = '';
+    for (var page = 0; page < 30; page++) {
+      if (byMediaFileId.length >= _kMaxSyncDiscoverItems) break;
+      final batch = await tdlib.send(
+        td.SearchMessages(
+          chatList: null,
+          query: config.indexTag,
+          offset: offset,
+          limit: 100,
+          filter: null,
+          minDate: minDateUnix,
+          maxDate: 0,
+        ),
+      );
 
-      while (hasMore && pageCount < 20) {
-        pageCount++;
-        final batch = await tdlib.send(
-          td.SearchChatMessages(
-            chatId: chatId,
-            query: config.indexTag,
-            senderId: null,
-            filter: null,
-            messageThreadId: 0,
-            fromMessageId: fromMessageId,
-            offset: 0,
-            limit: 100,
+      if (batch is! td.FoundMessages) {
+        _apilog(
+          'Sync discover: searchMessages unexpected ${batch.runtimeType}',
+        );
+        break;
+      }
+      for (final msg in batch.messages) {
+        if (byMediaFileId.length >= _kMaxSyncDiscoverItems) break;
+        final text = _extractText(msg);
+        final mediaFileId = _extractMediaFileId(text);
+        if (mediaFileId == null) continue;
+        final telegramFileId = await _resolveTelegramFileId(tdlib, msg);
+        // Captioner replies with [MessageText] that references the user's video; TDLib
+        // download needs the **media** message id, not the bot caption message id.
+        final locatorMessageId = _locatorMessageIdForSync(msg);
+        mergeRef(
+          DiscoveredMediaRef(
+            mediaFileId: mediaFileId,
+            sourceChatId: msg.chatId,
+            sourceMessageId: locatorMessageId,
+            captionText: text,
+            telegramFileId: telegramFileId,
+            telegramDate: msg.date,
           ),
         );
-
-        if (batch is td.FoundChatMessages) {
-          if (batch.messages.isEmpty) {
-            hasMore = false;
-            continue;
-          }
-          for (final msg in batch.messages) {
-            final text = _extractText(msg);
-            final mediaFileId = _extractMediaFileId(text);
-            if (mediaFileId != null) currentBatch.add(mediaFileId);
-          }
-          if (timer.elapsed.inSeconds >= 10 && currentBatch.isNotEmpty) {
-            await flushBatch();
-          }
-          fromMessageId = batch.nextFromMessageId;
-          if (fromMessageId == 0) hasMore = false;
-          continue;
-        }
-
-        if (batch is td.Messages) {
-          if (batch.messages.isEmpty) {
-            hasMore = false;
-            continue;
-          }
-          for (final msg in batch.messages) {
-            final text = _extractText(msg);
-            final mediaFileId = _extractMediaFileId(text);
-            if (mediaFileId != null) currentBatch.add(mediaFileId);
-          }
-          if (timer.elapsed.inSeconds >= 10 && currentBatch.isNotEmpty) {
-            await flushBatch();
-          }
-          fromMessageId = batch.messages.last.id;
-          continue;
-        }
-
-        hasMore = false;
       }
+      if (batch.nextOffset.isEmpty) break;
+      offset = batch.nextOffset;
     }
-    
-    // Final flush
-    if (currentBatch.isNotEmpty) {
-      await flushBatch();
+
+    final list = byMediaFileId.values.toList(growable: false);
+    try {
+      await onBatch(list);
+    } catch (e) {
+      _apilog('Sync discover: onBatch failed with $e');
     }
-    
-    AppDebugLog.instance.log('Sync discover done: total mediaFileIds=$totalCollected');
+    _apilog('Sync discover done: total mediaFileIds=${list.length}');
   }
 
   Future<String> _fetchSignedInitData({
@@ -285,7 +419,7 @@ class TvAppApiService {
 
     if (config.tvAppWebAppShortName.isNotEmpty) {
       try {
-        AppDebugLog.instance.log(
+        _apilog(
           'InitData: trying GetWebAppLinkUrl shortName=${config.tvAppWebAppShortName}',
         );
         final result = await tdlib.send(
@@ -301,18 +435,18 @@ class TvAppApiService {
         );
         if (result is td.HttpUrl) {
           webAppUrl = result.url;
-          AppDebugLog.instance.log(
+          _apilog(
             'InitData: shortName URL received (len=${webAppUrl.length})',
           );
         }
       } catch (e) {
         if (e is td.TdError) shortNameError = e;
-        AppDebugLog.instance.log('InitData: shortName failed: $e');
+        _apilog('InitData: shortName failed: $e');
       }
     }
 
     if (webAppUrl == null && config.tvAppWebAppUrl.isNotEmpty) {
-      AppDebugLog.instance.log('InitData: trying GetWebAppUrl fallback');
+      _apilog('InitData: trying GetWebAppUrl fallback');
       final fallbackResult = await tdlib.send(
         td.GetWebAppUrl(
           botUserId: botUserId,
@@ -323,7 +457,7 @@ class TvAppApiService {
       );
       if (fallbackResult is td.HttpUrl) {
         webAppUrl = fallbackResult.url;
-        AppDebugLog.instance.log(
+        _apilog(
           'InitData: fallback URL received (len=${webAppUrl.length})',
         );
       }
@@ -346,7 +480,7 @@ class TvAppApiService {
       throw StateError('tgWebAppData not found in web app URL');
     }
     _logInitDataAuthAge(initData);
-    AppDebugLog.instance.log(
+    _apilog(
       'InitData: tgWebAppData extracted (len=${initData.length})',
     );
     return initData;
@@ -384,6 +518,62 @@ class TvAppApiService {
     );
     final match = pattern.firstMatch(text);
     return match?.group(1);
+  }
+
+  String? _extractTelegramFileId(td.Message msg) {
+    try {
+      final content = msg.content;
+      if (content is td.MessageVideo) {
+        final remote = content.video.video.remote;
+        return remote.id.isNotEmpty ? remote.id : null;
+      }
+      if (content is td.MessageDocument) {
+        final remote = content.document.document.remote;
+        return remote.id.isNotEmpty ? remote.id : null;
+      }
+      if (content is td.MessageAnimation) {
+        final remote = content.animation.animation.remote;
+        return remote.id.isNotEmpty ? remote.id : null;
+      }
+      if (content is td.MessageVideoNote) {
+        final remote = content.videoNote.video.remote;
+        return remote.id.isNotEmpty ? remote.id : null;
+      }
+    } catch (_) {
+      // Ignore malformed/unsupported messages.
+    }
+    return null;
+  }
+
+  /// TDLib [GetMessage] / server locator must target the message that **contains** the file.
+  static int _locatorMessageIdForSync(td.Message msg) {
+    final rt = msg.replyTo;
+    if (rt is td.MessageReplyToMessage) {
+      return rt.messageId;
+    }
+    return msg.id;
+  }
+
+  /// Captioner-bot replies with [td.MessageText] that **replies to** the user's video/document.
+  /// `searchMessages` returns that text message, so we load the replied-to message for `remote.id`.
+  Future<String?> _resolveTelegramFileId(
+    TdlibFacade tdlib,
+    td.Message msg,
+  ) async {
+    final direct = _extractTelegramFileId(msg);
+    if (direct != null && direct.isNotEmpty) return direct;
+
+    final rt = msg.replyTo;
+    if (rt is! td.MessageReplyToMessage) return null;
+
+    var chatId = rt.chatId;
+    if (chatId == 0) chatId = msg.chatId;
+
+    final got = await tdlib.send(
+      td.GetMessage(chatId: chatId, messageId: rt.messageId),
+    );
+    if (got is! td.Message) return null;
+    return _extractTelegramFileId(got);
   }
 
   String? _extractTgWebAppData(String webAppUrl) {
@@ -438,21 +628,21 @@ class TvAppApiService {
       final params = Uri.splitQueryString(initData);
       final authDateRaw = params['auth_date'];
       if (authDateRaw == null || authDateRaw.isEmpty) {
-        AppDebugLog.instance.log('InitData: auth_date missing');
+        _apilog('InitData: auth_date missing');
         return;
       }
       final authDate = int.tryParse(authDateRaw);
       if (authDate == null) {
-        AppDebugLog.instance.log('InitData: auth_date invalid ($authDateRaw)');
+        _apilog('InitData: auth_date invalid ($authDateRaw)');
         return;
       }
       final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final ageSec = nowSec - authDate;
-      AppDebugLog.instance.log(
+      _apilog(
         'InitData: auth_date=$authDate now=$nowSec ageSec=$ageSec',
       );
     } catch (e) {
-      AppDebugLog.instance.log('InitData: failed to parse auth_date: $e');
+      _apilog('InitData: failed to parse auth_date: $e');
     }
   }
 }

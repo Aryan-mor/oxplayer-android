@@ -6,13 +6,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-
 import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
+import '../../data/library_telegram_sync.dart';
 import '../../data/models/app_media.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
+
+void _homeLog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
+void _homeSyncLog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.sync);
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -24,7 +29,6 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   static const int _gridColumns = 5;
   static const double _gridRowExtent = 390;
-
   bool _isSyncing = false;
   DateTime? _lastSyncTime;
   final ScrollController _gridScrollController = ScrollController();
@@ -50,7 +54,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _syncButtonFocusNode = FocusNode(debugLabel: 'SyncButtonFocus');
     _logoutButtonFocusNode = FocusNode(debugLabel: 'LogoutButtonFocus');
 
-    AppDebugLog.instance.log('HomeScreen: initState');
+    _homeLog('HomeScreen: initState');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAutoSync();
     });
@@ -81,19 +85,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (auth.apiAccessToken != null && auth.apiAccessToken!.isNotEmpty) {
       try {
         final currentLibrary = await ref.read(mediaListProvider.future);
-        AppDebugLog.instance.log('HomeScreen: Initial library fetch returned ${currentLibrary.length} items');
+        _homeLog(
+            'HomeScreen: Initial library fetch returned ${currentLibrary.length} items');
 
         if (_lastSyncTime == null) {
           if (currentLibrary.isEmpty) {
-              AppDebugLog.instance.log('HomeScreen: Library is empty, auto-triggering Telegram sync');
+              _homeLog(
+                  'HomeScreen: Library is empty, auto-triggering Telegram sync');
               await _triggerSync(isManual: false);
           } else {
-              AppDebugLog.instance.log('HomeScreen: Library is not empty, skipping auto Telegram sync');
+              _homeLog(
+                  'HomeScreen: Library is not empty, skipping auto Telegram sync');
               if (mounted) setState(() => _lastSyncTime = DateTime.now());
           }
         }
       } catch (e) {
-        AppDebugLog.instance.log('HomeScreen: Failed to fetch initial library provider: $e');
+        _homeLog('HomeScreen: Failed to fetch initial library provider: $e');
       }
     }
   }
@@ -102,9 +109,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final auth = ref.read(authNotifierProvider);
     final existing = auth.apiAccessToken;
     if (existing != null && existing.isNotEmpty) {
-      AppDebugLog.instance.log(
-        'HomeScreen: reusing API token (len=${existing.length})',
-      );
+      _homeLog('HomeScreen: reusing API token (len=${existing.length})');
       return existing;
     }
 
@@ -117,13 +122,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final tdlib = ref.read(tdlibFacadeProvider);
     final api = ref.read(tvAppApiServiceProvider);
-    AppDebugLog.instance.log('HomeScreen: requesting fresh API access token');
+    _homeLog('HomeScreen: requesting fresh API access token');
     final accessToken =
         await api.authenticateWithTelegram(tdlib: tdlib, config: config);
     await auth.setApiAccessToken(accessToken);
-    AppDebugLog.instance.log(
-      'HomeScreen: API token saved (len=${accessToken.length})',
-    );
+    _homeLog('HomeScreen: API token saved (len=${accessToken.length})');
     return accessToken;
   }
 
@@ -133,62 +136,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _runSyncWithToken(String accessToken) async {
-    final api = ref.read(tvAppApiServiceProvider);
-    final config = ref.read(appConfigProvider);
-    final tdlib = ref.read(tdlibFacadeProvider);
-
-    // 1. Fetch current library from server
-    final currentLibrary = await api.fetchLibrary(
-      config: config,
+    _homeSyncLog(
+        'HomeScreen: running Telegram library sync (incremental)');
+    await runTelegramLibrarySync(
+      api: ref.read(tvAppApiServiceProvider),
+      config: ref.read(appConfigProvider),
+      tdlib: ref.read(tdlibFacadeProvider),
       accessToken: accessToken,
-    );
-
-    // 2. Extract existing IDs to compute the set difference
-    final existingFileIds = currentLibrary
-        .expand((agg) => agg.files)
-        .map((f) => f.id)
-        .toSet();
-
-    AppDebugLog.instance.log(
-      'HomeScreen: Found ${existingFileIds.length} existing files from server',
-    );
-
-    // 3. Search Telegram for all files
-    AppDebugLog.instance.log('HomeScreen: Scanning Telegram for file IDs...');
-    await api.collectMediaFileIdsFromTelegram(
-      tdlib: tdlib,
-      config: config,
-      onBatch: (discoveredIds) async {
-        // 4. Calculate new IDs in this batch
-        final newMediaFileIds = discoveredIds.difference(existingFileIds);
-
-        // 5. Send new files to server if any
-        if (newMediaFileIds.isNotEmpty) {
-          AppDebugLog.instance.log(
-            'HomeScreen: Found ${newMediaFileIds.length} new files to sync (Out of ${discoveredIds.length} batch collected)',
-          );
-          await api.syncLibrary(
-            config: config,
-            accessToken: accessToken,
-            mediaFileIds: newMediaFileIds.toList(),
-          );
-
-          // Register them so we avoid re-syncing if Telegram repeats a file
-          existingFileIds.addAll(newMediaFileIds);
-
-          // 6. Refresh UI state with latest library while still syncing
-          ref.invalidate(mediaListProvider);
-        } else {
-          AppDebugLog.instance.log('HomeScreen: No new files found in this batch');
-        }
-      },
+      invalidateLibrary: () => ref.invalidate(mediaListProvider),
+      mode: TelegramLibrarySyncMode.incremental,
     );
   }
 
   Future<void> _triggerSync({bool isManual = true}) async {
     if (_isSyncing) return;
     setState(() => _isSyncing = true);
-    AppDebugLog.instance.log('HomeScreen: Sync started (isManual=$isManual)');
+    _homeSyncLog('HomeScreen: Sync started (isManual=$isManual)');
 
     try {
       var accessToken = await _requireApiAccessToken();
@@ -197,7 +160,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       } on DioException catch (e) {
         if (!_isUnauthorized(e)) rethrow;
 
-        AppDebugLog.instance.log(
+        _homeSyncLog(
           'HomeScreen: API token rejected (status=${e.response?.statusCode}), refreshing once',
         );
         final auth = ref.read(authNotifierProvider);
@@ -206,7 +169,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           accessToken = await _requireApiAccessToken();
           await _runSyncWithToken(accessToken);
         } catch (refreshError) {
-          AppDebugLog.instance.log(
+          _homeSyncLog(
             'HomeScreen: token refresh/retry failed, logging out: $refreshError',
           );
           await auth.clearSession();
@@ -215,11 +178,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
 
       if (mounted) setState(() => _lastSyncTime = DateTime.now());
-      AppDebugLog.instance.log('HomeScreen: Sync completed successfully');
+      _homeSyncLog('HomeScreen: Sync completed successfully');
     } catch (e) {
-      AppDebugLog.instance.log('HomeScreen: Sync failed: $e');
+      _homeSyncLog('HomeScreen: Sync failed: $e');
       if (e is DioException) {
-        AppDebugLog.instance.log(
+        _homeSyncLog(
           'HomeScreen: DioException details '
           'type=${e.type} status=${e.response?.statusCode} '
           'uri=${e.requestOptions.uri} '
@@ -239,7 +202,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     } finally {
       if (mounted) setState(() => _isSyncing = false);
-      AppDebugLog.instance.log('HomeScreen: Sync finished (_isSyncing=false)');
+      _homeSyncLog('HomeScreen: Sync finished (_isSyncing=false)');
     }
   }
 

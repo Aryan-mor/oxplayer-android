@@ -7,6 +7,8 @@ class AppConfig {
     required this.telegramApiHash,
     required this.indexTag,
     required this.botUsername,
+    required this.providerBotUsername,
+    required this.requiredChannelUsername,
     required this.tvAppApiBaseUrl,
     required this.tvAppWebAppShortName,
     required this.tvAppWebAppUrl,
@@ -15,7 +17,10 @@ class AppConfig {
   final String telegramApiId;
   final String telegramApiHash;
   final String indexTag;
+  /// Main bot (WebApp / initData, indexing, and mandatory /start when gate is on).
   final String botUsername;
+  final String providerBotUsername;
+  final String requiredChannelUsername;
   final String tvAppApiBaseUrl;
   final String tvAppWebAppShortName;
   final String tvAppWebAppUrl;
@@ -28,6 +33,8 @@ class AppConfig {
       // When INDEX_TAG is missing (or dotenv stripped `#…` — quote INDEX_TAG in default.env).
       indexTag: v('INDEX_TAG').isEmpty ? '#seeOnTV' : v('INDEX_TAG'),
       botUsername: v('BOT_USERNAME').replaceFirst('@', ''),
+      providerBotUsername: v('PROVIDER_BOT_USERNAME').replaceFirst('@', ''),
+      requiredChannelUsername: v('REQUIRED_CHANNEL_USERNAME').replaceFirst('@', ''),
       tvAppApiBaseUrl: v('TV_APP_API_BASE_URL'),
       tvAppWebAppShortName: v('TV_APP_WEBAPP_SHORT_NAME'),
       tvAppWebAppUrl: v('TV_APP_WEBAPP_URL'),

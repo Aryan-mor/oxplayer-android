@@ -10,6 +10,9 @@ import 'package:tdlib/td_api.dart' as td;
 import '../core/debug/app_debug_log.dart';
 import '../telegram/tdlib_facade.dart';
 
+void _dmglog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.download);
+
 const _kDownloadPriority = 1;
 const _kDownloadLimit = 0; // 0 => unlimited/chunking handled by TDLib
 const _kPrefsKey = 'telecima_downloads';
@@ -64,6 +67,39 @@ class DownloadCompleted extends DownloadState {
 class DownloadError extends DownloadState {
   const DownloadError({required this.message});
   final String message;
+}
+
+/// Provider backup recovery + full sync in progress.
+class DownloadRecovering extends DownloadState {
+  const DownloadRecovering();
+}
+
+/// Telegram file missing and backup recovery failed or exhausted.
+class DownloadUnavailable extends DownloadState {
+  const DownloadUnavailable();
+}
+
+/// Fresh locator row from [/me/library] after backup recovery sync.
+class DownloadLocatorRefresh {
+  const DownloadLocatorRefresh({
+    this.telegramFileId,
+    this.sourceChatId,
+    this.mediaFileId,
+    this.locatorType,
+    this.locatorChatId,
+    this.locatorMessageId,
+    this.locatorBotUsername,
+    this.locatorRemoteFileId,
+  });
+
+  final String? telegramFileId;
+  final int? sourceChatId;
+  final String? mediaFileId;
+  final String? locatorType;
+  final int? locatorChatId;
+  final int? locatorMessageId;
+  final String? locatorBotUsername;
+  final String? locatorRemoteFileId;
 }
 
 // ─── Record ──────────────────────────────────────────────────────────────────
@@ -139,15 +175,27 @@ class MediaDownloadRecord {
 class DownloadManager extends ChangeNotifier {
   DownloadManager({
     required TdlibFacade tdlib,
-  }) : _tdlib = tdlib {
+    Future<bool> Function(String mediaFileId)? recoverFromBackup,
+    Future<void> Function()? afterBackupRecoveryRefresh,
+    Future<DownloadLocatorRefresh?> Function(String globalId, String variantId)?
+        reloadLocatorAfterRecovery,
+  })  : _tdlib = tdlib,
+        _recoverFromBackup = recoverFromBackup,
+        _afterBackupRecoveryRefresh = afterBackupRecoveryRefresh,
+        _reloadLocatorAfterRecovery = reloadLocatorAfterRecovery {
     _updateSub = tdlib.updates().listen(_onTdlibUpdate);
   }
 
   final TdlibFacade _tdlib;
+  final Future<bool> Function(String mediaFileId)? _recoverFromBackup;
+  final Future<void> Function()? _afterBackupRecoveryRefresh;
+  final Future<DownloadLocatorRefresh?> Function(String globalId, String variantId)?
+      _reloadLocatorAfterRecovery;
   StreamSubscription<Map<String, dynamic>>? _updateSub;
 
   final Map<String, DownloadState> _states = {};
   final Map<int, String> _fileIdToGlobalId = {};
+  final Set<String> _unavailableGlobalIds = {};
 
   List<MediaDownloadRecord> _records = [];
 
@@ -252,17 +300,35 @@ class DownloadManager extends ChangeNotifier {
     required String globalId,
     required String variantId,
     String? telegramFileId,
+    int? sourceChatId,
+    String? mediaFileId,
+    String? locatorType,
+    int? locatorChatId,
+    int? locatorMessageId,
+    String? locatorBotUsername,
+    String? locatorRemoteFileId,
     int? msgId,
     int? chatId,
     required String title,
     required String year,
     String? mimeType,
     int? fileSize,
+    bool allowBackupRecovery = true,
   }) async {
-    if (_states[globalId] is Downloading) return;
+    if (_unavailableGlobalIds.contains(globalId)) {
+      _setState(globalId, const DownloadUnavailable());
+      return;
+    }
+    if (_states[globalId] is Downloading ||
+        _states[globalId] is DownloadRecovering) {
+      return;
+    }
 
-    AppDebugLog.instance.log(
-      'DownloadManager: startDownload globalId=$globalId variantId=$variantId',
+    _dmglog(
+      'DownloadManager: startDownload globalId=$globalId variantId=$variantId '
+      'hasTelegramFileId=${telegramFileId != null && telegramFileId.isNotEmpty} '
+      'sourceChatId=$sourceChatId mediaFileId=$mediaFileId '
+      'locatorType=$locatorType locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId',
     );
 
     _setState(globalId, const Downloading(bytesDownloaded: 0, totalBytes: null));
@@ -270,37 +336,94 @@ class DownloadManager extends ChangeNotifier {
     try {
       td.File? tdFile;
 
-      if (telegramFileId != null && telegramFileId.isNotEmpty) {
-        final remoteFile = await _tdlib.send(td.GetRemoteFile(remoteFileId: telegramFileId, fileType: null));
-        if (remoteFile is td.File) {
-          tdFile = remoteFile;
-        } else {
-          throw Exception('Could not resolve remote file ID: $telegramFileId');
-        }
-      } else if (msgId != null && msgId > 0 && chatId != null && chatId != 0) {
-        final msgObj =
-            await _tdlib.send(td.GetMessage(chatId: chatId, messageId: msgId));
-        if (msgObj is! td.Message) {
-          throw Exception('Could not retrieve message $msgId from chat $chatId');
-        }
+      if (locatorType == 'CHAT_MESSAGE' &&
+          locatorChatId != null &&
+          locatorMessageId != null) {
+        tdFile = await _resolveFileByMessage(
+          chatId: locatorChatId,
+          messageId: locatorMessageId,
+        );
+      }
 
-        if (msgObj.content is td.MessageVideo) {
-          tdFile = (msgObj.content as td.MessageVideo).video.video;
-        } else if (msgObj.content is td.MessageDocument) {
-          tdFile = (msgObj.content as td.MessageDocument).document.document;
-        }
+      if (tdFile == null && (locatorRemoteFileId ?? '').trim().isNotEmpty) {
+        final remoteFile = await _tdlib.send(
+          td.GetRemoteFile(
+            remoteFileId: locatorRemoteFileId!.trim(),
+            fileType: null,
+          ),
+        );
+        if (remoteFile is td.File) tdFile = remoteFile;
+      }
 
-        if (tdFile == null && msgObj.replyTo is td.MessageReplyToMessage) {
-          final replyToId = (msgObj.replyTo as td.MessageReplyToMessage).messageId;
-          final repliedObj =
-              await _tdlib.send(td.GetMessage(chatId: chatId, messageId: replyToId));
-          if (repliedObj is td.Message) {
-            if (repliedObj.content is td.MessageVideo) {
-              tdFile = (repliedObj.content as td.MessageVideo).video.video;
-            } else if (repliedObj.content is td.MessageDocument) {
-              tdFile = (repliedObj.content as td.MessageDocument).document.document;
+      if (tdFile == null &&
+          locatorType == 'BOT_PRIVATE_RUNTIME' &&
+          (locatorBotUsername ?? '').isNotEmpty &&
+          mediaFileId != null &&
+          mediaFileId.isNotEmpty) {
+        final runtimeChatId = await _resolveBotPrivateChatId(locatorBotUsername!);
+        if (runtimeChatId != null) {
+          final resolved = await _resolveFileFromSourceChat(
+            sourceChatId: runtimeChatId,
+            mediaFileId: mediaFileId,
+          );
+          if (resolved != null) tdFile = resolved;
+        }
+      }
+
+      if (tdFile == null && sourceChatId != null && mediaFileId != null && mediaFileId.isNotEmpty) {
+        final resolved = await _resolveFileFromSourceChat(
+          sourceChatId: sourceChatId,
+          mediaFileId: mediaFileId,
+        );
+        if (resolved != null) {
+          tdFile = resolved;
+        }
+      }
+
+      // Last resort: [telegramFileId] from API is often Bot API `file_id` (backups) —
+      // TDLib [getRemoteFile] rejects those; try only when locator paths failed.
+      if (tdFile == null && telegramFileId != null && telegramFileId.isNotEmpty) {
+        try {
+          final remoteFile = await _tdlib.send(
+            td.GetRemoteFile(remoteFileId: telegramFileId, fileType: null),
+          );
+          if (remoteFile is td.File) tdFile = remoteFile;
+        } catch (e) {
+          _dmglog(
+            'DownloadManager: GetRemoteFile(telegramFileId) skipped/failed (likely Bot API id): $e',
+          );
+        }
+      }
+      if (tdFile == null && msgId != null && msgId > 0 && chatId != null && chatId != 0) {
+        try {
+          final msgObj =
+              await _tdlib.send(td.GetMessage(chatId: chatId, messageId: msgId));
+          if (msgObj is td.Message) {
+            tdFile = _extractFileFromMessage(msgObj);
+
+            if (tdFile == null && msgObj.replyTo is td.MessageReplyToMessage) {
+              final replyToId =
+                  (msgObj.replyTo as td.MessageReplyToMessage).messageId;
+              try {
+                final repliedObj = await _tdlib.send(
+                  td.GetMessage(chatId: chatId, messageId: replyToId),
+                );
+                if (repliedObj is td.Message) {
+                  tdFile = _extractFileFromMessage(repliedObj);
+                }
+              } on td.TdError catch (e) {
+                _dmglog(
+                  'DownloadManager: GetMessage(replyTo) failed chatId=$chatId '
+                  'messageId=$replyToId code=${e.code}',
+                );
+              }
             }
           }
+        } on td.TdError catch (e) {
+          _dmglog(
+            'DownloadManager: GetMessage(legacy msgId/chatId) failed chatId=$chatId '
+            'messageId=$msgId code=${e.code} message=${e.message}',
+          );
         }
       }
 
@@ -352,10 +475,173 @@ class DownloadManager extends ChangeNotifier {
         synchronous: false,
       ));
     } catch (e, st) {
-      AppDebugLog.instance.log('DownloadManager: startDownload error: $e');
+      _dmglog('DownloadManager: startDownload error: $e');
       debugPrint('DownloadManager: startDownload: $e\n$st');
-      _setState(globalId, DownloadError(message: e.toString()));
+
+      if (!_isMissingTelegramFileError(e)) {
+        _setState(globalId, DownloadError(message: e.toString()));
+        return;
+      }
+
+      if (!allowBackupRecovery) {
+        _unavailableGlobalIds.add(globalId);
+        _setState(globalId, const DownloadUnavailable());
+        return;
+      }
+
+      if (_recoverFromBackup == null || _afterBackupRecoveryRefresh == null) {
+        _setState(globalId, DownloadError(message: e.toString()));
+        return;
+      }
+
+      _setState(globalId, const DownloadRecovering());
+      final fid = (mediaFileId != null && mediaFileId.trim().isNotEmpty)
+          ? mediaFileId.trim()
+          : variantId;
+      var recovered = false;
+      try {
+        recovered = await _recoverFromBackup(fid);
+      } catch (recoverErr) {
+        _dmglog(
+          'DownloadManager: recoverFromBackup failed: $recoverErr',
+        );
+        recovered = false;
+      }
+      if (!recovered) {
+        _unavailableGlobalIds.add(globalId);
+        _setState(globalId, const DownloadUnavailable());
+        return;
+      }
+
+      try {
+        await _afterBackupRecoveryRefresh();
+      } catch (syncErr) {
+        _dmglog(
+          'DownloadManager: afterBackupRecoveryRefresh: $syncErr',
+        );
+      }
+
+      final fresh = await _reloadLocatorAfterRecovery?.call(globalId, variantId);
+      // [startDownload] returns early while state is [DownloadRecovering]; clear it
+      // so the post-recovery retry actually runs.
+      _setState(globalId, const DownloadIdle());
+      await startDownload(
+        globalId: globalId,
+        variantId: variantId,
+        telegramFileId: fresh?.telegramFileId ?? telegramFileId,
+        sourceChatId: fresh?.sourceChatId ?? sourceChatId,
+        mediaFileId: fresh?.mediaFileId ?? mediaFileId,
+        locatorType: fresh?.locatorType ?? locatorType,
+        locatorChatId: fresh?.locatorChatId ?? locatorChatId,
+        locatorMessageId: fresh?.locatorMessageId ?? locatorMessageId,
+        locatorBotUsername: fresh?.locatorBotUsername ?? locatorBotUsername,
+        locatorRemoteFileId: fresh?.locatorRemoteFileId ?? locatorRemoteFileId,
+        msgId: msgId,
+        chatId: chatId,
+        title: title,
+        year: year,
+        mimeType: mimeType,
+        fileSize: fileSize,
+        allowBackupRecovery: false,
+      );
     }
+  }
+
+  static bool _isMissingTelegramFileError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('file metadata missing') ||
+        s.contains('cannot identify file');
+  }
+
+  Future<td.File?> _resolveFileByMessage({
+    required int chatId,
+    required int messageId,
+  }) async {
+    try {
+      final msgObj = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: messageId));
+      if (msgObj is! td.Message) return null;
+      final file = _extractFileFromMessage(msgObj);
+      if (file != null) {
+        _dmglog(
+          'DownloadManager: locator chat_message resolved chatId=$chatId messageId=$messageId fileId=${file.id}',
+        );
+      }
+      return file;
+    } on td.TdError catch (e) {
+      // Stale locator, wrong id space, or message deleted — try fallbacks (source chat search, etc.).
+      _dmglog(
+        'DownloadManager: GetMessage(locator) failed chatId=$chatId messageId=$messageId '
+        'code=${e.code} message=${e.message}',
+      );
+      return null;
+    }
+  }
+
+  Future<int?> _resolveBotPrivateChatId(String botUsername) async {
+    try {
+      final resolved = await _tdlib.send(td.SearchPublicChat(username: botUsername));
+      if (resolved is! td.Chat || resolved.type is! td.ChatTypePrivate) return null;
+      final botUserId = (resolved.type as td.ChatTypePrivate).userId;
+      final privateChat = await _tdlib.send(
+        td.CreatePrivateChat(userId: botUserId, force: false),
+      );
+      if (privateChat is td.Chat) return privateChat.id;
+    } catch (e) {
+      _dmglog('DownloadManager: bot private runtime resolve failed: $e');
+    }
+    return null;
+  }
+
+  Future<td.File?> _resolveFileFromSourceChat({
+    required int sourceChatId,
+    required String mediaFileId,
+  }) async {
+    _dmglog(
+      'DownloadManager: resolving source message chatId=$sourceChatId mediaFileId=$mediaFileId',
+    );
+    final result = await _tdlib.send(
+      td.SearchChatMessages(
+        chatId: sourceChatId,
+        query: mediaFileId,
+        senderId: null,
+        filter: null,
+        messageThreadId: 0,
+        fromMessageId: 0,
+        offset: 0,
+        limit: 20,
+      ),
+    );
+
+    final messages = <td.Message>[];
+    if (result is td.FoundChatMessages) {
+      messages.addAll(result.messages);
+    } else if (result is td.Messages) {
+      messages.addAll(result.messages);
+    }
+
+    for (final msg in messages) {
+      final file = _extractFileFromMessage(msg);
+      if (file != null) {
+        _dmglog(
+          'DownloadManager: source message resolved messageId=${msg.id} fileId=${file.id}',
+        );
+        return file;
+      }
+    }
+
+    _dmglog(
+      'DownloadManager: no downloadable message found in source chat for mediaFileId=$mediaFileId',
+    );
+    return null;
+  }
+
+  td.File? _extractFileFromMessage(td.Message msg) {
+    final content = msg.content;
+    if (content is td.MessageVideo) return content.video.video;
+    if (content is td.MessageDocument) return content.document.document;
+    if (content is td.MessageAnimation) return content.animation.animation;
+    if (content is td.MessageVideoNote) return content.videoNote.video;
+    return null;
   }
 
   Future<void> pauseDownload(String globalId) async {
@@ -376,7 +662,7 @@ class DownloadManager extends ChangeNotifier {
         ),
       );
     } catch (e, st) {
-      AppDebugLog.instance.log('DownloadManager: pauseDownload error: $e');
+      _dmglog('DownloadManager: pauseDownload error: $e');
       debugPrint('DownloadManager: pauseDownload: $e\n$st');
       _setState(globalId, DownloadError(message: e.toString()));
     }
@@ -411,14 +697,14 @@ class DownloadManager extends ChangeNotifier {
         ),
       );
     } catch (e, st) {
-      AppDebugLog.instance.log('DownloadManager: resumeDownload error: $e');
+      _dmglog('DownloadManager: resumeDownload error: $e');
       debugPrint('DownloadManager: resumeDownload: $e\n$st');
       _setState(globalId, DownloadError(message: e.toString()));
     }
   }
 
   Future<void> deleteDownload(String globalId) async {
-    AppDebugLog.instance.log('DownloadManager: deleteDownload $globalId');
+    _dmglog('DownloadManager: deleteDownload $globalId');
     
     final row = _getRecordForGlobalId(globalId);
     if (row != null) {
@@ -440,6 +726,7 @@ class DownloadManager extends ChangeNotifier {
       await _saveRecords();
     }
 
+    _unavailableGlobalIds.remove(globalId);
     _setState(globalId, const DownloadIdle());
   }
 
@@ -487,7 +774,7 @@ class DownloadManager extends ChangeNotifier {
     int fileId,
     String tdlibPath,
   ) async {
-    AppDebugLog.instance.log(
+    _dmglog(
       'DownloadManager: download completed globalId=$globalId path=$tdlibPath',
     );
 
@@ -509,7 +796,7 @@ class DownloadManager extends ChangeNotifier {
         finalPath = destPath;
       }
 
-      AppDebugLog.instance.log(
+      _dmglog(
         'DownloadManager: renamed to $finalPath',
       );
 
@@ -520,9 +807,10 @@ class DownloadManager extends ChangeNotifier {
       await _saveRecords();
 
       _fileIdToGlobalId.remove(fileId);
+      _unavailableGlobalIds.remove(globalId);
       _setState(globalId, DownloadCompleted(localFilePath: finalPath));
     } catch (e, st) {
-      AppDebugLog.instance.log(
+      _dmglog(
           'DownloadManager: _onDownloadCompleted error: $e');
       debugPrint('DownloadManager: _onDownloadCompleted: $e\n$st');
       _setState(globalId, DownloadError(message: e.toString()));
@@ -599,12 +887,12 @@ class DownloadManager extends ChangeNotifier {
       final legacy = Directory('${internal.path}/downloads');
       if (await legacy.exists()) {
         await legacy.delete(recursive: true);
-        AppDebugLog.instance.log(
+        _dmglog(
           'DownloadManager: removed legacy internal downloads dir ${legacy.path}',
         );
       }
     } catch (e) {
-      AppDebugLog.instance.log(
+      _dmglog(
         'DownloadManager: legacy internal downloads cleanup skipped: $e',
       );
     }

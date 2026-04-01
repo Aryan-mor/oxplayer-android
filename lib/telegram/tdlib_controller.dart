@@ -20,6 +20,9 @@ import '../core/debug/app_debug_log.dart';
 import 'tdlib_facade.dart';
 import 'tdlib_json_sanitize.dart';
 
+void _tdlog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.tdlib);
+
 const _kGetMeExtra = 'telecima_session';
 const _kDownloadConnectionsCount = 16;
 const _kMaxGetMeRetries = 2;
@@ -79,7 +82,7 @@ class TelegramTdlibFacade implements TdlibFacade {
     final extra = '${DateTime.now().microsecondsSinceEpoch}_${request.runtimeType}';
     final completer = Completer<td.TdObject>();
     _pendingRequests[extra] = completer;
-    AppDebugLog.instance.log('TDLib[client=$id]: → send ${request.runtimeType} (extra=$extra)');
+    _tdlog('TDLib[client=$id]: → send ${request.runtimeType} (extra=$extra)');
     tdJsonClientSend(id, request, extra);
     return completer.future;
   }
@@ -144,14 +147,14 @@ class TelegramTdlibFacade implements TdlibFacade {
     
     final dbDirObj = Directory(_dbDir!);
     final dbExists = await dbDirObj.exists();
-    AppDebugLog.instance.log('TDLib: Init paths - DB: $_dbDir (exists: $dbExists), Files: $_filesDir');
+    _tdlog('TDLib: Init paths - DB: $_dbDir (exists: $dbExists), Files: $_filesDir');
 
     if (dbExists) {
       try {
         final list = dbDirObj.listSync().map((e) => e.path.split(Platform.pathSeparator).last).toList();
-        AppDebugLog.instance.log('TDLib: DB dir contents: ${list.join(', ')}');
+        _tdlog('TDLib: DB dir contents: ${list.join(', ')}');
       } catch (e) {
-        AppDebugLog.instance.log('TDLib: Failed to list DB dir: $e');
+        _tdlog('TDLib: Failed to list DB dir: $e');
       }
     }
 
@@ -167,7 +170,7 @@ class TelegramTdlibFacade implements TdlibFacade {
     }
     _finalizeChain = Future.value();
 
-    AppDebugLog.instance.log('TDLib: init() client created, starting receive isolate');
+    _tdlog('TDLib: init() client created, starting receive isolate');
     unawaited(_startReceiveLoop());
   }
 
@@ -205,9 +208,9 @@ class TelegramTdlibFacade implements TdlibFacade {
           await d.delete(recursive: true);
         }
       }
-      AppDebugLog.instance.log('TDLib: cleared local tdlib + tdlib_files (expect QR flow)');
+      _tdlog('TDLib: cleared local tdlib + tdlib_files (expect QR flow)');
     } catch (e) {
-      AppDebugLog.instance.log('TDLib: resetLocalSessionForQrLogin: $e');
+      _tdlog('TDLib: resetLocalSessionForQrLogin: $e');
     }
   }
 
@@ -231,7 +234,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       );
     } catch (e, st) {
       debugPrint('TDLib: failed to spawn receive isolate: $e\n$st');
-      AppDebugLog.instance.log('TDLib: spawn receive isolate FAILED: $e');
+      _tdlog('TDLib: spawn receive isolate FAILED: $e');
       _receiveLoopRunning = false;
       port.close();
       _receiveMainPort = null;
@@ -251,7 +254,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       if (message is Map && message['_tdReceiveIsolateError'] != null) {
         final err = message['_tdReceiveIsolateError'];
         debugPrint('TDLib receive isolate: $err');
-        AppDebugLog.instance.log('TDLib receive isolate error: $err');
+        _tdlog('TDLib receive isolate error: $err');
         return;
       }
       if (message is! String) return;
@@ -263,10 +266,10 @@ class TelegramTdlibFacade implements TdlibFacade {
         if (extraStr != null && _pendingRequests.containsKey(extraStr)) {
           final completer = _pendingRequests.remove(extraStr);
           if (obj is td.TdError) {
-            AppDebugLog.instance.log('TDLib: ← FAILED (extra=$extraStr) code=${obj.code}: ${obj.message}');
+            _tdlog('TDLib: ← FAILED (extra=$extraStr) code=${obj.code}: ${obj.message}');
             completer?.completeError(obj);
           } else {
-            AppDebugLog.instance.log('TDLib: ← SUCCESS (extra=$extraStr) type=${obj.runtimeType}');
+            _tdlog('TDLib: ← SUCCESS (extra=$extraStr) type=${obj.runtimeType}');
             completer?.complete(obj);
           }
           return;
@@ -286,24 +289,39 @@ class TelegramTdlibFacade implements TdlibFacade {
       } catch (e, st) {
         debugPrint('TDLib receive dispatch error: $e\n$st');
         final preview = message.length > 500 ? '${message.substring(0, 500)}…' : message;
-        AppDebugLog.instance.log('TDLib parse/dispatch error: $e');
-        AppDebugLog.instance.log('TDLib json preview: $preview');
+        _tdlog('TDLib parse/dispatch error: $e');
+        _tdlog('TDLib json preview: $preview');
+        // Parsing failed after [sanitizeTdlibJson]: complete the matching RPC so [send] does not hang.
+        try {
+          final decoded = jsonDecode(sanitizeTdlibJson(message));
+          if (decoded is Map<String, dynamic>) {
+            final extraStr = decoded['@extra']?.toString();
+            if (extraStr != null) {
+              final completer = _pendingRequests.remove(extraStr);
+              if (completer != null && !completer.isCompleted) {
+                completer.completeError(
+                  StateError('TDLib JSON parse/dispatch failed: $e'),
+                );
+              }
+            }
+          }
+        } catch (_) {}
       }
     });
   }
 
   void _handleTdError(td.TdError err) {
     if (_isIgnorableTdError(err)) {
-      AppDebugLog.instance.log('TDLib: ignored non-fatal error ${err.code}: ${err.message}');
+      _tdlog('TDLib: ignored non-fatal error ${err.code}: ${err.message}');
       return;
     }
 
     debugPrint('TDLib error ${err.code}: ${err.message}');
-    AppDebugLog.instance.log('TDLib ERROR ${err.code}: ${err.message}');
+    _tdlog('TDLib ERROR ${err.code}: ${err.message}');
     if (_awaitingGetMeAfterReady) {
       _awaitingGetMeAfterReady = false;
       if (_isInteractiveAuthError(err)) {
-        AppDebugLog.instance.log(
+        _tdlog(
           'TDLib: getMe failed after READY (${err.code}), forcing interactive re-login',
         );
         _failEnsureAuthorizedIfPending('GetMeError:${err.code}');
@@ -311,7 +329,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       } else {
         if (_getMeRetryCount < _kMaxGetMeRetries) {
           _getMeRetryCount += 1;
-          AppDebugLog.instance.log(
+          _tdlog(
             'TDLib: getMe failed after READY (${err.code}: ${err.message}); '
             'retrying $_getMeRetryCount/$_kMaxGetMeRetries',
           );
@@ -387,11 +405,11 @@ class TelegramTdlibFacade implements TdlibFacade {
       final onAuth = onUserAuthorized;
       try {
         if (onAuth != null) {
-          AppDebugLog.instance.log(
+          _tdlog(
             'TDLib[client=$_clientId]: Invoking onUserAuthorized for user ${user.id}...',
           );
           await onAuth(user);
-          AppDebugLog.instance.log('TDLib[client=$_clientId]: onUserAuthorized finished.');
+          _tdlog('TDLib[client=$_clientId]: onUserAuthorized finished.');
         }
         if (!_authUserId.isClosed) {
           _authUserId.add(user.id);
@@ -401,7 +419,7 @@ class TelegramTdlibFacade implements TdlibFacade {
         }
       } catch (e, st) {
         debugPrint('TDLib onUserAuthorized failed: $e\n$st');
-        AppDebugLog.instance.log('TDLib onUserAuthorized failed: $e');
+        _tdlog('TDLib onUserAuthorized failed: $e');
         if (!_functionErrors.isClosed) {
           _functionErrors.add('Could not save session: $e');
         }
@@ -427,7 +445,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       if (apiId == null || apiHash == null || db == null || files == null) return;
       _paramsSent = true;
       debugPrint('TDLib: authorizationStateWaitTdlibParameters → setTdlibParameters');
-      AppDebugLog.instance.log('TDLib: WaitTdlibParameters → setTdlibParameters');
+      _tdlog('TDLib: WaitTdlibParameters → setTdlibParameters');
       tdJsonClientSend(
         _clientId!,
         td.SetTdlibParameters(
@@ -456,7 +474,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       // may arrive after the timer and TDLib returns 400 "unexpected".
       // QR is requested from [AuthorizationStateWaitPhoneNumber] and Welcome.
     } else if (state is td.AuthorizationStateWaitPhoneNumber) {
-      AppDebugLog.instance.log('TDLib[client=$_clientId]: State = WaitPhoneNumber');
+      _tdlog('TDLib[client=$_clientId]: State = WaitPhoneNumber');
       _failEnsureAuthorizedIfPending('WaitPhoneNumber');
       unawaited(_invokeRequiresInteractiveLogin());
       tdJsonClientSend(
@@ -464,7 +482,7 @@ class TelegramTdlibFacade implements TdlibFacade {
         const td.RequestQrCodeAuthentication(otherUserIds: []),
       );
     } else if (state is td.AuthorizationStateWaitOtherDeviceConfirmation) {
-      AppDebugLog.instance.log(
+      _tdlog(
         'TDLib[client=$_clientId]: State = WaitOtherDeviceConfirmation (QR Link: ${state.link.substring(0, 10)}...)',
       );
       _failEnsureAuthorizedIfPending('WaitOtherDeviceConfirmation');
@@ -486,12 +504,12 @@ class TelegramTdlibFacade implements TdlibFacade {
       if (!_qrPayload.isClosed) {
         _qrPayload.add(null);
       }
-      AppDebugLog.instance.log('TDLib[client=$_clientId]: State = READY');
+      _tdlog('TDLib[client=$_clientId]: State = READY');
       _getMeRetryCount = 0;
       _requestGetMe();
     } else if (state is td.AuthorizationStateWaitPassword) {
       debugPrint('TDLib: 2FA password required (authorizationStateWaitPassword)');
-      AppDebugLog.instance.log('TDLib: WaitPassword (2FA)');
+      _tdlog('TDLib: WaitPassword (2FA)');
       if (!_qrPayload.isClosed) {
         _qrPayload.add(null);
       }
@@ -500,7 +518,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       }
     } else {
       debugPrint('TDLib auth state: ${state.runtimeType}');
-      AppDebugLog.instance.log('TDLib[client=$_clientId]: UNHANDLED auth state ${state.runtimeType}');
+      _tdlog('TDLib[client=$_clientId]: UNHANDLED auth state ${state.runtimeType}');
     }
   }
 
@@ -513,7 +531,7 @@ class TelegramTdlibFacade implements TdlibFacade {
 
   void _failEnsureAuthorizedIfPending(String reason) {
     if (_authCompleter.isCompleted) return;
-    AppDebugLog.instance.log('TDLib: ensureAuthorized failed ($reason) → interactive login required');
+    _tdlog('TDLib: ensureAuthorized failed ($reason) → interactive login required');
     _authCompleter.completeError(const TdlibInteractiveLoginRequired());
   }
 
@@ -524,7 +542,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       await fn();
     } catch (e, st) {
       debugPrint('TDLib onRequiresInteractiveLogin: $e\n$st');
-      AppDebugLog.instance.log('TDLib: onRequiresInteractiveLogin error: $e');
+      _tdlog('TDLib: onRequiresInteractiveLogin error: $e');
     }
   }
 
@@ -533,7 +551,7 @@ class TelegramTdlibFacade implements TdlibFacade {
     if (id == null || _transportTuningApplied) return;
     _transportTuningApplied = true;
 
-    AppDebugLog.instance.log(
+    _tdlog(
       'TDLib[client=$id]: Tuning before/after: '
       'download_connections_count: default -> $_kDownloadConnectionsCount',
     );
@@ -546,7 +564,7 @@ class TelegramTdlibFacade implements TdlibFacade {
     );
 
     // We are a TV app and should avoid mobile-data specific throttling logic.
-    AppDebugLog.instance.log(
+    _tdlog(
       'TDLib[client=$id]: Tuning before/after: network_type: default -> wifi',
     );
     tdJsonClientSend(

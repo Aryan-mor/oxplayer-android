@@ -8,6 +8,7 @@ import 'data/api/tv_app_api_service.dart';
 import 'data/models/app_media.dart';
 import 'data/local/telegram_session_store.dart';
 import 'data/tmdb/tmdb_repository.dart';
+import 'data/library_telegram_sync.dart';
 import 'download/download_manager.dart';
 import 'telegram/tdlib_controller.dart' if (dart.library.html) 'telegram/tdlib_controller_web.dart';
 import 'telegram/tdlib_facade.dart';
@@ -37,7 +38,7 @@ final tdlibFacadeProvider = Provider<TdlibFacade>((ref) {
     },
     onRequiresInteractiveLogin: () async {
       final auth = ref.read(authNotifierProvider);
-      if (!auth.isLoggedIn) return;
+      if (!auth.hasTelegramSession) return;
       await auth.clearTelegramSession();
     },
   );
@@ -63,7 +64,11 @@ final mediaListProvider = FutureProvider<List<AppMediaAggregate>>((ref) async {
   
   final config = ref.read(appConfigProvider);
   final api = ref.read(tvAppApiServiceProvider);
-  return api.fetchLibrary(config: config, accessToken: authNotifier.apiAccessToken!);
+  final result = await api.fetchLibrary(
+    config: config,
+    accessToken: authNotifier.apiAccessToken!,
+  );
+  return result.items;
 });
 
 final selectedTypeFilterProvider =
@@ -119,7 +124,60 @@ class _DownloadManagerNotifier extends AsyncNotifier<DownloadManager> {
   @override
   Future<DownloadManager> build() async {
     final tdlib = ref.watch(tdlibFacadeProvider);
-    final dm = DownloadManager(tdlib: tdlib);
+    final dm = DownloadManager(
+      tdlib: tdlib,
+      recoverFromBackup: (mediaFileId) async {
+        final auth = ref.read(authNotifierProvider);
+        final token = auth.apiAccessToken;
+        if (token == null) return false;
+        final api = ref.read(tvAppApiServiceProvider);
+        final config = ref.read(appConfigProvider);
+        return api.recoverMediaFileFromBackup(
+          config: config,
+          accessToken: token,
+          mediaFileId: mediaFileId,
+        );
+      },
+      afterBackupRecoveryRefresh: () async {
+        final auth = ref.read(authNotifierProvider);
+        final token = auth.apiAccessToken;
+        if (token == null) return;
+        await runTelegramLibrarySync(
+          api: ref.read(tvAppApiServiceProvider),
+          config: ref.read(appConfigProvider),
+          tdlib: ref.read(tdlibFacadeProvider),
+          accessToken: token,
+          invalidateLibrary: () => ref.invalidate(mediaListProvider),
+          mode: TelegramLibrarySyncMode.full,
+        );
+        await ref.read(mediaListProvider.future);
+      },
+      reloadLocatorAfterRecovery: (_, variantId) async {
+        final items =
+            await ref.read(mediaListProvider.future);
+        AppMediaFile? hit;
+        for (final agg in items) {
+          for (final f in agg.files) {
+            if (f.id == variantId) {
+              hit = f;
+              break;
+            }
+          }
+          if (hit != null) break;
+        }
+        if (hit == null) return null;
+        return DownloadLocatorRefresh(
+          telegramFileId: hit.telegramFileId,
+          sourceChatId: hit.sourceChatId,
+          mediaFileId: hit.id,
+          locatorType: hit.locatorType,
+          locatorChatId: hit.locatorChatId,
+          locatorMessageId: hit.locatorMessageId,
+          locatorBotUsername: hit.locatorBotUsername,
+          locatorRemoteFileId: hit.locatorRemoteFileId,
+        );
+      },
+    );
     await dm.restorePersistedStates();
 
     void onManagerChanged() {

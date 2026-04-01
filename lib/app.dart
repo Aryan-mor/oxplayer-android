@@ -20,15 +20,17 @@ class TeleCimaApp extends ConsumerWidget {
     // Session initialization is now handled by authNotifierProvider internally.
 
     ref.listen(authNotifierProvider, (prev, auth) {
-      if (auth.isLoggedIn) {
+      if (auth.hasTelegramSession) {
         final facade = ref.read(tdlibFacadeProvider);
         if (!facade.isInitialized) {
           final config = ref.read(appConfigProvider);
           final apiIdStr = config.telegramApiId;
           final apiId = int.tryParse(apiIdStr) ?? 0;
           if (apiId > 0) {
-            AppDebugLog.instance
-                .log('TeleCimaApp: Auto-initializing TDLib for active session');
+            AppDebugLog.instance.log(
+              'TeleCimaApp: Auto-initializing TDLib for active session',
+              category: AppDebugLogCategory.app,
+            );
             unawaited(facade.init(
               apiId: apiId,
               apiHash: config.telegramApiHash,
