@@ -72,6 +72,9 @@ class TelegramTdlibFacade implements TdlibFacade {
   /// Serializes [getMe] finalization so [UpdateUser] + [User] do not run [onUserAuthorized] twice.
   Future<void> _finalizeChain = Future.value();
 
+  /// Ensures only one [init] runs at a time (avoids two clients locking `td.binlog`).
+  Future<void> _initExclusive = Future.value();
+
   @override
   Future<void> ensureAuthorized() => _authCompleter.future;
 
@@ -128,6 +131,28 @@ class TelegramTdlibFacade implements TdlibFacade {
     if (apiId <= 0 || apiHash.isEmpty) {
       throw StateError('TDLib: set TELEGRAM_API_ID and TELEGRAM_API_HASH in assets/env/default.env');
     }
+    final previous = _initExclusive;
+    final done = Completer<void>();
+    _initExclusive = done.future;
+    await previous.catchError((Object _, StackTrace __) {});
+    try {
+      await _performInit(
+        apiId: apiId,
+        apiHash: apiHash,
+        sessionString: sessionString,
+      );
+    } finally {
+      if (!done.isCompleted) {
+        done.complete();
+      }
+    }
+  }
+
+  Future<void> _performInit({
+    required int apiId,
+    required String apiHash,
+    required String sessionString,
+  }) async {
     if (_clientId != null) {
       await _shutdownClient();
     }
@@ -144,14 +169,17 @@ class TelegramTdlibFacade implements TdlibFacade {
     final support = await getApplicationSupportDirectory();
     _dbDir = '${support.path}/tdlib';
     _filesDir = '${support.path}/tdlib_files';
-    
+
     final dbDirObj = Directory(_dbDir!);
     final dbExists = await dbDirObj.exists();
     _tdlog('TDLib: Init paths - DB: $_dbDir (exists: $dbExists), Files: $_filesDir');
 
     if (dbExists) {
       try {
-        final list = dbDirObj.listSync().map((e) => e.path.split(Platform.pathSeparator).last).toList();
+        final list = dbDirObj
+            .listSync()
+            .map((e) => e.path.split(Platform.pathSeparator).last)
+            .toList();
         _tdlog('TDLib: DB dir contents: ${list.join(', ')}');
       } catch (e) {
         _tdlog('TDLib: Failed to list DB dir: $e');
@@ -588,6 +616,8 @@ class TelegramTdlibFacade implements TdlibFacade {
     _receiveIsolate = null;
     _receiveMainPort?.close();
     _receiveMainPort = null;
+    // Receive isolate must stop calling [tdJsonClientReceive] before [Close]/[destroy].
+    await Future<void>.delayed(const Duration(milliseconds: 220));
 
     _paramsSent = false;
     _transportTuningApplied = false;
@@ -603,10 +633,11 @@ class TelegramTdlibFacade implements TdlibFacade {
       try {
         tdJsonClientSend(id, const td.Close());
       } catch (_) {}
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await Future<void>.delayed(const Duration(milliseconds: 120));
       try {
         tdJsonClientDestroy(id);
       } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 80));
     }
   }
 

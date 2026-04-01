@@ -3,13 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
 
 import '../core/debug/app_debug_log.dart';
-import '../player/external_player.dart';
 import '../telegram/tdlib_facade.dart';
 
 void _dmglog(String m) =>
@@ -845,15 +842,6 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  String? _seasonEpisodeSubtitle(MediaDownloadRecord row) {
-    if (!row.isSeriesMedia) return null;
-    final s = (row.season ?? 1).clamp(0, 999);
-    final e = (row.episode != null && row.episode! > 0)
-        ? row.episode!.clamp(0, 999)
-        : 0;
-    return 'S${s.toString().padLeft(2, '0')}E${e.toString().padLeft(2, '0')}';
-  }
-
   Future<void> _onDownloadCompleted(
     String globalId,
     int fileId,
@@ -866,80 +854,30 @@ class DownloadManager extends ChangeNotifier {
     try {
       final row = _getRecordForGlobalId(globalId);
       if (row == null) return;
-
-      var plannedName = row.standardizedName ?? row.fileName;
-      final actualExt = _extensionFromFileName(tdlibPath);
-      if (actualExt != null &&
-          actualExt.isNotEmpty &&
-          (row.mediaTitle ?? '').trim().isNotEmpty) {
-        plannedName = _buildDownloadFileName(
-          mediaTitle: row.mediaTitle!.trim(),
-          releaseYear: row.releaseYear ?? '',
-          isSeriesMedia: row.isSeriesMedia,
-          season: row.season,
-          episode: row.episode,
-          quality: row.quality,
-          ext: actualExt,
+      if (tdlibPath.trim().isEmpty) {
+        _setState(
+          globalId,
+          const DownloadError(message: 'Download finished but file path was empty.'),
         );
-      } else if (actualExt != null && actualExt.isNotEmpty) {
-        final dot = plannedName.lastIndexOf('.');
-        final stem = dot > 0 ? plannedName.substring(0, dot) : plannedName;
-        plannedName = '$stem.$actualExt';
+        return;
       }
-      row.standardizedName = plannedName;
-      row.fileName = plannedName;
-
-      final destDir = await _resolveDownloadDirectory();
-      final desiredPath = p.join(destDir.path, plannedName);
-      final destPath = await _allocateUniqueDestinationPath(desiredPath);
-
-      String finalPath;
-      try {
-        await File(tdlibPath).rename(destPath);
-        finalPath = destPath;
-      } catch (_) {
-        await File(tdlibPath).copy(destPath);
-        await File(tdlibPath).delete();
-        finalPath = destPath;
-      }
-
-      _dmglog(
-        'DownloadManager: renamed to $finalPath',
-      );
 
       row.status = 'completed';
-      row.localFilePath = finalPath;
-      if (p.basename(finalPath) != plannedName) {
-        row.fileName = p.basename(finalPath);
-        row.standardizedName = p.basename(finalPath);
-      }
+      row.localFilePath = tdlibPath;
       row.bytesDownloaded = row.totalBytes ?? row.bytesDownloaded;
       row.updatedAt = DateTime.now().millisecondsSinceEpoch;
-      await _saveRecords();
-
-      final tagTitle = (row.displayTitle ?? '').trim().isNotEmpty
-          ? row.displayTitle!.trim()
-          : p.basenameWithoutExtension(finalPath);
-      try {
-        await ExternalPlayer.injectMetadata(
-          path: finalPath,
-          title: tagTitle,
-          year: (row.releaseYear ?? '').trim(),
-          mediaTitle: row.mediaTitle,
-          displayTitle: row.displayTitle,
-          subtitle: _seasonEpisodeSubtitle(row),
-          isSeries: row.isSeriesMedia,
-        );
-      } catch (e) {
-        _dmglog('DownloadManager: injectMetadata non-fatal: $e');
-      }
 
       _fileIdToGlobalId.remove(fileId);
       _unavailableGlobalIds.remove(globalId);
-      _setState(globalId, DownloadCompleted(localFilePath: finalPath));
+      _setState(globalId, DownloadCompleted(localFilePath: tdlibPath));
+
+      try {
+        await _saveRecords();
+      } catch (e) {
+        _dmglog('DownloadManager: _saveRecords after complete: $e');
+      }
     } catch (e, st) {
-      _dmglog(
-          'DownloadManager: _onDownloadCompleted error: $e');
+      _dmglog('DownloadManager: _onDownloadCompleted error: $e');
       debugPrint('DownloadManager: _onDownloadCompleted: $e\n$st');
       _setState(globalId, DownloadError(message: e.toString()));
     }
@@ -1030,32 +968,6 @@ class DownloadManager extends ChangeNotifier {
     return s;
   }
 
-  static Future<String> _allocateUniqueDestinationPath(
-    String desiredPath,
-  ) async {
-    if (!await File(desiredPath).exists()) return desiredPath;
-
-    final dir = p.dirname(desiredPath);
-    final filename = p.basename(desiredPath);
-    final dot = filename.lastIndexOf('.');
-    late final String stem;
-    late final String extWithDot;
-    if (dot > 0) {
-      stem = filename.substring(0, dot);
-      extWithDot = filename.substring(dot);
-    } else {
-      stem = filename;
-      extWithDot = '';
-    }
-
-    for (var n = 2; n < 10000; n++) {
-      final candidate = p.join(dir, '$stem ($n)$extWithDot');
-      if (!await File(candidate).exists()) return candidate;
-    }
-    final stamp = DateTime.now().millisecondsSinceEpoch;
-    return p.join(dir, '$stem $stamp$extWithDot');
-  }
-
   static String? _extensionFromMime(String? mime) {
     if (mime == null) return null;
     const map = {
@@ -1073,40 +985,6 @@ class DownloadManager extends ChangeNotifier {
     final dot = path.lastIndexOf('.');
     if (dot < 0 || dot >= path.length - 1) return null;
     return path.substring(dot + 1).toLowerCase();
-  }
-
-  static Future<Directory> _resolveDownloadDirectory() async {
-    if (Platform.isAndroid) {
-      final external = await getExternalStorageDirectory();
-      if (external != null) {
-        final downloads = Directory('${external.path}/Downloads');
-        if (!await downloads.exists()) await downloads.create(recursive: true);
-        await _cleanupLegacyInternalDownloads();
-        return downloads;
-      }
-    }
-
-    final dir = await getApplicationDocumentsDirectory();
-    final downloads = Directory('${dir.path}/downloads');
-    if (!await downloads.exists()) await downloads.create(recursive: true);
-    return downloads;
-  }
-
-  static Future<void> _cleanupLegacyInternalDownloads() async {
-    try {
-      final internal = await getApplicationDocumentsDirectory();
-      final legacy = Directory('${internal.path}/downloads');
-      if (await legacy.exists()) {
-        await legacy.delete(recursive: true);
-        _dmglog(
-          'DownloadManager: removed legacy internal downloads dir ${legacy.path}',
-        );
-      }
-    } catch (e) {
-      _dmglog(
-        'DownloadManager: legacy internal downloads cleanup skipped: $e',
-      );
-    }
   }
 
   static int? _readInt(

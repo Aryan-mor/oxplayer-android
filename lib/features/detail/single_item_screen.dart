@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show File;
+import 'dart:ui' show ImageFilter;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -11,6 +12,7 @@ import 'package:path/path.dart' as p;
 import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
+import '../../core/tv/tv_expandable_section.dart';
 import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../player/external_player.dart';
@@ -156,10 +158,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _PosterPanel(
-                  aggregate: agg,
-                  onDelete: _load,
-                ),
+                _PosterPanel(aggregate: agg),
                 Expanded(
                   child: _DetailsPanel(aggregate: agg, isSeries: isSeries),
                 ),
@@ -173,13 +172,9 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
 }
 
 class _PosterPanel extends ConsumerWidget {
-  const _PosterPanel({
-    required this.aggregate,
-    required this.onDelete,
-  });
+  const _PosterPanel({required this.aggregate});
 
   final AppMediaAggregate aggregate;
-  final VoidCallback onDelete;
 
   String? _resolvePosterUrl(String? posterPath) {
     final value = (posterPath ?? '').trim();
@@ -275,47 +270,65 @@ class _DetailsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final item = aggregate.media;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            item.title,
-            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              if (item.releaseYear != null) _chip('Year ${item.releaseYear}'),
-              _chip(isSeries ? 'Series' : 'Movie'),
-              if (item.originalLanguage != null && item.originalLanguage!.isNotEmpty)
-                _chip(item.originalLanguage!.toUpperCase()),
-            ],
-          ),
-          const SizedBox(height: 14),
-          ExpansionTile(
-            title: const Text('Overview', style: TextStyle(color: Colors.white)),
-            collapsedIconColor: Colors.white,
-            iconColor: Colors.white,
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            children: [
-              Text(
-                (item.summary ?? '').trim().isEmpty
-                    ? 'No description available.'
-                    : item.summary!.trim(),
-                style: const TextStyle(color: AppColors.textMuted, height: 1.45),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 12, 20, 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            color: Colors.black.withValues(alpha: 0.5),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: FocusTraversalGroup(
+                policy: OrderedTraversalPolicy(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        if (item.releaseYear != null) _chip('Year ${item.releaseYear}'),
+                        _chip(isSeries ? 'Series' : 'Movie'),
+                        if (item.originalLanguage != null &&
+                            item.originalLanguage!.isNotEmpty)
+                          _chip(item.originalLanguage!.toUpperCase()),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    TvExpandableSection(
+                      title: 'Overview',
+                      child: Text(
+                        (item.summary ?? '').trim().isEmpty
+                            ? 'No description available.'
+                            : item.summary!.trim(),
+                        style: const TextStyle(
+                          color: AppColors.textMuted,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (isSeries)
+                      _SeriesVariantsSection(aggregate: aggregate)
+                    else
+                      _MovieVariantsSection(aggregate: aggregate),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
-          const SizedBox(height: 12),
-          if (isSeries)
-            _SeriesVariantsSection(aggregate: aggregate)
-          else
-            _MovieVariantsSection(aggregate: aggregate),
-        ],
+        ),
       ),
     );
   }
@@ -347,7 +360,14 @@ class _MovieVariantsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Available versions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const Text(
+          'Available versions',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
         const SizedBox(height: 8),
         for (final file in aggregate.files)
           _VariantRow(
@@ -386,43 +406,90 @@ class _SeriesVariantsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Seasons', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const Text(
+          'Seasons',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
         const SizedBox(height: 8),
         for (final season in seasons)
-          ExpansionTile(
-            title: Text('Season $season', style: const TextStyle(color: Colors.white)),
-            collapsedIconColor: Colors.white,
-            iconColor: Colors.white,
-            childrenPadding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
-            children: [
-              ...(() {
-                final byEpisode = grouped[season]!;
-                final episodeNumbers = byEpisode.keys.toList()..sort();
-                return episodeNumbers.map((ep) {
-                  final variants = byEpisode[ep]!;
-                  return ExpansionTile(
-                    title: Text('Episode ${ep <= 0 ? '?' : ep}', style: const TextStyle(color: Colors.white)),
-                    collapsedIconColor: Colors.white70,
-                    iconColor: Colors.white70,
-                    childrenPadding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
-                    children: [
-                      for (final file in variants)
-                        _VariantRow(
-                          media: aggregate.media,
-                          file: file,
-                          inSeriesSection: true,
-                          downloadTitle:
-                              '${aggregate.media.title} - S${season.toString().padLeft(2, '0')}E${(ep <= 0 ? 0 : ep).toString().padLeft(2, '0')}',
-                          downloadGlobalId: file.id,
-                        ),
-                    ],
-                  );
-                });
-              })(),
-            ],
+          TvExpandableSection(
+            title: 'Season $season',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final ep in (grouped[season]!.keys.toList()..sort()))
+                  TvExpandableSection(
+                    title: 'Episode ${ep <= 0 ? '?' : ep}',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final file in grouped[season]![ep]!)
+                          _VariantRow(
+                            media: aggregate.media,
+                            file: file,
+                            inSeriesSection: true,
+                            downloadTitle:
+                                '${aggregate.media.title} - S${season.toString().padLeft(2, '0')}E${(ep <= 0 ? 0 : ep).toString().padLeft(2, '0')}',
+                            downloadGlobalId: file.id,
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
           ),
       ],
     );
+  }
+}
+
+Future<void> _confirmAndDeleteDownload(
+  BuildContext context, {
+  required DownloadManager dm,
+  required String downloadGlobalId,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) {
+      return AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text(
+          'Remove download?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'The file will be deleted from this device. You can download it again later.',
+          style: TextStyle(color: AppColors.textMuted, height: 1.35),
+        ),
+        actions: [
+          FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                TVButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.white)),
+                ),
+                TVButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Remove', style: TextStyle(color: Colors.redAccent)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    },
+  );
+  if (confirmed == true && context.mounted) {
+    await dm.deleteDownload(downloadGlobalId);
   }
 }
 
@@ -527,14 +594,31 @@ class _VariantAction extends StatelessWidget {
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.highlight)),
             const SizedBox(width: 8),
-            TVButton(onPressed: () => dm.pauseDownload(downloadGlobalId), child: const Icon(Icons.pause, color: Colors.white)),
+            TVButton(
+              onPressed: () => dm.pauseDownload(downloadGlobalId),
+              child: const Icon(Icons.pause, color: Colors.white),
+            ),
           ],
         ),
       DownloadPaused(:final percent) => Row(
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.textMuted)),
             const SizedBox(width: 8),
-            TVButton(onPressed: () => dm.resumeDownload(downloadGlobalId), child: const Icon(Icons.play_arrow, color: Colors.white)),
+            TVButton(
+              onPressed: () => dm.resumeDownload(downloadGlobalId),
+              child: const Icon(Icons.play_arrow, color: Colors.white),
+            ),
+            const SizedBox(width: 6),
+            TVButton(
+              onPressed: () => unawaited(
+                _confirmAndDeleteDownload(
+                  context,
+                  dm: dm,
+                  downloadGlobalId: downloadGlobalId,
+                ),
+              ),
+              child: const Icon(Icons.delete, color: Colors.redAccent),
+            ),
           ],
         ),
       DownloadCompleted(:final localFilePath) => Row(
@@ -561,7 +645,13 @@ class _VariantAction extends StatelessWidget {
             ],
             const SizedBox(width: 6),
             TVButton(
-              onPressed: () => dm.deleteDownload(downloadGlobalId),
+              onPressed: () => unawaited(
+                _confirmAndDeleteDownload(
+                  context,
+                  dm: dm,
+                  downloadGlobalId: downloadGlobalId,
+                ),
+              ),
               child: const Icon(Icons.delete, color: Colors.redAccent),
             ),
           ],
