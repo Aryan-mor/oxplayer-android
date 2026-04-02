@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
 
 import '../core/debug/app_debug_log.dart';
+import '../telegram/media_file_locator_resolver.dart';
 import '../telegram/tdlib_facade.dart';
 
 void _dmglog(String m) =>
@@ -393,87 +394,30 @@ class DownloadManager extends ChangeNotifier {
     _setState(globalId, const DownloadLocating());
 
     try {
-      td.File? tdFile;
-
-      if (locatorType == 'CHAT_MESSAGE' &&
-          locatorChatId != null &&
-          locatorMessageId != null) {
-        tdFile = await _resolveFileByMessage(
-          chatId: locatorChatId,
-          messageId: locatorMessageId,
-        );
-      }
-
-      if (tdFile == null && (locatorRemoteFileId ?? '').trim().isNotEmpty) {
-        final remoteFile = await _tdlib.send(
-          td.GetRemoteFile(
-            remoteFileId: locatorRemoteFileId!.trim(),
-            fileType: null,
-          ),
-        );
-        if (remoteFile is td.File) tdFile = remoteFile;
-      }
-
-      if (tdFile == null &&
-          locatorType == 'BOT_PRIVATE_RUNTIME' &&
-          (locatorBotUsername ?? '').isNotEmpty &&
-          mediaFileId != null &&
-          mediaFileId.isNotEmpty) {
-        final runtimeChatId = await _resolveBotPrivateChatId(locatorBotUsername!);
-        if (runtimeChatId != null) {
-          final resolved = await _resolveFileFromSourceChat(
-            sourceChatId: runtimeChatId,
-            mediaFileId: mediaFileId,
-          );
-          if (resolved != null) tdFile = resolved;
-        }
-      }
-
-      if (tdFile == null && sourceChatId != null && mediaFileId != null && mediaFileId.isNotEmpty) {
-        final resolved = await _resolveFileFromSourceChat(
-          sourceChatId: sourceChatId,
-          mediaFileId: mediaFileId,
-        );
-        if (resolved != null) {
-          tdFile = resolved;
-        }
-      }
-
-      // Provider bot delivers backup copies into the user's private chat with that bot; TDLib cannot
-      // use Bot API `telegramFileId` from [file_backups] via getRemoteFile.
-      if (tdFile == null &&
-          (_providerBotUsernameForDownloads ?? '').trim().isNotEmpty &&
-          mediaFileId != null &&
-          mediaFileId.isNotEmpty) {
-        final providerChatId =
-            await _resolveBotPrivateChatId(_providerBotUsernameForDownloads!.trim());
-        if (providerChatId != null) {
-          _dmglog(
-            'DownloadManager: trying provider private chat for mediaFileId=$mediaFileId '
-            '(recover / copyMessage deliveries)',
-          );
-          final resolved = await _resolveFileFromSourceChat(
-            sourceChatId: providerChatId,
-            mediaFileId: mediaFileId,
-          );
-          if (resolved != null) tdFile = resolved;
-        }
-      }
-
-      // Last resort: [telegramFileId] from API is often Bot API `file_id` (backups) —
-      // TDLib [getRemoteFile] rejects those; try only when locator paths failed.
-      if (tdFile == null && telegramFileId != null && telegramFileId.isNotEmpty) {
-        try {
-          final remoteFile = await _tdlib.send(
-            td.GetRemoteFile(remoteFileId: telegramFileId, fileType: null),
-          );
-          if (remoteFile is td.File) tdFile = remoteFile;
-        } catch (e) {
-          _dmglog(
-            'DownloadManager: GetRemoteFile(telegramFileId) skipped/failed (likely Bot API id): $e',
-          );
-        }
-      }
+      bool recoveryAttempted = false;
+      final mediaFileIdTrim = mediaFileId?.trim() ?? '';
+      final resolvedMediaFileId =
+          mediaFileIdTrim.isNotEmpty ? mediaFileIdTrim : variantId;
+      final resolved = await resolveTelegramMediaFile(
+        tdlib: _tdlib,
+        mediaFileId: resolvedMediaFileId,
+        indexTagForFileSearch: _indexTagForFileSearch ?? '',
+        telegramFileId: telegramFileId,
+        sourceChatId: sourceChatId,
+        locatorType: locatorType,
+        locatorChatId: locatorChatId,
+        locatorMessageId: locatorMessageId,
+        locatorBotUsername: locatorBotUsername,
+        locatorRemoteFileId: locatorRemoteFileId,
+        providerBotUsername: _providerBotUsernameForDownloads,
+        recoverFromBackup: (allowBackupRecovery && _recoverFromBackup != null)
+            ? (id) async {
+                recoveryAttempted = true;
+                return _recoverFromBackup(id);
+              }
+            : null,
+      );
+      td.File? tdFile = resolved?.file;
       if (tdFile == null && msgId != null && msgId > 0 && chatId != null && chatId != 0) {
         try {
           final msgObj =
@@ -511,6 +455,14 @@ class DownloadManager extends ChangeNotifier {
         throw Exception('File metadata missing; cannot identify file to download.');
       }
 
+      if (recoveryAttempted && _afterBackupRecoveryRefresh != null) {
+        try {
+          await _afterBackupRecoveryRefresh();
+        } catch (e) {
+          _dmglog('DownloadManager: post-recovery refresh failed: $e');
+        }
+      }
+
       _setState(
         globalId,
         Downloading(
@@ -536,6 +488,7 @@ class DownloadManager extends ChangeNotifier {
       final now = DateTime.now().millisecondsSinceEpoch;
       
       var row = _getRecordForGlobalId(globalId);
+      final initialLocalPath = tdFile.local.path.trim();
       if (row != null) {
         row.status = 'downloading';
         row.bytesDownloaded = tdFile.local.downloadedSize;
@@ -551,6 +504,9 @@ class DownloadManager extends ChangeNotifier {
         row.season = season;
         row.episode = episode;
         row.quality = quality;
+        if (initialLocalPath.isNotEmpty) {
+          row.localFilePath = initialLocalPath;
+        }
       } else {
         row = MediaDownloadRecord(
           id: downloadId,
@@ -564,6 +520,7 @@ class DownloadManager extends ChangeNotifier {
           mimeType: mimeType,
           standardizedName: standardizedName,
           tdlibFileId: tdFile.id,
+          localFilePath: initialLocalPath.isNotEmpty ? initialLocalPath : null,
           displayTitle: displayTitle,
           mediaTitle: mediaTitle,
           releaseYear: releaseYear,
@@ -667,148 +624,6 @@ class DownloadManager extends ChangeNotifier {
     final s = e.toString().toLowerCase();
     return s.contains('file metadata missing') ||
         s.contains('cannot identify file');
-  }
-
-  Future<td.File?> _resolveFileByMessage({
-    required int chatId,
-    required int messageId,
-  }) async {
-    try {
-      final msgObj = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: messageId));
-      if (msgObj is! td.Message) return null;
-      var file = _extractFileFromMessage(msgObj);
-      if (file == null && msgObj.replyTo is td.MessageReplyToMessage) {
-        final replyToId = (msgObj.replyTo as td.MessageReplyToMessage).messageId;
-        try {
-          final repliedObj =
-              await _tdlib.send(td.GetMessage(chatId: chatId, messageId: replyToId));
-          if (repliedObj is td.Message) {
-            file = _extractFileFromMessage(repliedObj);
-          }
-        } on td.TdError catch (e) {
-          _dmglog(
-            'DownloadManager: GetMessage(replyTo from locator) failed chatId=$chatId '
-            'messageId=$replyToId code=${e.code}',
-          );
-        }
-      }
-      if (file != null) {
-        _dmglog(
-          'DownloadManager: locator chat_message resolved chatId=$chatId messageId=$messageId fileId=${file.id}',
-        );
-      }
-      return file;
-    } on td.TdError catch (e) {
-      // Stale locator, wrong id space, or message deleted — try fallbacks (source chat search, etc.).
-      _dmglog(
-        'DownloadManager: GetMessage(locator) failed chatId=$chatId messageId=$messageId '
-        'code=${e.code} message=${e.message}',
-      );
-      return null;
-    }
-  }
-
-  /// Caption / text that may contain `#tag_F_<mediaFileId>` (indexer convention).
-  String _flattenMessageCaptionAndText(td.Message msg) {
-    final parts = <String>[];
-    switch (msg.content) {
-      case td.MessageText t:
-        parts.add(t.text.text);
-      case td.MessageVideo v:
-        parts.add(v.caption.text);
-      case td.MessageDocument d:
-        parts.add(d.caption.text);
-      case td.MessageAnimation a:
-        parts.add(a.caption.text);
-      default:
-        break;
-    }
-    return parts.join('\n');
-  }
-
-  bool _messageReferencesMediaFileId(td.Message msg, String mediaFileId) {
-    final haystack = _flattenMessageCaptionAndText(msg);
-    if (haystack.isEmpty) return false;
-    final escaped = RegExp.escape(mediaFileId);
-    return RegExp('_F_$escaped(?!\\d)').hasMatch(haystack);
-  }
-
-  List<String> _searchQueriesForMediaFileId(String mediaFileId) {
-    final q = <String>['_F_$mediaFileId'];
-    final tag = (_indexTagForFileSearch ?? '').trim();
-    if (tag.isNotEmpty) {
-      final withHash = tag.startsWith('#') ? tag : '#$tag';
-      q.add('${withHash}_F_$mediaFileId');
-    }
-    q.add(mediaFileId);
-    return q;
-  }
-
-  Future<int?> _resolveBotPrivateChatId(String botUsername) async {
-    try {
-      final resolved = await _tdlib.send(td.SearchPublicChat(username: botUsername));
-      if (resolved is! td.Chat || resolved.type is! td.ChatTypePrivate) return null;
-      final botUserId = (resolved.type as td.ChatTypePrivate).userId;
-      final privateChat = await _tdlib.send(
-        td.CreatePrivateChat(userId: botUserId, force: false),
-      );
-      if (privateChat is td.Chat) return privateChat.id;
-    } catch (e) {
-      _dmglog('DownloadManager: bot private runtime resolve failed: $e');
-    }
-    return null;
-  }
-
-  Future<td.File?> _resolveFileFromSourceChat({
-    required int sourceChatId,
-    required String mediaFileId,
-  }) async {
-    _dmglog(
-      'DownloadManager: resolving source message chatId=$sourceChatId mediaFileId=$mediaFileId',
-    );
-    final queries = _searchQueriesForMediaFileId(mediaFileId);
-    final seenMessageIds = <int>{};
-
-    for (final query in queries) {
-      _dmglog('DownloadManager: SearchChatMessages query="$query"');
-      final result = await _tdlib.send(
-        td.SearchChatMessages(
-          chatId: sourceChatId,
-          query: query,
-          senderId: null,
-          filter: null,
-          messageThreadId: 0,
-          fromMessageId: 0,
-          offset: 0,
-          limit: 20,
-        ),
-      );
-
-      final messages = <td.Message>[];
-      if (result is td.FoundChatMessages) {
-        messages.addAll(result.messages);
-      } else if (result is td.Messages) {
-        messages.addAll(result.messages);
-      }
-
-      for (final msg in messages) {
-        if (seenMessageIds.contains(msg.id)) continue;
-        if (!_messageReferencesMediaFileId(msg, mediaFileId)) continue;
-        seenMessageIds.add(msg.id);
-        final file = _extractFileFromMessage(msg);
-        if (file != null) {
-          _dmglog(
-            'DownloadManager: source message resolved messageId=${msg.id} fileId=${file.id} query="$query"',
-          );
-          return file;
-        }
-      }
-    }
-
-    _dmglog(
-      'DownloadManager: no downloadable message found in source chat for mediaFileId=$mediaFileId',
-    );
-    return null;
   }
 
   td.File? _extractFileFromMessage(td.Message msg) {
@@ -941,7 +756,7 @@ class DownloadManager extends ChangeNotifier {
         globalId,
         Downloading(bytesDownloaded: downloadedSize, totalBytes: expectedSize),
       );
-      _updateDbProgress(globalId, downloadedSize, expectedSize);
+      _updateDbProgress(globalId, downloadedSize, expectedSize, downloadedPath);
     }
   }
 
@@ -987,13 +802,16 @@ class DownloadManager extends ChangeNotifier {
   }
 
   Future<void> _updateDbProgress(
-      String globalId, int downloaded, int? total) async {
+      String globalId, int downloaded, int? total, String? localPath) async {
     try {
       final row = _getRecordForGlobalId(globalId);
       if (row == null) return;
       
       row.bytesDownloaded = downloaded;
       if (total != null) row.totalBytes = total;
+      if (localPath != null && localPath.trim().isNotEmpty) {
+        row.localFilePath = localPath.trim();
+      }
       row.updatedAt = DateTime.now().millisecondsSinceEpoch;
       await _saveRecords();
     } catch (_) {}

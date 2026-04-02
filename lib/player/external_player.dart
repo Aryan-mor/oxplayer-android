@@ -37,6 +37,28 @@ class ExternalPlayer {
     }
   }
 
+  /// Launches external player for an HTTP/HTTPS stream URL.
+  static Future<bool> launchStreamUrl({
+    required String url,
+    required String title,
+    String mimeType = 'video/*',
+  }) async {
+    try {
+      AppDebugLog.instance.log(
+        'ExternalPlayer: launchStreamUrl url=$url title="$title" mime=$mimeType',
+      );
+      final result = await _channel.invokeMethod<bool>('launchVideo', {
+        'uri': url,
+        'title': title,
+        'mimeType': mimeType,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      AppDebugLog.instance.log('ExternalPlayer: launchStreamUrl error: $e');
+      return false;
+    }
+  }
+
   /// Best-effort metadata for the saved file (title/year/series hints for native tagging).
   static Future<void> injectMetadata({
     required String path,

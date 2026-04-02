@@ -17,6 +17,7 @@ import '../../core/tv/tv_expandable_section.dart';
 import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../player/external_player.dart';
+import '../../player/telegram_range_playback.dart';
 import '../../providers.dart';
 
 void _itemLog(String m) =>
@@ -784,6 +785,12 @@ class _VariantAction extends ConsumerWidget {
       DownloadIdle() => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (file.canStream)
+              TVButton(
+                onPressed: () => unawaited(_stream(context, ref)),
+                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
+              ),
+            if (file.canStream) const SizedBox(width: 6),
             TVButton(
               onPressed: () => _startDownload(context),
               child: const Icon(Icons.download, color: Colors.white),
@@ -802,6 +809,12 @@ class _VariantAction extends ConsumerWidget {
                 color: AppColors.highlight,
               ),
             ),
+            if (file.canStream) const SizedBox(width: 8),
+            if (file.canStream)
+              TVButton(
+                onPressed: () => unawaited(_stream(context, ref)),
+                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
+              ),
             ..._debugInfoSuffix(context),
           ],
         ),
@@ -816,6 +829,12 @@ class _VariantAction extends ConsumerWidget {
                 color: AppColors.highlight,
               ),
             ),
+            if (file.canStream) const SizedBox(width: 8),
+            if (file.canStream)
+              TVButton(
+                onPressed: () => unawaited(_stream(context, ref)),
+                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
+              ),
             ..._debugInfoSuffix(context),
           ],
         ),
@@ -837,6 +856,12 @@ class _VariantAction extends ConsumerWidget {
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.highlight)),
             const SizedBox(width: 8),
+            if (file.canStream)
+              TVButton(
+                onPressed: () => unawaited(_stream(context, ref)),
+                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
+              ),
+            if (file.canStream) const SizedBox(width: 6),
             TVButton(
               onPressed: () => dm.pauseDownload(downloadGlobalId),
               child: const Icon(Icons.pause, color: Colors.white),
@@ -849,6 +874,12 @@ class _VariantAction extends ConsumerWidget {
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.textMuted)),
             const SizedBox(width: 8),
+            if (file.canStream)
+              TVButton(
+                onPressed: () => unawaited(_stream(context, ref)),
+                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
+              ),
+            if (file.canStream) const SizedBox(width: 6),
             TVButton(
               onPressed: () => dm.resumeDownload(downloadGlobalId),
               child: const Icon(Icons.play_arrow, color: Colors.white),
@@ -946,6 +977,69 @@ class _VariantAction extends ConsumerWidget {
       isSeries: isSeriesMedia,
     );
     final launched = await ExternalPlayer.launchVideo(path: path, title: downloadTitle);
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No player found.')),
+      );
+    }
+  }
+
+  Future<void> _stream(BuildContext context, WidgetRef ref) async {
+    if (!file.canStream) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Streaming is not available for this file.')),
+      );
+      return;
+    }
+    final tdlib = ref.read(tdlibFacadeProvider);
+    final cfg = ref.read(appConfigProvider);
+    final auth = ref.read(authNotifierProvider);
+    final api = ref.read(tvAppApiServiceProvider);
+    final url = await TelegramRangePlayback.instance.open(
+      tdlib: tdlib,
+      globalId: downloadGlobalId,
+      variantId: file.id,
+      telegramFileId: file.telegramFileId,
+      sourceChatId: file.sourceChatId,
+      mediaFileId: file.id,
+      locatorType: file.locatorType,
+      locatorChatId: file.locatorChatId,
+      locatorMessageId: file.locatorMessageId,
+      locatorBotUsername: file.locatorBotUsername,
+      locatorRemoteFileId: file.locatorRemoteFileId,
+      mediaTitle: media.title,
+      displayTitle: downloadTitle,
+      releaseYear: media.releaseYear?.toString() ?? '',
+      isSeriesMedia: isSeriesMedia,
+      season: file.season,
+      episode: file.episode,
+      quality: file.quality,
+      fileSize: file.size,
+      indexTagForFileSearch: cfg.indexTag,
+      providerBotUsername: cfg.providerBotUsername,
+      recoverFromBackup: (mfid) async {
+        final token = auth.apiAccessToken;
+        if (token == null || token.isEmpty) return false;
+        return api.recoverMediaFileFromBackup(
+          config: cfg,
+          accessToken: token,
+          mediaFileId: mfid,
+        );
+      },
+    );
+    if (url == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to start stream right now.')),
+        );
+      }
+      return;
+    }
+    final launched = await ExternalPlayer.launchStreamUrl(
+      url: url.toString(),
+      title: downloadTitle,
+      mimeType: 'video/*',
+    );
     if (!launched && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No player found.')),

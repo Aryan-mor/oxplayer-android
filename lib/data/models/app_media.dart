@@ -146,6 +146,7 @@ class AppMediaFile {
     this.subtitleMentioned = false,
     this.subtitlePresentation,
     this.subtitleLanguage,
+    this.canStream = false,
     this.season,
     this.episode,
     required this.createdAt,
@@ -175,6 +176,7 @@ class AppMediaFile {
   final bool subtitleMentioned;
   final String? subtitlePresentation;
   final String? subtitleLanguage;
+  final bool canStream;
   final int? season;
   final int? episode;
   final DateTime createdAt;
@@ -218,6 +220,7 @@ class AppMediaFile {
           json['subtitle_presentation']?.toString(),
       subtitleLanguage: json['subtitleLanguage']?.toString() ??
           json['subtitle_language']?.toString(),
+      canStream: json['canStream'] == true || json['can_stream'] == true,
       season: json['season'] as int?,
       episode: json['episode'] as int?,
       createdAt: json['createdAt'] != null

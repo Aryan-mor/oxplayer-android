@@ -77,36 +77,49 @@ class MainActivity : FlutterActivity() {
                         @Suppress("UNCHECKED_CAST")
                         val args = call.arguments as? Map<String, Any?>
                         val path = (args?.get("path") as? String) ?: (call.arguments as? String)
+                        val streamUriRaw = (args?.get("uri") as? String)?.ifBlank { null }
                         val title = (args?.get("title") as? String)?.ifBlank { null }
                         val mimeType = (args?.get("mimeType") as? String)?.ifBlank { null } ?: "video/*"
-                        if (path == null) {
-                            result.error("INVALID_ARG", "path is null", null)
+                        if (path == null && streamUriRaw == null) {
+                            result.error("INVALID_ARG", "path/uri is null", null)
                             return@setMethodCallHandler
                         }
                         try {
-                            val file = File(path)
-                            if (!file.exists()) {
-                                result.success(false)
-                                return@setMethodCallHandler
+                            val effectiveTitle = title ?: "TeleCima stream"
+                            val contentUri: Uri = if (streamUriRaw != null) {
+                                Uri.parse(streamUriRaw)
+                            } else {
+                                val file = File(path!!)
+                                if (!file.exists()) {
+                                    result.success(false)
+                                    return@setMethodCallHandler
+                                }
+                                FileProvider.getUriForFile(
+                                    this,
+                                    "${packageName}.fileprovider",
+                                    file
+                                )
                             }
-                            val contentUri: Uri = FileProvider.getUriForFile(
-                                this,
-                                "${packageName}.fileprovider",
-                                file
-                            )
-                            val effectiveTitle = title ?: file.nameWithoutExtension
+                            val resolvedTitle = if (streamUriRaw != null) {
+                                effectiveTitle
+                            } else {
+                                val f = File(path!!)
+                                title ?: f.nameWithoutExtension
+                            }
 
                             android.util.Log.d(
                                 "TeleCima",
-                                "launchVideo uri=$contentUri path=$path title=$effectiveTitle mime=$mimeType"
+                                "launchVideo uri=$contentUri path=$path title=$resolvedTitle mime=$mimeType"
                             )
                             val intent = Intent(Intent.ACTION_VIEW).apply {
                                 setDataAndType(contentUri, mimeType)
-                                clipData = ClipData.newUri(contentResolver, effectiveTitle, contentUri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                if (streamUriRaw == null) {
+                                    clipData = ClipData.newUri(contentResolver, resolvedTitle, contentUri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                putExtra(Intent.EXTRA_TITLE, effectiveTitle)
-                                putExtra("title", effectiveTitle)
+                                putExtra(Intent.EXTRA_TITLE, resolvedTitle)
+                                putExtra("title", resolvedTitle)
                             }
                             startActivity(intent)
                             result.success(true)
