@@ -143,6 +143,9 @@ class AppMediaFile {
     this.size,
     this.versionTag,
     this.language,
+    this.subtitleMentioned = false,
+    this.subtitlePresentation,
+    this.subtitleLanguage,
     this.season,
     this.episode,
     required this.createdAt,
@@ -169,6 +172,9 @@ class AppMediaFile {
   final int? size;
   final String? versionTag;
   final String? language;
+  final bool subtitleMentioned;
+  final String? subtitlePresentation;
+  final String? subtitleLanguage;
   final int? season;
   final int? episode;
   final DateTime createdAt;
@@ -206,6 +212,12 @@ class AppMediaFile {
       versionTag:
           json['versionTag']?.toString() ?? json['version_tag']?.toString(),
       language: json['language']?.toString(),
+      subtitleMentioned: json['subtitleMentioned'] == true ||
+          json['subtitle_mentioned'] == true,
+      subtitlePresentation: json['subtitlePresentation']?.toString() ??
+          json['subtitle_presentation']?.toString(),
+      subtitleLanguage: json['subtitleLanguage']?.toString() ??
+          json['subtitle_language']?.toString(),
       season: json['season'] as int?,
       episode: json['episode'] as int?,
       createdAt: json['createdAt'] != null

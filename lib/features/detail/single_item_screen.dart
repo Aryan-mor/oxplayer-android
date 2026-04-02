@@ -670,6 +670,13 @@ class _VariantRow extends ConsumerWidget {
     final quality = (file.quality ?? '').trim().isEmpty ? 'Unknown quality' : file.quality!.trim();
     final lang = (file.videoLanguage ?? file.language ?? '').trim();
     final size = _formatBytes(file.size);
+    final subLabel = _subtitleLabel(file);
+    final infoParts = <String>[
+      quality,
+      lang.isEmpty ? 'Unknown lang' : lang.toUpperCase(),
+      size ?? '?',
+      if (subLabel != null) subLabel,
+    ];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -683,7 +690,7 @@ class _VariantRow extends ConsumerWidget {
         children: [
           Expanded(
             child: Text(
-              '$quality  •  ${lang.isEmpty ? 'Unknown lang' : lang.toUpperCase()}  •  ${size ?? '?'}',
+              infoParts.join('  •  '),
               style: const TextStyle(color: Colors.white, fontSize: 13),
             ),
           ),
@@ -1220,4 +1227,12 @@ String? _formatBytes(int? bytes) {
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
   if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+}
+
+String? _subtitleLabel(AppMediaFile file) {
+  if (!file.subtitleMentioned) return null;
+  final raw = (file.subtitlePresentation ?? '').trim().toLowerCase();
+  final kind = raw == 'hardsub' || raw == 'softsub' ? raw : 'sub';
+  final lang = (file.subtitleLanguage ?? '').trim().toUpperCase();
+  return lang.isEmpty ? 'SUB: ${kind.toUpperCase()}' : 'SUB: ${kind.toUpperCase()} $lang';
 }
