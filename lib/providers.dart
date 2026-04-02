@@ -56,19 +56,28 @@ final tmdbRepositoryProvider = Provider<TmdbRepository?>((ref) {
   return TmdbRepository();
 });
 
-final mediaListProvider = FutureProvider<List<AppMediaAggregate>>((ref) async {
+/// Full GET [/me/library] payload (items + source filters from [user_media_source]).
+final libraryFetchProvider = FutureProvider<LibraryFetchResult>((ref) async {
   final authNotifier = ref.watch(authNotifierProvider);
   if (!authNotifier.isLoggedIn || authNotifier.apiAccessToken == null) {
-    return const [];
+    return const LibraryFetchResult(items: []);
   }
-  
+
   final config = ref.read(appConfigProvider);
   final api = ref.read(tvAppApiServiceProvider);
-  final result = await api.fetchLibrary(
+  return api.fetchLibrary(
     config: config,
     accessToken: authNotifier.apiAccessToken!,
   );
-  return result.items;
+});
+
+/// Bumped after a successful Telegram library sync so the explore catalog can refetch
+/// (`/me/explore/media`) if the server gained new titles.
+final exploreCatalogRefreshGenerationProvider = StateProvider<int>((ref) => 0);
+
+/// Library items only (same [AsyncValue] shape widgets expect from the old [FutureProvider]).
+final mediaListProvider = Provider<AsyncValue<List<AppMediaAggregate>>>((ref) {
+  return ref.watch(libraryFetchProvider).whenData((r) => r.items);
 });
 
 final selectedTypeFilterProvider =
@@ -77,15 +86,43 @@ final selectedSourceFilterProvider = StateProvider<String?>((ref) => null);
 final lastFocusedGridIndexProvider = StateProvider<int>((ref) => 0);
 
 final sourceFilterOptionsProvider = Provider<List<SourceFilterOption>>((ref) {
-  final aggregates = ref.watch(mediaListProvider).valueOrNull ?? const <AppMediaAggregate>[];
-  final ids = aggregates.expand((agg) => agg.files.map((f) => f.sourceId).whereType<String>()).toSet().toList();
+  final lib = ref.watch(libraryFetchProvider).valueOrNull;
+  if (lib != null && lib.sources.isNotEmpty) {
+    return lib.sources
+        .map(
+          (s) => SourceFilterOption(
+            id: s.id,
+            label: s.label.trim().isNotEmpty ? s.label : 'Source ${s.id}',
+          ),
+        )
+        .toList();
+  }
+
+  final aggregates =
+      ref.watch(mediaListProvider).valueOrNull ?? const <AppMediaAggregate>[];
+  final ids = aggregates
+      .expand((agg) => agg.files.map((f) => f.sourceId).whereType<String>())
+      .toSet()
+      .toList();
   ids.sort();
-  
+
+  final idToLabel = <String, String>{};
+  for (final agg in aggregates) {
+    for (final f in agg.files) {
+      final sid = f.sourceId;
+      if (sid == null || sid.isEmpty) continue;
+      final name = f.sourceName?.trim();
+      if (name != null && name.isNotEmpty) {
+        idToLabel[sid] = name;
+      }
+    }
+  }
+
   return ids
       .map(
         (id) => SourceFilterOption(
           id: id,
-          label: 'Source $id', // In older code this was just channel ID number
+          label: idToLabel[id] ?? 'Source $id',
         ),
       )
       .toList();
@@ -151,14 +188,15 @@ class _DownloadManagerNotifier extends AsyncNotifier<DownloadManager> {
           config: ref.read(appConfigProvider),
           tdlib: ref.read(tdlibFacadeProvider),
           accessToken: token,
-          invalidateLibrary: () => ref.invalidate(mediaListProvider),
+          invalidateLibrary: () => ref.invalidate(libraryFetchProvider),
           mode: TelegramLibrarySyncMode.full,
         );
-        await ref.read(mediaListProvider.future);
+        ref.read(exploreCatalogRefreshGenerationProvider.notifier).state++;
+        await ref.read(libraryFetchProvider.future);
       },
       reloadLocatorAfterRecovery: (_, variantId) async {
-        final items =
-            await ref.read(mediaListProvider.future);
+        final lib = await ref.read(libraryFetchProvider.future);
+        final items = lib.items;
         AppMediaFile? hit;
         for (final agg in items) {
           for (final f in agg.files) {

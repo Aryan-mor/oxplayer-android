@@ -72,7 +72,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
   Future<void> _load() async {
     _itemLog('SingleItemScreen: load start globalId=${widget.globalId}');
     
-    final allMedia = await ref.read(mediaListProvider.future);
+    final allMedia = (await ref.read(libraryFetchProvider.future)).items;
     final totalFiles = allMedia.fold<int>(0, (sum, it) => sum + it.files.length);
     final sample = allMedia
         .take(5)
@@ -111,14 +111,42 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
       }
     } catch (e) {
       _itemLog(
-        'SingleItemScreen: target media not found for globalId=${widget.globalId} error=$e',
+        'SingleItemScreen: not in library globalId=${widget.globalId} ($e), trying explore API',
       );
-      if (mounted) {
-        setState(() {
-          _aggregate = null;
-          _loading = false;
-        });
+    }
+
+    final auth = ref.read(authNotifierProvider);
+    final token = auth.apiAccessToken;
+    if (token != null && token.isNotEmpty) {
+      try {
+        final config = ref.read(appConfigProvider);
+        final api = ref.read(tvAppApiServiceProvider);
+        final exploreItem = await api.fetchExploreMediaDetail(
+          config: config,
+          accessToken: token,
+          mediaId: widget.globalId,
+        );
+        if (exploreItem != null && mounted) {
+          _itemLog(
+            'SingleItemScreen: loaded from explore id=${exploreItem.media.id} '
+            'files=${exploreItem.files.length}',
+          );
+          setState(() {
+            _aggregate = exploreItem;
+            _loading = false;
+          });
+          return;
+        }
+      } catch (e) {
+        _itemLog('SingleItemScreen: explore detail failed: $e');
       }
+    }
+
+    if (mounted) {
+      setState(() {
+        _aggregate = null;
+        _loading = false;
+      });
     }
   }
 

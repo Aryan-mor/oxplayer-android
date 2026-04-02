@@ -46,6 +46,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final List<FocusNode> _sourceFocusNodes = <FocusNode>[];
   final List<FocusNode> _gridFocusNodes = <FocusNode>[];
   late final FocusNode _syncButtonFocusNode;
+  late final FocusNode _exploreFocusNode;
   late final FocusNode _logoutButtonFocusNode;
 
   @override
@@ -56,6 +57,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       (index) => FocusNode(debugLabel: 'TypeFocus$index'),
     );
     _syncButtonFocusNode = FocusNode(debugLabel: 'SyncButtonFocus');
+    _exploreFocusNode = FocusNode(debugLabel: 'ExploreNav');
     _logoutButtonFocusNode = FocusNode(debugLabel: 'LogoutButtonFocus');
 
     _homeLog('HomeScreen: initState');
@@ -78,35 +80,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       node.dispose();
     }
     _syncButtonFocusNode.dispose();
+    _exploreFocusNode.dispose();
     _logoutButtonFocusNode.dispose();
     _sidebarScopeNode.dispose();
     _contentScopeNode.dispose();
     super.dispose();
   }
 
+  /// Runs [TelegramLibrarySyncMode.incremental] every time the home screen opens (app session).
   Future<void> _checkAutoSync() async {
     final auth = ref.read(authNotifierProvider);
-    if (auth.apiAccessToken != null && auth.apiAccessToken!.isNotEmpty) {
-      try {
-        final currentLibrary = await ref.read(mediaListProvider.future);
-        _homeLog(
-            'HomeScreen: Initial library fetch returned ${currentLibrary.length} items');
-
-        if (_lastSyncTime == null) {
-          if (currentLibrary.isEmpty) {
-              _homeLog(
-                  'HomeScreen: Library is empty, auto-triggering Telegram sync');
-              await _triggerSync(isManual: false);
-          } else {
-              _homeLog(
-                  'HomeScreen: Library is not empty, skipping auto Telegram sync');
-              if (mounted) setState(() => _lastSyncTime = DateTime.now());
-          }
-        }
-      } catch (e) {
-        _homeLog('HomeScreen: Failed to fetch initial library provider: $e');
-      }
+    if (auth.apiAccessToken == null || auth.apiAccessToken!.isEmpty) {
+      _homeLog('HomeScreen: skip auto sync (no API token yet)');
+      return;
     }
+    _homeLog('HomeScreen: auto library sync on open (incremental)');
+    await _triggerSync(isManual: false, notifyUserOnFailure: false);
   }
 
   Future<String> _requireApiAccessToken() async {
@@ -147,12 +136,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       config: ref.read(appConfigProvider),
       tdlib: ref.read(tdlibFacadeProvider),
       accessToken: accessToken,
-      invalidateLibrary: () => ref.invalidate(mediaListProvider),
+      invalidateLibrary: () => ref.invalidate(libraryFetchProvider),
       mode: TelegramLibrarySyncMode.incremental,
     );
   }
 
-  Future<void> _triggerSync({bool isManual = true}) async {
+  Future<void> _triggerSync({
+    bool isManual = true,
+    bool notifyUserOnFailure = true,
+  }) async {
     if (_isSyncing) return;
     setState(() => _isSyncing = true);
     _homeSyncLog('HomeScreen: Sync started (isManual=$isManual)');
@@ -182,6 +174,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
 
       if (mounted) setState(() => _lastSyncTime = DateTime.now());
+      ref.read(exploreCatalogRefreshGenerationProvider.notifier).state++;
       _homeSyncLog('HomeScreen: Sync completed successfully');
     } catch (e) {
       _homeSyncLog('HomeScreen: Sync failed: $e');
@@ -193,7 +186,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           'response=${e.response?.data}',
         );
       }
-      if (mounted) {
+      if (mounted && notifyUserOnFailure) {
         final message = switch (e) {
           TdlibInteractiveLoginRequired _ => e.toString(),
           DioException _ =>
@@ -280,40 +273,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  void _scrollSidebarToSourceIndex(int index) {
-    if (!_sidebarScrollController.hasClients) return;
-    const itemExtent = 56.0;
-    const gap = 8.0;
-    const edgePadding = 12.0;
-    final rowTop = index * (itemExtent + gap);
-    final rowBottom = rowTop + itemExtent;
-    final viewportStart = _sidebarScrollController.offset;
-    final viewportEnd =
-        viewportStart + _sidebarScrollController.position.viewportDimension;
-
-    double? targetOffset;
-    if (rowTop < viewportStart + edgePadding) {
-      targetOffset = (rowTop - edgePadding)
-          .clamp(
-            _sidebarScrollController.position.minScrollExtent,
-            _sidebarScrollController.position.maxScrollExtent,
-          )
-          .toDouble();
-    } else if (rowBottom > viewportEnd - edgePadding) {
-      targetOffset = (rowBottom - _sidebarScrollController.position.viewportDimension + edgePadding)
-          .clamp(
-            _sidebarScrollController.position.minScrollExtent,
-            _sidebarScrollController.position.maxScrollExtent,
-          )
-          .toDouble();
-    }
-
-    if (targetOffset == null) return;
+  /// Keeps the focused filter row on screen when the sidebar list is long (D-pad / TV).
+  void _ensureSidebarNodeVisible(FocusNode node) {
+    final ctx = node.context;
+    if (ctx == null || !ctx.mounted) return;
     unawaited(
-      _sidebarScrollController.animateTo(
-        targetOffset,
-        duration: const Duration(milliseconds: 140),
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 160),
         curve: Curves.easeInOut,
+        alignment: 0.18,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
       ),
     );
   }
@@ -407,73 +377,93 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       body: Row(
         children: [
           Container(
-            width: 360,
-            decoration: const BoxDecoration(
+            width: 328,
+            decoration: BoxDecoration(
               color: AppColors.card,
-              border: Border(right: BorderSide(color: AppColors.border)),
+              border: Border(
+                right: BorderSide(
+                  color: AppColors.border.withValues(alpha: 0.85),
+                ),
+              ),
+              borderRadius: const BorderRadius.only(
+                topRight: Radius.circular(20),
+                bottomRight: Radius.circular(20),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 20,
+                  offset: const Offset(6, 0),
+                ),
+              ],
             ),
-            padding: const EdgeInsets.all(20),
+            clipBehavior: Clip.antiAlias,
             child: FocusScope(
               node: _sidebarScopeNode,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'TeleCima',
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _isSyncing
-                        ? 'Sync in progress...'
-                        : 'Last sync: ${_formatLastSync()}',
-                    style: const TextStyle(color: AppColors.textMuted),
-                  ),
-                  const SizedBox(height: 18),
-                  TVButton(
-                    focusNode: _syncButtonFocusNode,
-                    autofocus: true,
-                    onKeyEvent: (_, event) {
-                      if (_isRight(event)) {
-                        _focusGridFromSidebar();
-                        return KeyEventResult.handled;
-                      }
-                      return KeyEventResult.ignored;
-                    },
-                    onPressed: _isSyncing ? null : () => _triggerSync(isManual: true),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 18, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.sync, color: Colors.white),
-                        const SizedBox(width: 8),
-                        Text(_isSyncing ? 'Syncing...' : 'Sync Now'),
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppColors.border),
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                AppColors.highlight.withValues(alpha: 0.35),
+                                AppColors.highlight.withValues(alpha: 0.08),
+                              ],
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.live_tv_rounded,
+                            color: Colors.white,
+                            size: 26,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'TeleCima',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _isSyncing
+                                    ? 'Sync in progress…'
+                                    : 'Last sync · ${_formatLastSync()}',
+                                style: TextStyle(
+                                  color: AppColors.textMuted.withValues(
+                                    alpha: 0.95,
+                                  ),
+                                  fontSize: 13,
+                                  height: 1.25,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Browse by Type',
-                    style: TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  for (var i = 0; i < 3; i++) ...[
-                    _SidebarFilterButton(
-                      focusNode: _typeFocusNodes[i],
-                      label: switch (i) {
-                        0 => 'All',
-                        1 => 'Movies',
-                        _ => 'Series',
-                      },
-                      selected: selectedType ==
-                          switch (i) {
-                            0 => LibraryTypeFilter.all,
-                            1 => LibraryTypeFilter.movies,
-                            _ => LibraryTypeFilter.series,
-                          },
+                    const SizedBox(height: 20),
+                    TVButton(
+                      focusNode: _syncButtonFocusNode,
+                      autofocus: true,
                       onKeyEvent: (_, event) {
                         if (_isRight(event)) {
                           _focusGridFromSidebar();
@@ -481,84 +471,217 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         }
                         return KeyEventResult.ignored;
                       },
-                      onPressed: () {
-                        ref.read(selectedTypeFilterProvider.notifier).state =
-                            switch (i) {
-                          0 => LibraryTypeFilter.all,
-                          1 => LibraryTypeFilter.movies,
-                          _ => LibraryTypeFilter.series,
-                        };
-                      },
+                      onPressed: _isSyncing
+                          ? null
+                          : () => _triggerSync(isManual: true),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.sync_rounded,
+                            color: Colors.white.withValues(
+                              alpha: _isSyncing ? 0.5 : 1,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(_isSyncing ? 'Syncing…' : 'Sync library'),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 18),
+                    Expanded(
+                      child: Scrollbar(
+                        controller: _sidebarScrollController,
+                        thumbVisibility: true,
+                        radius: const Radius.circular(8),
+                        thickness: 5,
+                        child: CustomScrollView(
+                          controller: _sidebarScrollController,
+                          primary: false,
+                          clipBehavior: Clip.hardEdge,
+                          slivers: [
+                            SliverToBoxAdapter(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const _SidebarSectionLabel('Explore'),
+                                  const SizedBox(height: 10),
+                                  TVButton(
+                                    focusNode: _exploreFocusNode,
+                                    onKeyEvent: (_, event) {
+                                      if (_isRight(event)) {
+                                        _focusGridFromSidebar();
+                                        return KeyEventResult.handled;
+                                      }
+                                      return KeyEventResult.ignored;
+                                    },
+                                    onPressed: () => context.push('/explore'),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.explore_rounded,
+                                          color: Colors.white,
+                                        ),
+                                        SizedBox(width: 10),
+                                        Text('Browse catalog'),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                  const _SidebarSectionLabel(
+                                    'Browse by type',
+                                  ),
+                                  const SizedBox(height: 10),
+                                  for (var i = 0; i < 3; i++) ...[
+                                    _SidebarFilterButton(
+                                      focusNode: _typeFocusNodes[i],
+                                      label: switch (i) {
+                                        0 => 'All titles',
+                                        1 => 'Movies',
+                                        _ => 'Series',
+                                      },
+                                      selected: selectedType ==
+                                          switch (i) {
+                                            0 => LibraryTypeFilter.all,
+                                            1 => LibraryTypeFilter.movies,
+                                            _ => LibraryTypeFilter.series,
+                                          },
+                                      onKeyEvent: (_, event) {
+                                        if (_isRight(event)) {
+                                          _focusGridFromSidebar();
+                                          return KeyEventResult.handled;
+                                        }
+                                        return KeyEventResult.ignored;
+                                      },
+                                      onPressed: () {
+                                        ref
+                                                .read(selectedTypeFilterProvider
+                                                    .notifier)
+                                                .state =
+                                            switch (i) {
+                                          0 => LibraryTypeFilter.all,
+                                          1 => LibraryTypeFilter.movies,
+                                          _ => LibraryTypeFilter.series,
+                                        };
+                                      },
+                                      onFocusChanged: (focused) {
+                                        if (!focused) return;
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                          if (!mounted) return;
+                                          _ensureSidebarNodeVisible(
+                                            _typeFocusNodes[i],
+                                          );
+                                        });
+                                      },
+                                    ),
+                                    if (i < 2) const SizedBox(height: 8),
+                                  ],
+                                  const SizedBox(height: 20),
+                                  const _SidebarSectionLabel('Sources'),
+                                  const SizedBox(height: 10),
+                                ],
+                              ),
+                            ),
+                            if (sources.isEmpty)
+                              SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 4,
+                                    bottom: 16,
+                                  ),
+                                  child: Text(
+                                    'No sources yet. Sync to load channels.',
+                                    style: TextStyle(
+                                      color: AppColors.textMuted.withValues(
+                                        alpha: 0.85,
+                                      ),
+                                      fontSize: 14,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              SliverList(
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, index) {
+                                    final source = sources[index];
+                                    final isSelected =
+                                        selectedSource == source.id;
+                                    return Padding(
+                                      padding: EdgeInsets.only(
+                                        bottom:
+                                            index < sources.length - 1 ? 8 : 14,
+                                      ),
+                                      child: _SidebarFilterButton(
+                                        focusNode: _sourceFocusNodes[index],
+                                        label: source.label,
+                                        selected: isSelected,
+                                        onKeyEvent: (_, event) {
+                                          if (_isRight(event)) {
+                                            _focusGridFromSidebar();
+                                            return KeyEventResult.handled;
+                                          }
+                                          return KeyEventResult.ignored;
+                                        },
+                                        onPressed: () {
+                                          ref
+                                              .read(
+                                                selectedSourceFilterProvider
+                                                    .notifier,
+                                              )
+                                              .state = isSelected
+                                              ? null
+                                              : source.id;
+                                        },
+                                        onFocusChanged: (focused) {
+                                          if (!focused) return;
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                            if (!mounted) return;
+                                            _ensureSidebarNodeVisible(
+                                              _sourceFocusNodes[index],
+                                            );
+                                          });
+                                        },
+                                      ),
+                                    );
+                                  },
+                                  childCount: sources.length,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    TVButton(
+                      focusNode: _logoutButtonFocusNode,
+                      onKeyEvent: (_, event) {
+                        if (_isRight(event)) {
+                          _focusGridFromSidebar();
+                          return KeyEventResult.handled;
+                        }
+                        return KeyEventResult.ignored;
+                      },
+                      onPressed: () async {
+                        await ref.read(authNotifierProvider).clearSession();
+                        if (!context.mounted) return;
+                        context.go('/welcome');
+                      },
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.logout_rounded, color: Colors.white),
+                          SizedBox(width: 10),
+                          Text('Log out'),
+                        ],
+                      ),
+                    ),
                   ],
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Sources',
-                    style: TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: ListView.separated(
-                      controller: _sidebarScrollController,
-                      itemCount: sources.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) {
-                        final source = sources[index];
-                        final isSelected = selectedSource == source.id;
-                        return _SidebarFilterButton(
-                          focusNode: _sourceFocusNodes[index],
-                          label: source.label,
-                          selected: isSelected,
-                          onKeyEvent: (_, event) {
-                            if (_isRight(event)) {
-                              _focusGridFromSidebar();
-                              return KeyEventResult.handled;
-                            }
-                            return KeyEventResult.ignored;
-                          },
-                          onPressed: () {
-                            ref
-                                .read(selectedSourceFilterProvider.notifier)
-                                .state = isSelected ? null : source.id;
-                          },
-                          onFocusChanged: (focused) {
-                            if (!focused) return;
-                            _scrollSidebarToSourceIndex(index);
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TVButton(
-                    focusNode: _logoutButtonFocusNode,
-                    onKeyEvent: (_, event) {
-                      if (_isRight(event)) {
-                        _focusGridFromSidebar();
-                        return KeyEventResult.handled;
-                      }
-                      return KeyEventResult.ignored;
-                    },
-                    onPressed: () async {
-                      await ref.read(authNotifierProvider).clearSession();
-                      if (!context.mounted) return;
-                      context.go('/welcome');
-                    },
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.logout, color: Colors.white),
-                        SizedBox(width: 8),
-                        Text('Logout'),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -650,6 +773,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
+class _SidebarSectionLabel extends StatelessWidget {
+  const _SidebarSectionLabel(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 3,
+          height: 14,
+          decoration: BoxDecoration(
+            color: AppColors.highlight.withValues(alpha: 0.75),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          title.toUpperCase(),
+          style: TextStyle(
+            color: AppColors.textMuted.withValues(alpha: 0.95),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.15,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SidebarFilterButton extends StatelessWidget {
   const _SidebarFilterButton({
     required this.focusNode,
@@ -674,21 +829,51 @@ class _SidebarFilterButton extends StatelessWidget {
       onFocusChanged: onFocusChanged,
       onKeyEvent: onKeyEvent,
       onPressed: onPressed,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         children: [
-          if (selected)
-            const Icon(Icons.chevron_right, color: AppColors.highlight),
-          if (selected) const SizedBox(width: 4),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeInOut,
+            width: 3,
+            height: 22,
+            margin: const EdgeInsets.only(right: 12),
+            decoration: BoxDecoration(
+              color: selected
+                  ? AppColors.highlight
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(2),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: AppColors.highlight.withValues(alpha: 0.45),
+                        blurRadius: 6,
+                      ),
+                    ]
+                  : null,
+            ),
+          ),
           Expanded(
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,
+              maxLines: 2,
               style: TextStyle(
-                color: selected ? AppColors.highlight : Colors.white,
+                color: selected
+                    ? AppColors.highlight
+                    : Colors.white.withValues(alpha: 0.92),
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                fontSize: 15,
+                height: 1.2,
               ),
             ),
           ),
+          if (selected)
+            Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.highlight.withValues(alpha: 0.9),
+              size: 22,
+            ),
         ],
       ),
     );

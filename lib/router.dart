@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'features/detail/single_item_screen.dart';
 import 'features/gate/membership_gate_shell.dart';
+import 'features/explore/explore_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/player/player_route_args.dart';
 import 'features/player/player_screen.dart';
@@ -41,6 +42,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/',
             builder: (context, state) => const HomeScreen(),
+          ),
+          GoRoute(
+            path: '/explore',
+            builder: (context, state) => const ExploreScreen(),
           ),
           GoRoute(
             path: '/item/:globalId',

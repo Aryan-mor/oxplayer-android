@@ -11,24 +11,86 @@ import '../models/app_media.dart';
 void _apilog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.api);
 
+class LibrarySourceFilterRow {
+  const LibrarySourceFilterRow({
+    required this.id,
+    required this.label,
+    this.thumbnail,
+  });
+
+  final String id;
+  final String label;
+  final String? thumbnail;
+
+  factory LibrarySourceFilterRow.fromJson(Map<String, dynamic> json) {
+    final thumb = json['thumbnail']?.toString().trim();
+    return LibrarySourceFilterRow(
+      id: (json['id'] ?? '').toString(),
+      label: (json['label'] ?? json['name'] ?? '').toString(),
+      thumbnail: (thumb != null && thumb.isNotEmpty) ? thumb : null,
+    );
+  }
+}
+
 class SyncLibraryResult {
   const SyncLibraryResult({
     required this.items,
+    this.sources = const [],
     this.lastIndexedAt,
   });
 
   final List<AppMediaAggregate> items;
+  final List<LibrarySourceFilterRow> sources;
   final DateTime? lastIndexedAt;
 }
 
 class LibraryFetchResult {
   const LibraryFetchResult({
     required this.items,
+    this.sources = const [],
     this.lastIndexedAt,
   });
 
   final List<AppMediaAggregate> items;
+  final List<LibrarySourceFilterRow> sources;
   final DateTime? lastIndexedAt;
+}
+
+/// Row from GET [/me/explore/media] (full catalog, not scoped to user library).
+class ExploreCatalogItem {
+  ExploreCatalogItem({
+    required this.id,
+    required this.title,
+    required this.type,
+    this.releaseYear,
+    this.posterPath,
+  });
+
+  final String id;
+  final String title;
+  final String type;
+  final int? releaseYear;
+  final String? posterPath;
+
+  factory ExploreCatalogItem.fromJson(Map<String, dynamic> json) {
+    return ExploreCatalogItem(
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      type: (json['type'] ?? 'UNKNOWN').toString(),
+      releaseYear: json['releaseYear'] as int? ?? json['release_year'] as int?,
+      posterPath: json['posterPath']?.toString() ?? json['poster_path']?.toString(),
+    );
+  }
+}
+
+class ExploreCatalogPage {
+  const ExploreCatalogPage({
+    required this.items,
+    this.nextCursor,
+  });
+
+  final List<ExploreCatalogItem> items;
+  final String? nextCursor;
 }
 
 class DiscoveredMediaRef {
@@ -40,6 +102,7 @@ class DiscoveredMediaRef {
     required this.telegramFileId,
     required this.telegramDate,
     this.fileSizeBytes,
+    this.sourceName,
   });
 
   final String mediaFileId;
@@ -51,6 +114,8 @@ class DiscoveredMediaRef {
   final int telegramDate;
   /// TDLib [File.size] / [File.expectedSize] for the media attachment when known.
   final int? fileSizeBytes;
+  /// Resolved via [GetChat] / [GetUser] for [Source.name] on the server.
+  final String? sourceName;
 
   Map<String, dynamic> toPersistenceJson() => {
         'mediaFileId': mediaFileId,
@@ -62,6 +127,10 @@ class DiscoveredMediaRef {
         'telegramDate': telegramDate,
         if (fileSizeBytes != null && fileSizeBytes! > 0)
           'fileSizeBytes': fileSizeBytes,
+        if (sourceName != null && sourceName!.trim().isNotEmpty)
+          'sourceName': sourceName!.trim().length > 255
+              ? sourceName!.trim().substring(0, 255)
+              : sourceName!.trim(),
       };
 
   static DiscoveredMediaRef? fromPersistenceJson(Object? raw) {
@@ -81,6 +150,7 @@ class DiscoveredMediaRef {
     final fileSize = fs is int
         ? fs
         : (fs != null ? int.tryParse(fs.toString()) : null);
+    final sn = j['sourceName']?.toString().trim();
     return DiscoveredMediaRef(
       mediaFileId: mid,
       sourceChatId: chatId,
@@ -89,6 +159,7 @@ class DiscoveredMediaRef {
       telegramFileId: tf,
       telegramDate: date,
       fileSizeBytes: (fileSize != null && fileSize > 0) ? fileSize : null,
+      sourceName: (sn != null && sn.isNotEmpty) ? sn : null,
     );
   }
 }
@@ -236,13 +307,90 @@ class TvAppApiService {
       );
     }
     final items = _readItems(response.data);
+    final sources = _readSources(response.data);
     final lastIndexedAt = _parseLastIndexedAt(response.data);
     final parsedFilesTotal = items.fold<int>(0, (sum, e) => sum + e.files.length);
     _apilog(
-      'API fetchLibrary success: items=${items.length} parsedFilesTotal=$parsedFilesTotal '
-      'lastIndexedAt=$lastIndexedAt',
+      'API fetchLibrary success: items=${items.length} sources=${sources.length} '
+      'parsedFilesTotal=$parsedFilesTotal lastIndexedAt=$lastIndexedAt',
     );
-    return LibraryFetchResult(items: items, lastIndexedAt: lastIndexedAt);
+    return LibraryFetchResult(
+      items: items,
+      sources: sources,
+      lastIndexedAt: lastIndexedAt,
+    );
+  }
+
+  Future<ExploreCatalogPage> fetchExploreCatalogPage({
+    required AppConfig config,
+    required String accessToken,
+    String query = '',
+    String? cursor,
+    int limit = 30,
+  }) async {
+    final dio = _dio(config.tvAppApiBaseUrl);
+    final qp = <String, dynamic>{'limit': limit};
+    final q = query.trim();
+    if (q.isNotEmpty) qp['q'] = q;
+    final c = cursor?.trim();
+    if (c != null && c.isNotEmpty) qp['cursor'] = c;
+
+    _apilog('API fetchExploreCatalogPage q="$q" cursor=$c limit=$limit');
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/explore/media',
+      queryParameters: qp,
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
+
+    final raw = response.data?['items'];
+    final list = <ExploreCatalogItem>[];
+    if (raw is List) {
+      for (final e in raw) {
+        if (e is Map<String, dynamic>) {
+          try {
+            list.add(ExploreCatalogItem.fromJson(e));
+          } catch (_) {
+            // skip bad row
+          }
+        }
+      }
+    }
+    final nc = response.data?['nextCursor']?.toString().trim();
+    _apilog(
+      'API fetchExploreCatalogPage done items=${list.length} nextCursor=$nc',
+    );
+    return ExploreCatalogPage(
+      items: list,
+      nextCursor: (nc != null && nc.isNotEmpty) ? nc : null,
+    );
+  }
+
+  /// Full aggregate for a media id (same JSON shape as library items).
+  Future<AppMediaAggregate?> fetchExploreMediaDetail({
+    required AppConfig config,
+    required String accessToken,
+    required String mediaId,
+  }) async {
+    final id = mediaId.trim();
+    if (id.isEmpty) return null;
+    final dio = _dio(config.tvAppApiBaseUrl);
+    final encoded = Uri.encodeComponent(id);
+    _apilog('API fetchExploreMediaDetail id=$id');
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/explore/media/$encoded',
+      options: Options(
+        headers: {'Authorization': 'Bearer $accessToken'},
+        validateStatus: (s) => s != null && s < 500,
+      ),
+    );
+    final code = response.statusCode ?? 0;
+    if (code == 404) return null;
+    if (code != 200 || response.data == null) return null;
+    try {
+      return AppMediaAggregate.fromJson(response.data!);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<SyncLibraryResult> syncLibrary({
@@ -275,6 +423,10 @@ class TvAppApiService {
               'captionText': r.captionText,
               if (r.fileSizeBytes != null && r.fileSizeBytes! > 0)
                 'fileSizeBytes': r.fileSizeBytes,
+              if (r.sourceName != null && r.sourceName!.trim().isNotEmpty)
+                'sourceName': r.sourceName!.trim().length > 255
+                    ? r.sourceName!.trim().substring(0, 255)
+                    : r.sourceName!.trim(),
             },
           )
           .toList(growable: false);
@@ -289,11 +441,17 @@ class TvAppApiService {
     );
     final code = response.statusCode ?? 0;
     final items = _readItems(response.data);
+    final sources = _readSources(response.data);
     final lastIndexedAt = _parseLastIndexedAt(response.data);
     _apilog(
-      'API syncLibrary done: status=$code items=${items.length} lastIndexedAt=$lastIndexedAt',
+      'API syncLibrary done: status=$code items=${items.length} '
+      'sources=${sources.length} lastIndexedAt=$lastIndexedAt',
     );
-    return SyncLibraryResult(items: items, lastIndexedAt: lastIndexedAt);
+    return SyncLibraryResult(
+      items: items,
+      sources: sources,
+      lastIndexedAt: lastIndexedAt,
+    );
   }
 
   /// Asks [tv-app-api] → provider bot to copy the file from backup channels into the user chat.
@@ -322,6 +480,64 @@ class TvAppApiService {
     return ok;
   }
 
+  static String _clipSourceLabel(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return 'Chat';
+    return t.length > 255 ? t.substring(0, 255) : t;
+  }
+
+  static String _formatTdUserDisplay(td.User u) {
+    final fn = u.firstName.trim();
+    final ln = u.lastName.trim();
+    final parts = [fn, ln].where((s) => s.isNotEmpty).join(' ');
+    if (parts.isNotEmpty) return _clipSourceLabel(parts);
+    final active = u.usernames?.activeUsernames ?? const <String>[];
+    if (active.isNotEmpty) {
+      final un = active.first.trim();
+      if (un.isNotEmpty) {
+        return _clipSourceLabel(un.startsWith('@') ? un : '@$un');
+      }
+    }
+    return _clipSourceLabel('User ${u.id}');
+  }
+
+  static Future<String> _resolveChatSourceLabel(
+    TdlibFacade tdlib,
+    int chatId,
+    int? myUserId,
+    Map<int, String> cache,
+  ) async {
+    final hit = cache[chatId];
+    if (hit != null) return hit;
+    var label = 'Chat $chatId';
+    try {
+      final obj = await tdlib.send(td.GetChat(chatId: chatId));
+      if (obj is td.Chat) {
+        final chat = obj;
+        final type = chat.type;
+        if (type is td.ChatTypePrivate) {
+          if (myUserId != null && type.userId == myUserId) {
+            label = 'Saved messages';
+          } else if (chat.title.trim().isNotEmpty) {
+            label = chat.title.trim();
+          } else {
+            final u = await tdlib.send(td.GetUser(userId: type.userId));
+            if (u is td.User) {
+              label = _formatTdUserDisplay(u);
+            }
+          }
+        } else if (chat.title.trim().isNotEmpty) {
+          label = chat.title.trim();
+        }
+      }
+    } catch (_) {
+      // Keep fallback [label].
+    }
+    label = _clipSourceLabel(label);
+    cache[chatId] = label;
+    return label;
+  }
+
   /// Global hashtag search via TDLib `searchMessages` (all non-secret chats).
   /// Results are **reverse chronological** (newest first) per TDLib.
   /// [minMessageDateUtc]: only messages with `date >=` this instant (incremental sync).
@@ -343,6 +559,13 @@ class TvAppApiService {
     );
     await tdlib.ensureAuthorized();
 
+    int? myUserId;
+    try {
+      final me = await tdlib.send(const td.GetMe());
+      if (me is td.User) myUserId = me.id;
+    } catch (_) {}
+
+    final chatLabelCache = <int, String>{};
     final byMediaFileId = <String, DiscoveredMediaRef>{};
     final discoveredMediaIds = <String>{};
 
@@ -356,6 +579,10 @@ class TvAppApiService {
         final mergedSize = (next.fileSizeBytes != null && next.fileSizeBytes! > 0)
             ? next.fileSizeBytes
             : existing.fileSizeBytes;
+        final mergedName = (next.sourceName != null &&
+                next.sourceName!.trim().isNotEmpty)
+            ? next.sourceName!.trim()
+            : existing.sourceName;
         byMediaFileId[id] = DiscoveredMediaRef(
           mediaFileId: next.mediaFileId,
           sourceChatId: next.sourceChatId,
@@ -364,6 +591,7 @@ class TvAppApiService {
           telegramFileId: next.telegramFileId,
           telegramDate: next.telegramDate,
           fileSizeBytes: mergedSize,
+          sourceName: mergedName,
         );
         return true;
       }
@@ -434,6 +662,12 @@ class TvAppApiService {
         // Captioner replies with [MessageText] that references the user's video; TDLib
         // download needs the **media** message id, not the bot caption message id.
         final locatorMessageId = _locatorMessageIdForSync(msg);
+        final sourceLabel = await _resolveChatSourceLabel(
+          tdlib,
+          msg.chatId,
+          myUserId,
+          chatLabelCache,
+        );
         mergeRef(
           DiscoveredMediaRef(
             mediaFileId: mediaFileId,
@@ -443,6 +677,7 @@ class TvAppApiService {
             telegramFileId: tfResolved,
             telegramDate: msg.date,
             fileSizeBytes: fileSizeBytes,
+            sourceName: sourceLabel,
           ),
         );
       }
@@ -566,6 +801,22 @@ class TvAppApiService {
           }
         })
         .whereType<AppMediaAggregate>()
+        .toList();
+  }
+
+  List<LibrarySourceFilterRow> _readSources(Map<String, dynamic>? body) {
+    final raw = body?['sources'];
+    if (raw is! List) return const <LibrarySourceFilterRow>[];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map((e) {
+          try {
+            return LibrarySourceFilterRow.fromJson(e);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<LibrarySourceFilterRow>()
         .toList();
   }
 

@@ -107,6 +107,7 @@ class AppMediaFile {
     required this.mediaId,
     this.sourceId,
     this.sourceChatId,
+    this.sourceName,
     required this.fileUniqueId,
     this.videoLanguage,
     this.quality,
@@ -131,6 +132,8 @@ class AppMediaFile {
   final String mediaId;
   final String? sourceId;
   final int? sourceChatId;
+  /// Resolved label from backend [Source.name] (group title, contact, Saved messages, …).
+  final String? sourceName;
   final String fileUniqueId;
   final String? videoLanguage;
   final String? quality;
@@ -158,6 +161,13 @@ class AppMediaFile {
       sourceChatId: _parseNullableInt(
         json['sourceChatId'] ?? json['source_chat_id'],
       ),
+      sourceName: () {
+        final raw =
+            json['sourceName']?.toString() ?? json['source_name']?.toString();
+        if (raw == null) return null;
+        final t = raw.trim();
+        return t.isEmpty ? null : t;
+      }(),
       fileUniqueId:
           (json['fileUniqueId'] ?? json['file_unique_id'] ?? '').toString(),
       videoLanguage: json['videoLanguage']?.toString() ??
