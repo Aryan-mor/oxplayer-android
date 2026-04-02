@@ -93,6 +93,29 @@ class ExploreCatalogPage {
   final String? nextCursor;
 }
 
+/// Row from GET [/me/explore/genres].
+class ExploreGenreRow {
+  const ExploreGenreRow({
+    required this.id,
+    required this.title,
+    required this.mediaCount,
+  });
+
+  final String id;
+  final String title;
+  final int mediaCount;
+
+  factory ExploreGenreRow.fromJson(Map<String, dynamic> json) {
+    final c = json['mediaCount'] ?? json['media_count'];
+    final n = c is int ? c : int.tryParse(c?.toString() ?? '') ?? 0;
+    return ExploreGenreRow(
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      mediaCount: n,
+    );
+  }
+}
+
 class DiscoveredMediaRef {
   DiscoveredMediaRef({
     required this.mediaFileId,
@@ -321,11 +344,37 @@ class TvAppApiService {
     );
   }
 
+  Future<List<ExploreGenreRow>> fetchExploreGenres({
+    required AppConfig config,
+    required String accessToken,
+  }) async {
+    final dio = _dio(config.tvAppApiBaseUrl);
+    _apilog('API fetchExploreGenres');
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/explore/genres',
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
+    final raw = response.data?['genres'];
+    final out = <ExploreGenreRow>[];
+    if (raw is List) {
+      for (final e in raw) {
+        if (e is Map<String, dynamic>) {
+          try {
+            out.add(ExploreGenreRow.fromJson(e));
+          } catch (_) {}
+        }
+      }
+    }
+    _apilog('API fetchExploreGenres done count=${out.length}');
+    return out;
+  }
+
   Future<ExploreCatalogPage> fetchExploreCatalogPage({
     required AppConfig config,
     required String accessToken,
     String query = '',
     String? cursor,
+    String? genreId,
     int limit = 30,
   }) async {
     final dio = _dio(config.tvAppApiBaseUrl);
@@ -334,8 +383,12 @@ class TvAppApiService {
     if (q.isNotEmpty) qp['q'] = q;
     final c = cursor?.trim();
     if (c != null && c.isNotEmpty) qp['cursor'] = c;
+    final g = genreId?.trim();
+    if (g != null && g.isNotEmpty) qp['genreId'] = g;
 
-    _apilog('API fetchExploreCatalogPage q="$q" cursor=$c limit=$limit');
+    _apilog(
+      'API fetchExploreCatalogPage q="$q" cursor=$c genreId=$g limit=$limit',
+    );
     final response = await dio.get<Map<String, dynamic>>(
       '/me/explore/media',
       queryParameters: qp,

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/debug/app_debug_log.dart';
@@ -309,6 +310,81 @@ class _PosterPanel extends ConsumerWidget {
   }
 }
 
+/// Always-visible overview; long copy uses a TV-focusable "Read more..." control.
+class _OverviewSection extends StatefulWidget {
+  const _OverviewSection({required this.summary});
+
+  final String? summary;
+
+  @override
+  State<_OverviewSection> createState() => _OverviewSectionState();
+}
+
+class _OverviewSectionState extends State<_OverviewSection> {
+  static const int _kPreviewCharCount = 500;
+
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const headingStyle = TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.w600,
+      color: Colors.white,
+    );
+    const bodyStyle = TextStyle(
+      color: AppColors.textMuted,
+      height: 1.45,
+    );
+
+    final trimmed = (widget.summary ?? '').trim();
+    final column = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Overview', style: headingStyle),
+        const SizedBox(height: 8),
+        if (trimmed.isEmpty)
+          const Text('No description available.', style: bodyStyle)
+        else ...[
+          Text(
+            _bodyText(trimmed),
+            style: bodyStyle,
+          ),
+          if (_needsReadMore(trimmed)) ...[
+            const SizedBox(height: 10),
+            TVButton(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              borderRadius: 8,
+              child: Text(
+                _expanded ? 'Read less' : 'Read more...',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.highlight,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: column,
+    );
+  }
+
+  bool _needsReadMore(String trimmed) =>
+      trimmed.characters.length > _kPreviewCharCount;
+
+  String _bodyText(String trimmed) {
+    if (!_needsReadMore(trimmed) || _expanded) return trimmed;
+    return trimmed.characters.take(_kPreviewCharCount).toString();
+  }
+}
+
 class _DetailsPanel extends StatelessWidget {
   const _DetailsPanel({required this.aggregate, required this.isSeries});
 
@@ -353,19 +429,49 @@ class _DetailsPanel extends StatelessWidget {
                           _chip(item.originalLanguage!.toUpperCase()),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    TvExpandableSection(
-                      title: 'Overview',
-                      child: Text(
-                        (item.summary ?? '').trim().isEmpty
-                            ? 'No description available.'
-                            : item.summary!.trim(),
-                        style: const TextStyle(
-                          color: AppColors.textMuted,
-                          height: 1.45,
+                    if (item.genres.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Genres',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 44,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: item.genres.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          itemBuilder: (ctx, i) {
+                            final g = item.genres[i];
+                            return TVButton(
+                              onPressed: () {
+                                context.push(
+                                  '/explore?genreId=${Uri.encodeComponent(g.id)}',
+                                );
+                              },
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              child: Text(
+                                g.title,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    _OverviewSection(summary: item.summary),
                     if (isSeries)
                       _SeriesVariantsSection(aggregate: aggregate)
                     else

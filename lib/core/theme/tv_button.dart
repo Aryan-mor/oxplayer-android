@@ -19,6 +19,8 @@ class TVButton extends StatefulWidget {
     this.borderRadius = 10.0,
     this.onKeyEvent,
     this.onFocusChanged,
+    /// When true, shows a persistent highlight border (e.g. active filter) even without focus.
+    this.selected = false,
   });
 
   final VoidCallback? onPressed;
@@ -28,6 +30,7 @@ class TVButton extends StatefulWidget {
   final bool enabled;
   final EdgeInsetsGeometry padding;
   final double borderRadius;
+  final bool selected;
   final KeyEventResult Function(FocusNode node, KeyEvent event)? onKeyEvent;
   final ValueChanged<bool>? onFocusChanged;
 
@@ -104,8 +107,12 @@ class _TVButtonState extends State<TVButton> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(widget.borderRadius),
             border: Border.all(
-              color: _focused ? AppColors.highlight : AppColors.border,
-              width: _focused ? 3.0 : 1.0,
+              color: _focused
+                  ? AppColors.highlight
+                  : widget.selected
+                      ? AppColors.highlight
+                      : AppColors.border,
+              width: _focused ? 3.0 : (widget.selected ? 2.0 : 1.0),
             ),
             boxShadow: _focused
                 ? [
@@ -118,7 +125,9 @@ class _TVButtonState extends State<TVButton> {
                 : null,
             color: _focused
                 ? AppColors.highlight.withValues(alpha: 0.15)
-                : AppColors.card,
+                : widget.selected
+                    ? AppColors.highlight.withValues(alpha: 0.12)
+                    : AppColors.card,
           ),
           child: Material(
             color: Colors.transparent,

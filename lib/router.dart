@@ -45,7 +45,9 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/explore',
-            builder: (context, state) => const ExploreScreen(),
+            builder: (context, state) => ExploreScreen(
+              initialGenreId: state.uri.queryParameters['genreId'],
+            ),
           ),
           GoRoute(
             path: '/item/:globalId',

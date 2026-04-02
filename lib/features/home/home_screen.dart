@@ -461,31 +461,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    TVButton(
-                      focusNode: _syncButtonFocusNode,
-                      autofocus: true,
-                      onKeyEvent: (_, event) {
-                        if (_isRight(event)) {
-                          _focusGridFromSidebar();
-                          return KeyEventResult.handled;
-                        }
-                        return KeyEventResult.ignored;
-                      },
-                      onPressed: _isSyncing
-                          ? null
-                          : () => _triggerSync(isManual: true),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.sync_rounded,
-                            color: Colors.white.withValues(
-                              alpha: _isSyncing ? 0.5 : 1,
+                    SizedBox(
+                      width: double.infinity,
+                      child: TVButton(
+                        focusNode: _syncButtonFocusNode,
+                        autofocus: true,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        onKeyEvent: (_, event) {
+                          if (_isRight(event)) {
+                            _focusGridFromSidebar();
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        onPressed: _isSyncing
+                            ? null
+                            : () => _triggerSync(isManual: true),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.sync_rounded,
+                              color: Colors.white.withValues(
+                                alpha: _isSyncing ? 0.5 : 1,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 10),
-                          Text(_isSyncing ? 'Syncing…' : 'Sync library'),
-                        ],
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _isSyncing ? 'Syncing…' : 'Sync library',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -506,26 +521,41 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 children: [
                                   const _SidebarSectionLabel('Explore'),
                                   const SizedBox(height: 10),
-                                  TVButton(
-                                    focusNode: _exploreFocusNode,
-                                    onKeyEvent: (_, event) {
-                                      if (_isRight(event)) {
-                                        _focusGridFromSidebar();
-                                        return KeyEventResult.handled;
-                                      }
-                                      return KeyEventResult.ignored;
-                                    },
-                                    onPressed: () => context.push('/explore'),
-                                    child: const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          Icons.explore_rounded,
-                                          color: Colors.white,
-                                        ),
-                                        SizedBox(width: 10),
-                                        Text('Browse catalog'),
-                                      ],
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: TVButton(
+                                      focusNode: _exploreFocusNode,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 14,
+                                      ),
+                                      onKeyEvent: (_, event) {
+                                        if (_isRight(event)) {
+                                          _focusGridFromSidebar();
+                                          return KeyEventResult.handled;
+                                        }
+                                        return KeyEventResult.ignored;
+                                      },
+                                      onPressed: () => context.push('/explore'),
+                                      child: const Row(
+                                        children: [
+                                          Icon(
+                                            Icons.explore_rounded,
+                                            color: Colors.white,
+                                          ),
+                                          SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(
+                                              'Browse catalog',
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(height: 20),

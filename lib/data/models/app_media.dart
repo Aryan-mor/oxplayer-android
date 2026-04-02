@@ -1,3 +1,18 @@
+/// TMDB-linked genre row from API [`media.genres`].
+class MediaGenreRef {
+  const MediaGenreRef({required this.id, required this.title});
+
+  final String id;
+  final String title;
+
+  factory MediaGenreRef.fromJson(Map<String, dynamic> json) {
+    return MediaGenreRef(
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+    );
+  }
+}
+
 class AppMedia {
   AppMedia({
     required this.id,
@@ -10,6 +25,7 @@ class AppMedia {
     this.posterPath,
     this.summary,
     this.rawDetails,
+    this.genres = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -24,6 +40,7 @@ class AppMedia {
   final String? posterPath;
   final String? summary;
   final String? rawDetails;
+  final List<MediaGenreRef> genres;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -36,6 +53,17 @@ class AppMedia {
             '')
         .toString()
         .trim();
+    final genresRaw = json['genres'];
+    final genresList = <MediaGenreRef>[];
+    if (genresRaw is List) {
+      for (final e in genresRaw) {
+        if (e is Map<String, dynamic>) {
+          final g = MediaGenreRef.fromJson(e);
+          if (g.id.isNotEmpty) genresList.add(g);
+        }
+      }
+    }
+
     return AppMedia(
       id: resolvedId,
       imdbId: json['imdbId']?.toString() ?? json['imdb_id']?.toString(),
@@ -50,6 +78,7 @@ class AppMedia {
       summary: json['summary']?.toString(),
       rawDetails:
           json['rawDetails']?.toString() ?? json['raw_details']?.toString(),
+      genres: genresList,
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'].toString())
           : (json['created_at'] != null
