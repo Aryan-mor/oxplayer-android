@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/debug/app_debug_log.dart';
 import '../core/sync_prefs.dart';
 import '../telegram/tdlib_facade.dart';
+import 'api/discovery_media_ids_store.dart';
 import 'api/discovery_refs_store.dart';
 import 'api/tv_app_api_service.dart';
 import '../core/config/app_config.dart';
@@ -62,28 +63,35 @@ Future<void> runTelegramLibrarySync({
     tdlib: tdlib,
     config: config,
     minMessageDateUtc: minMessageDateUtc,
-    onBatch: (discoveredRefs) async {
+    onBatch: (discoveredRefs, discoveredMediaIds) async {
       await DiscoveryRefsStore.merge(discoveredRefs);
+      await DiscoveryMediaIdsStore.merge(discoveredMediaIds);
       _synclog(
-        'LibrarySync: discovery batch size=${discoveredRefs.length}',
+        'LibrarySync: discovery batch refs=${discoveredRefs.length} '
+        'mediaIds=${discoveredMediaIds.length}',
       );
     },
   );
 
   await DiscoveryRefsStore.pruneLegacyUuidKeys();
+  await DiscoveryMediaIdsStore.pruneInvalid();
   final persistedRefs = await DiscoveryRefsStore.loadAll();
-  if (persistedRefs.isEmpty) {
+  final persistedMediaIds = (await DiscoveryMediaIdsStore.loadAll()).toList(growable: false);
+  if (persistedRefs.isEmpty && persistedMediaIds.isEmpty) {
     _synclog('LibrarySync: discovery store empty, sync skipped');
     invalidateLibrary();
     return;
   }
 
-  _synclog('LibrarySync: syncing ${persistedRefs.length} persisted ref(s)');
+  _synclog(
+    'LibrarySync: syncing ${persistedRefs.length} ref(s), ${persistedMediaIds.length} mediaId(s)',
+  );
   final syncResult = await api.syncLibrary(
     config: config,
     accessToken: accessToken,
     mediaFileIds: persistedRefs.map((r) => r.mediaFileId).toList(growable: false),
-    refs: persistedRefs,
+    mediaIds: persistedMediaIds.isEmpty ? null : persistedMediaIds,
+    refs: persistedRefs.isEmpty ? null : persistedRefs,
   );
   final w = syncResult.lastIndexedAt;
   if (w != null) {

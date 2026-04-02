@@ -249,15 +249,20 @@ class TvAppApiService {
     required AppConfig config,
     required String accessToken,
     required List<String> mediaFileIds,
+    List<String>? mediaIds,
     List<DiscoveredMediaRef>? refs,
   }) async {
     _apilog(
-      'API syncLibrary start: ids=${mediaFileIds.length}, tokenLength=${accessToken.length}',
+      'API syncLibrary start: fileIds=${mediaFileIds.length} mediaIds=${mediaIds?.length ?? 0} '
+      'tokenLength=${accessToken.length}',
     );
     final dio = _dio(config.tvAppApiBaseUrl);
     final body = <String, dynamic>{
       'mediaFileIds': mediaFileIds,
     };
+    if (mediaIds != null && mediaIds.isNotEmpty) {
+      body['mediaIds'] = mediaIds;
+    }
     if (refs != null && refs.isNotEmpty) {
       body['refs'] = refs
           .map(
@@ -323,7 +328,10 @@ class TvAppApiService {
   Future<void> collectMediaFileIdsFromTelegram({
     required TdlibFacade tdlib,
     required AppConfig config,
-    required Future<void> Function(List<DiscoveredMediaRef> discoveredRefs) onBatch,
+    required Future<void> Function(
+      List<DiscoveredMediaRef> discoveredRefs,
+      Set<String> discoveredMediaIds,
+    ) onBatch,
     DateTime? minMessageDateUtc,
   }) async {
     final minDateUnix = minMessageDateUtc != null
@@ -336,6 +344,7 @@ class TvAppApiService {
     await tdlib.ensureAuthorized();
 
     final byMediaFileId = <String, DiscoveredMediaRef>{};
+    final discoveredMediaIds = <String>{};
 
     bool mergeRef(DiscoveredMediaRef next) {
       final id = next.mediaFileId.trim();
@@ -364,8 +373,12 @@ class TvAppApiService {
     }
 
     var offset = '';
+    syncPages:
     for (var page = 0; page < 30; page++) {
-      if (byMediaFileId.length >= _kMaxSyncDiscoverItems) break;
+      if (byMediaFileId.length >= _kMaxSyncDiscoverItems &&
+          discoveredMediaIds.length >= _kMaxSyncDiscoverItems) {
+        break syncPages;
+      }
       final batch = await tdlib.send(
         td.SearchMessages(
           chatList: null,
@@ -385,18 +398,38 @@ class TvAppApiService {
         break;
       }
       for (final msg in batch.messages) {
-        if (byMediaFileId.length >= _kMaxSyncDiscoverItems) break;
+        if (byMediaFileId.length >= _kMaxSyncDiscoverItems &&
+            discoveredMediaIds.length >= _kMaxSyncDiscoverItems) {
+          break syncPages;
+        }
         final text = _extractText(msg);
+        final mediaIdTag = _extractMediaIdHashtag(text, config.indexTag);
         final mediaFileId = _extractMediaFileId(text, config.indexTag);
-        if (mediaFileId == null) continue;
         final telegramFileId = await _resolveTelegramFileId(tdlib, msg);
+        final hasFileLocator = telegramFileId != null && telegramFileId.trim().isNotEmpty;
+
+        if (mediaIdTag != null &&
+            discoveredMediaIds.length < _kMaxSyncDiscoverItems) {
+          discoveredMediaIds.add(mediaIdTag);
+        }
+
+        // Access via `${INDEX_TAG}_M_<id>` does not require an attached file or reply.
+        // Optional `${INDEX_TAG}_F_<id>` + TDLib file id still refines ingest / discovery store.
+        if (byMediaFileId.length >= _kMaxSyncDiscoverItems) {
+          continue;
+        }
+        if (mediaIdTag == null &&
+            (mediaFileId == null || !hasFileLocator)) {
+          continue;
+        }
+        if (mediaFileId == null || !hasFileLocator) {
+          continue;
+        }
+        final tfResolved = telegramFileId.trim();
         var fileSizeBytes =
             await _resolveMediaFileSizeBytes(tdlib: tdlib, msg: msg);
-        final tid = telegramFileId;
-        if ((fileSizeBytes == null || fileSizeBytes <= 0) &&
-            tid != null &&
-            tid.isNotEmpty) {
-          fileSizeBytes = await _fileSizeFromRemoteFileId(tdlib, tid);
+        if ((fileSizeBytes == null || fileSizeBytes <= 0) && tfResolved.isNotEmpty) {
+          fileSizeBytes = await _fileSizeFromRemoteFileId(tdlib, tfResolved);
         }
         // Captioner replies with [MessageText] that references the user's video; TDLib
         // download needs the **media** message id, not the bot caption message id.
@@ -407,7 +440,7 @@ class TvAppApiService {
             sourceChatId: msg.chatId,
             sourceMessageId: locatorMessageId,
             captionText: text,
-            telegramFileId: telegramFileId,
+            telegramFileId: tfResolved,
             telegramDate: msg.date,
             fileSizeBytes: fileSizeBytes,
           ),
@@ -419,11 +452,13 @@ class TvAppApiService {
 
     final list = byMediaFileId.values.toList(growable: false);
     try {
-      await onBatch(list);
+      await onBatch(list, discoveredMediaIds);
     } catch (e) {
       _apilog('Sync discover: onBatch failed with $e');
     }
-    _apilog('Sync discover done: total mediaFileIds=${list.length}');
+    _apilog(
+      'Sync discover done: total mediaFileIds=${list.length} mediaIds=${discoveredMediaIds.length}',
+    );
   }
 
   Future<String> _fetchSignedInitData({
@@ -539,6 +574,8 @@ class TvAppApiService {
     if (content is td.MessageVideo) return content.caption.text;
     if (content is td.MessageDocument) return content.caption.text;
     if (content is td.MessageText) return content.text.text;
+    if (content is td.MessagePhoto) return content.caption.text;
+    if (content is td.MessageAnimation) return content.caption.text;
     return '';
   }
 
@@ -547,10 +584,20 @@ class TvAppApiService {
     caseSensitive: false,
   );
 
+  /// `${INDEX_TAG}_M_<mediaId>` — grants library access without a Telegram file on the message.
+  String? _extractMediaIdHashtag(String text, String indexTag) {
+    if (text.isEmpty) return null;
+    final taggedNumeric = RegExp(
+      '${RegExp.escape(indexTag)}_M_(\\d{1,19})(?!\\d)',
+      caseSensitive: false,
+    ).firstMatch(text);
+    return taggedNumeric?.group(1);
+  }
+
   String? _extractMediaFileId(String text, String indexTag) {
     if (text.isEmpty) return null;
     final taggedNumeric = RegExp(
-      '${RegExp.escape(indexTag)}_F_(\\d{1,19})',
+      '${RegExp.escape(indexTag)}_F_(\\d{1,19})(?!\\d)',
       caseSensitive: false,
     ).firstMatch(text);
     if (taggedNumeric != null) return taggedNumeric.group(1);
