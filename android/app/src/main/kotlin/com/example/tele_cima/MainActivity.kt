@@ -3,7 +3,9 @@ package com.example.tele_cima
 import android.content.ClipData
 import android.content.Intent
 import android.content.ActivityNotFoundException
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,7 +16,8 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL_PLAYER = "telecima/external_player"
-        private const val CHANNEL_MEDIA  = "telecima/media_utils"
+        private const val CHANNEL_MEDIA = "telecima/media_utils"
+        private const val CHANNEL_APP = "telecima/app_info"
 
         init {
             // Load TDLib JSON client from jniLibs/<abi>/libtdjson.so (x86, x86_64, arm*, …)
@@ -29,6 +32,42 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // ── App package version (replaces package_info_plus plugin registration) ─
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_APP)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getPackageInfo" -> {
+                        try {
+                            val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                packageManager.getPackageInfo(
+                                    packageName,
+                                    PackageManager.PackageInfoFlags.of(0),
+                                )
+                            } else {
+                                @Suppress("DEPRECATION")
+                                packageManager.getPackageInfo(packageName, 0)
+                            }
+                            val versionCode =
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                    info.longVersionCode
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    info.versionCode.toLong()
+                                }
+                            result.success(
+                                mapOf(
+                                    "versionName" to (info.versionName ?: ""),
+                                    "versionCode" to versionCode,
+                                ),
+                            )
+                        } catch (e: Exception) {
+                            result.error("PACKAGE_INFO", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         // ── Channel 1: Launch external video player ───────────────────────────
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_PLAYER)

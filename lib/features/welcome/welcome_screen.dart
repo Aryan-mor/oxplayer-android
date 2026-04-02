@@ -10,6 +10,7 @@ import '../../core/auth/auth_notifier.dart';
 import '../../core/debug/app_debug_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
+import '../../core/update/app_update_notifier.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
 
@@ -231,6 +232,9 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
         // 2. One more post-frame hack to allow TeleCimaApp listener to finish session processing
         await Future<void>.delayed(const Duration(milliseconds: 100));
         auth = ref.read(authNotifierProvider);
+
+        await ref.read(appUpdateNotifierProvider.notifier).waitUntilGateReleased();
+        if (!mounted) return;
 
         if (!auth.hasTelegramSession && mounted) {
           unawaited(_bootstrapTelegram());
