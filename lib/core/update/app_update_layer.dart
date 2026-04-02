@@ -20,10 +20,15 @@ class AppUpdateLayer extends ConsumerStatefulWidget {
 
 class _AppUpdateLayerState extends ConsumerState<AppUpdateLayer> {
   bool _started = false;
+  late final FocusScopeNode _dialogFocusScopeNode;
+  late final FocusNode _downloadButtonFocusNode;
+  String? _focusedPromptKey;
 
   @override
   void initState() {
     super.initState();
+    _dialogFocusScopeNode = FocusScopeNode(debugLabel: 'UpdateDialogScope');
+    _downloadButtonFocusNode = FocusNode(debugLabel: 'UpdateDownloadButton');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _started) return;
       _started = true;
@@ -31,6 +36,13 @@ class _AppUpdateLayerState extends ConsumerState<AppUpdateLayer> {
         ref.read(appUpdateNotifierProvider.notifier).runStartupCheck(),
       );
     });
+  }
+
+  @override
+  void dispose() {
+    _dialogFocusScopeNode.dispose();
+    _downloadButtonFocusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _openDownload(AppUpdatePrompt p) async {
@@ -46,10 +58,22 @@ class _AppUpdateLayerState extends ConsumerState<AppUpdateLayer> {
   @override
   Widget build(BuildContext context) {
     final prompt = ref.watch(appUpdateNotifierProvider);
+    if (prompt == null) {
+      _focusedPromptKey = null;
+    } else {
+      final promptKey = '${prompt.releaseTag}:${prompt.mandatory}';
+      if (_focusedPromptKey != promptKey) {
+        _focusedPromptKey = promptKey;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _dialogFocusScopeNode.requestFocus(_downloadButtonFocusNode);
+        });
+      }
+    }
     return Stack(
       fit: StackFit.expand,
       children: [
-        widget.child,
+        ExcludeFocus(excluding: prompt != null, child: widget.child),
         if (prompt != null)
           ModalBarrier(
             color: Colors.black.withValues(alpha: 0.72),
@@ -62,83 +86,87 @@ class _AppUpdateLayerState extends ConsumerState<AppUpdateLayer> {
               child: Card(
                 child: Padding(
                   padding: const EdgeInsets.all(28),
-                  child: FocusTraversalGroup(
-                    policy: OrderedTraversalPolicy(),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          prompt.mandatory
-                              ? 'Update required'
-                              : 'Update available',
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
+                  child: FocusScope(
+                    node: _dialogFocusScopeNode,
+                    child: FocusTraversalGroup(
+                      policy: OrderedTraversalPolicy(),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            prompt.mandatory
+                                ? 'Update required'
+                                : 'Update available',
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          prompt.mandatory
-                              ? 'This version of TeleCima is no longer supported. '
-                                  'The service or app protocol has changed, so you '
-                                  'must download and install the new build for your '
-                                  'device before you can continue.'
-                              : 'A newer release (${prompt.releaseTag}) is available. '
-                                  'You are on ${prompt.currentVersion}.',
-                          style: const TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 16,
-                            height: 1.45,
+                          const SizedBox(height: 16),
+                          Text(
+                            prompt.mandatory
+                                ? 'This version of TeleCima is no longer supported. '
+                                    'The service or app protocol has changed, so you '
+                                    'must download and install the new build for your '
+                                    'device before you can continue.'
+                                : 'A newer release (${prompt.releaseTag}) is available. '
+                                    'You are on ${prompt.currentVersion}.',
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 16,
+                              height: 1.45,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 28),
-                        FocusTraversalOrder(
-                          order: const NumericFocusOrder(0),
-                          child: TVButton(
-                            autofocus: true,
-                            onPressed: () async {
-                              await _openDownload(prompt);
-                              if (!context.mounted) return;
-                              if (prompt.mandatory) {
-                                return;
-                              }
-                              ref
-                                  .read(appUpdateNotifierProvider.notifier)
-                                  .clearOptionalAfterDownload();
-                            },
-                            child: const Text('Download'),
-                          ),
-                        ),
-                        if (!prompt.mandatory) ...[
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 28),
                           FocusTraversalOrder(
-                            order: const NumericFocusOrder(1),
+                            order: const NumericFocusOrder(0),
                             child: TVButton(
-                              onPressed: () {
+                              focusNode: _downloadButtonFocusNode,
+                              autofocus: true,
+                              onPressed: () async {
+                                await _openDownload(prompt);
+                                if (!context.mounted) return;
+                                if (prompt.mandatory) {
+                                  return;
+                                }
                                 ref
                                     .read(appUpdateNotifierProvider.notifier)
-                                    .skipThisVersion(prompt);
+                                    .clearOptionalAfterDownload();
                               },
-                              child: const Text('Skip this version'),
+                              child: const Text('Download'),
                             ),
                           ),
-                          const SizedBox(height: 14),
-                          FocusTraversalOrder(
-                            order: const NumericFocusOrder(2),
-                            child: TVButton(
-                              onPressed: () {
-                                ref
-                                    .read(appUpdateNotifierProvider.notifier)
-                                    .closeOptional();
-                              },
-                              child: const Text('Close'),
+                          if (!prompt.mandatory) ...[
+                            const SizedBox(height: 14),
+                            FocusTraversalOrder(
+                              order: const NumericFocusOrder(1),
+                              child: TVButton(
+                                onPressed: () {
+                                  ref
+                                      .read(appUpdateNotifierProvider.notifier)
+                                      .skipThisVersion(prompt);
+                                },
+                                child: const Text('Skip this version'),
+                              ),
                             ),
-                          ),
+                            const SizedBox(height: 14),
+                            FocusTraversalOrder(
+                              order: const NumericFocusOrder(2),
+                              child: TVButton(
+                                onPressed: () {
+                                  ref
+                                      .read(appUpdateNotifierProvider.notifier)
+                                      .closeOptional();
+                                },
+                                child: const Text('Close'),
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),

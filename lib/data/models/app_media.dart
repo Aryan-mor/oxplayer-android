@@ -146,6 +146,7 @@ class AppMediaFile {
     this.subtitleMentioned = false,
     this.subtitlePresentation,
     this.subtitleLanguage,
+    this.captionText,
     this.canStream = false,
     this.season,
     this.episode,
@@ -165,6 +166,7 @@ class AppMediaFile {
   final String mediaId;
   final String? sourceId;
   final int? sourceChatId;
+
   /// Resolved label from backend [Source.name] (group title, contact, Saved messages, …).
   final String? sourceName;
   final String fileUniqueId;
@@ -176,6 +178,7 @@ class AppMediaFile {
   final bool subtitleMentioned;
   final String? subtitlePresentation;
   final String? subtitleLanguage;
+  final String? captionText;
   final bool canStream;
   final int? season;
   final int? episode;
@@ -220,6 +223,8 @@ class AppMediaFile {
           json['subtitle_presentation']?.toString(),
       subtitleLanguage: json['subtitleLanguage']?.toString() ??
           json['subtitle_language']?.toString(),
+      captionText:
+          json['captionText']?.toString() ?? json['caption_text']?.toString(),
       canStream: json['canStream'] == true || json['can_stream'] == true,
       season: json['season'] as int?,
       episode: json['episode'] as int?,

@@ -23,7 +23,8 @@ import '../../providers.dart';
 void _itemLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
 
-Future<void> _showDownloadUnavailableHelp(BuildContext context, WidgetRef ref) async {
+Future<void> _showDownloadUnavailableHelp(
+    BuildContext context, WidgetRef ref) async {
   final bot = ref.read(appConfigProvider).captionerBotUsername;
   await showDialog<void>(
     context: context,
@@ -73,9 +74,10 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
 
   Future<void> _load() async {
     _itemLog('SingleItemScreen: load start globalId=${widget.globalId}');
-    
+
     final allMedia = (await ref.read(libraryFetchProvider.future)).items;
-    final totalFiles = allMedia.fold<int>(0, (sum, it) => sum + it.files.length);
+    final totalFiles =
+        allMedia.fold<int>(0, (sum, it) => sum + it.files.length);
     final sample = allMedia
         .take(5)
         .map((e) => '${e.media.id}:${e.files.length}')
@@ -84,7 +86,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
       'SingleItemScreen: mediaList loaded items=${allMedia.length} totalFiles=$totalFiles '
       'sample(mediaId:files)=[$sample]',
     );
-    
+
     // Find the requested media
     try {
       final item = allMedia.firstWhere((m) => m.media.id == widget.globalId);
@@ -175,14 +177,17 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
     String? resolvePosterUrl(String? posterPath) {
       final value = (posterPath ?? '').trim();
       if (value.isEmpty) return null;
-      if (value.startsWith('http://') || value.startsWith('https://')) return value;
+      if (value.startsWith('http://') || value.startsWith('https://'))
+        return value;
       if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
       return value;
     }
 
-    String? backdropUrl; // Use default dark placeholder or standard empty for now
+    String?
+        backdropUrl; // Use default dark placeholder or standard empty for now
     if (item.posterPath != null) {
-      backdropUrl = resolvePosterUrl(item.posterPath); // Placeholder as there's only posterPath
+      backdropUrl = resolvePosterUrl(
+          item.posterPath); // Placeholder as there's only posterPath
     }
 
     return Scaffold(
@@ -229,7 +234,8 @@ class _PosterPanel extends ConsumerWidget {
   String? _resolvePosterUrl(String? posterPath) {
     final value = (posterPath ?? '').trim();
     if (value.isEmpty) return null;
-    if (value.startsWith('http://') || value.startsWith('https://')) return value;
+    if (value.startsWith('http://') || value.startsWith('https://'))
+      return value;
     if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
     return value;
   }
@@ -423,7 +429,8 @@ class _DetailsPanel extends StatelessWidget {
                       spacing: 10,
                       runSpacing: 8,
                       children: [
-                        if (item.releaseYear != null) _chip('Year ${item.releaseYear}'),
+                        if (item.releaseYear != null)
+                          _chip('Year ${item.releaseYear}'),
                         _chip(isSeries ? 'Series' : 'Movie'),
                         if (item.originalLanguage != null &&
                             item.originalLanguage!.isNotEmpty)
@@ -496,7 +503,8 @@ Widget _chip(String text) {
       borderRadius: BorderRadius.circular(999),
       border: Border.all(color: AppColors.border),
     ),
-    child: Text(text, style: const TextStyle(fontSize: 12, color: Colors.white)),
+    child:
+        Text(text, style: const TextStyle(fontSize: 12, color: Colors.white)),
   );
 }
 
@@ -508,7 +516,8 @@ class _MovieVariantsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (aggregate.files.isEmpty) {
-      return const Text('No files indexed yet.', style: TextStyle(color: AppColors.textMuted));
+      return const Text('No files indexed yet.',
+          style: TextStyle(color: AppColors.textMuted));
     }
 
     return Column(
@@ -544,7 +553,8 @@ class _SeriesVariantsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (aggregate.files.isEmpty) {
-      return const Text('No episodes indexed yet.', style: TextStyle(color: AppColors.textMuted));
+      return const Text('No episodes indexed yet.',
+          style: TextStyle(color: AppColors.textMuted));
     }
 
     final grouped = <int, Map<int, List<AppMediaFile>>>{};
@@ -629,11 +639,13 @@ Future<void> _confirmAndDeleteDownload(
               children: [
                 TVButton(
                   onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel', style: TextStyle(color: Colors.white)),
+                  child: const Text('Cancel',
+                      style: TextStyle(color: Colors.white)),
                 ),
                 TVButton(
                   onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('Remove', style: TextStyle(color: Colors.redAccent)),
+                  child: const Text('Remove',
+                      style: TextStyle(color: Colors.redAccent)),
                 ),
               ],
             ),
@@ -658,6 +670,7 @@ class _VariantRow extends ConsumerWidget {
 
   final AppMedia media;
   final AppMediaFile file;
+
   /// True when this row lives under the series seasons UI (also used with API type / file ep).
   final bool inSeriesSection;
   final String downloadTitle;
@@ -668,7 +681,9 @@ class _VariantRow extends ConsumerWidget {
     final isSeriesMedia = _effectiveIsSeriesMedia(media, file, inSeriesSection);
     final dm = ref.watch(downloadManagerProvider).value;
     final state = dm?.stateFor(downloadGlobalId) ?? const DownloadIdle();
-    final quality = (file.quality ?? '').trim().isEmpty ? 'Unknown quality' : file.quality!.trim();
+    final quality = (file.quality ?? '').trim().isEmpty
+        ? 'Unknown quality'
+        : file.quality!.trim();
     final lang = (file.videoLanguage ?? file.language ?? '').trim();
     final size = _formatBytes(file.size);
     final subLabel = _subtitleLabel(file);
@@ -678,6 +693,7 @@ class _VariantRow extends ConsumerWidget {
       size ?? '?',
       if (subLabel != null) subLabel,
     ];
+    final captionPreview = _captionPreview(file.captionText);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -687,26 +703,47 @@ class _VariantRow extends ConsumerWidget {
         border: Border.all(color: AppColors.border),
         color: AppColors.card,
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              infoParts.join('  •  '),
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  infoParts.join('  •  '),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+              if (dm == null)
+                const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+              else
+                _VariantAction(
+                  dm: dm,
+                  state: state,
+                  media: media,
+                  file: file,
+                  isSeriesMedia: isSeriesMedia,
+                  downloadTitle: downloadTitle,
+                  downloadGlobalId: downloadGlobalId,
+                ),
+            ],
           ),
-          if (dm == null)
-            const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-          else
-            _VariantAction(
-              dm: dm,
-              state: state,
-              media: media,
-              file: file,
-              isSeriesMedia: isSeriesMedia,
-              downloadTitle: downloadTitle,
-              downloadGlobalId: downloadGlobalId,
+          if (captionPreview != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              captionPreview,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 12,
+                height: 1.35,
+              ),
             ),
+          ],
         ],
       ),
     );
@@ -833,8 +870,7 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       DownloadIdle() => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (file.canStream)
-              _streamButton(context, r),
+            if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
             TVButton(
               onPressed: () => _startDownload(context),
@@ -879,7 +915,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
           mainAxisSize: MainAxisSize.min,
           children: [
             TVButton(
-              onPressed: () => unawaited(_showDownloadUnavailableHelp(context, r)),
+              onPressed: () =>
+                  unawaited(_showDownloadUnavailableHelp(context, r)),
               child: const Text(
                 'Not available',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -891,7 +928,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       Downloading(:final percent) => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('$percent%', style: const TextStyle(color: AppColors.highlight)),
+            Text('$percent%',
+                style: const TextStyle(color: AppColors.highlight)),
             const SizedBox(width: 8),
             if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
@@ -905,7 +943,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       DownloadPaused(:final percent) => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('$percent%', style: const TextStyle(color: AppColors.textMuted)),
+            Text('$percent%',
+                style: const TextStyle(color: AppColors.textMuted)),
             const SizedBox(width: 8),
             if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
@@ -1005,7 +1044,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       subtitle: _seasonEpisodeLine(isSeriesMedia, file),
       isSeries: isSeriesMedia,
     );
-    final launched = await ExternalPlayer.launchVideo(path: path, title: downloadTitle);
+    final launched =
+        await ExternalPlayer.launchVideo(path: path, title: downloadTitle);
     if (!launched && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No player found.')),
@@ -1016,7 +1056,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
   Future<void> _stream(BuildContext context, WidgetRef ref) async {
     if (!file.canStream) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Streaming is not available for this file.')),
+        const SnackBar(
+            content: Text('Streaming is not available for this file.')),
       );
       return;
     }
@@ -1249,9 +1290,11 @@ Future<void> _showDownloadDebugDialog(
   r.writeln('file.episode: ${file.episode}');
   r.writeln('file.quality: ${file.quality}');
   r.writeln('file.size (API): ${file.size}');
-  r.writeln('file.mime/telegram: telegramFileId set=${(file.telegramFileId ?? '').isNotEmpty}');
+  r.writeln(
+      'file.mime/telegram: telegramFileId set=${(file.telegramFileId ?? '').isNotEmpty}');
   r.writeln('locatorType: ${file.locatorType}');
-  r.writeln('locatorChatId/messageId: ${file.locatorChatId} / ${file.locatorMessageId}');
+  r.writeln(
+      'locatorChatId/messageId: ${file.locatorChatId} / ${file.locatorMessageId}');
   r.writeln('');
   r.writeln('=== UI / NAMING INPUTS ===');
   r.writeln('inferred isSeriesMedia: $isSeriesMedia');
@@ -1280,7 +1323,8 @@ Future<void> _showDownloadDebugDialog(
   r.writeln('');
   r.writeln('=== COMPARE ===');
   r.writeln('basename(localPath): ${p.basename(localPath)}');
-  r.writeln('basenameWithoutExtension: ${p.basenameWithoutExtension(localPath)}');
+  r.writeln(
+      'basenameWithoutExtension: ${p.basenameWithoutExtension(localPath)}');
 
   final text = r.toString();
   if (!context.mounted) return;
@@ -1348,7 +1392,8 @@ String? _formatBytes(int? bytes) {
   if (bytes == null || bytes <= 0) return null;
   if (bytes < 1024) return '$bytes B';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-  if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  if (bytes < 1024 * 1024 * 1024)
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }
 
@@ -1357,5 +1402,18 @@ String? _subtitleLabel(AppMediaFile file) {
   final raw = (file.subtitlePresentation ?? '').trim().toLowerCase();
   final kind = raw == 'hardsub' || raw == 'softsub' ? raw : 'sub';
   final lang = (file.subtitleLanguage ?? '').trim().toUpperCase();
-  return lang.isEmpty ? 'SUB: ${kind.toUpperCase()}' : 'SUB: ${kind.toUpperCase()} $lang';
+  return lang.isEmpty
+      ? 'SUB: ${kind.toUpperCase()}'
+      : 'SUB: ${kind.toUpperCase()} $lang';
+}
+
+String? _captionPreview(String? rawCaption) {
+  if (rawCaption == null) return null;
+  final compact = rawCaption
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
+  if (compact.isEmpty) return null;
+  return compact;
 }
