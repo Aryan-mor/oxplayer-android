@@ -631,6 +631,40 @@ class _VariantAction extends ConsumerWidget {
     );
   }
 
+  /// Info (and completed-state bug) controls — omitted in release builds.
+  List<Widget> _debugInfoSuffix(BuildContext context, {double gap = 6}) {
+    if (!kDebugMode) return const [];
+    return [
+      SizedBox(width: gap),
+      _serverInfoButton(context),
+    ];
+  }
+
+  List<Widget> _debugCompletedInfoAndBugSuffix(
+    BuildContext context,
+    String localFilePath,
+  ) {
+    if (!kDebugMode) return const [];
+    return [
+      const SizedBox(width: 6),
+      _serverInfoButton(context),
+      const SizedBox(width: 6),
+      TVButton(
+        onPressed: () => _showDownloadDebugDialog(
+          context,
+          dm: dm,
+          media: media,
+          file: file,
+          isSeriesMedia: isSeriesMedia,
+          downloadTitle: downloadTitle,
+          downloadGlobalId: downloadGlobalId,
+          localPath: localFilePath,
+        ),
+        child: const Icon(Icons.bug_report, color: Colors.orangeAccent),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return switch (state) {
@@ -641,8 +675,7 @@ class _VariantAction extends ConsumerWidget {
               onPressed: () => _startDownload(context),
               child: const Icon(Icons.download, color: Colors.white),
             ),
-            const SizedBox(width: 6),
-            _serverInfoButton(context),
+            ..._debugInfoSuffix(context),
           ],
         ),
       DownloadRecovering() => Row(
@@ -656,8 +689,7 @@ class _VariantAction extends ConsumerWidget {
                 color: AppColors.highlight,
               ),
             ),
-            const SizedBox(width: 6),
-            _serverInfoButton(context),
+            ..._debugInfoSuffix(context),
           ],
         ),
       DownloadLocating() => Row(
@@ -671,8 +703,7 @@ class _VariantAction extends ConsumerWidget {
                 color: AppColors.highlight,
               ),
             ),
-            const SizedBox(width: 6),
-            _serverInfoButton(context),
+            ..._debugInfoSuffix(context),
           ],
         ),
       DownloadUnavailable() => Row(
@@ -685,8 +716,7 @@ class _VariantAction extends ConsumerWidget {
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
             ),
-            const SizedBox(width: 8),
-            _serverInfoButton(context),
+            ..._debugInfoSuffix(context, gap: 8),
           ],
         ),
       Downloading(:final percent) => Row(
@@ -698,8 +728,7 @@ class _VariantAction extends ConsumerWidget {
               onPressed: () => dm.pauseDownload(downloadGlobalId),
               child: const Icon(Icons.pause, color: Colors.white),
             ),
-            const SizedBox(width: 6),
-            _serverInfoButton(context),
+            ..._debugInfoSuffix(context),
           ],
         ),
       DownloadPaused(:final percent) => Row(
@@ -722,8 +751,7 @@ class _VariantAction extends ConsumerWidget {
               ),
               child: const Icon(Icons.delete, color: Colors.redAccent),
             ),
-            const SizedBox(width: 6),
-            _serverInfoButton(context),
+            ..._debugInfoSuffix(context),
           ],
         ),
       DownloadCompleted(:final localFilePath) => Row(
@@ -733,24 +761,7 @@ class _VariantAction extends ConsumerWidget {
               onPressed: () => _play(context, localFilePath),
               child: const Icon(Icons.play_arrow, color: Colors.white),
             ),
-            const SizedBox(width: 6),
-            _serverInfoButton(context),
-            if (kDebugMode) ...[
-              const SizedBox(width: 6),
-              TVButton(
-                onPressed: () => _showDownloadDebugDialog(
-                  context,
-                  dm: dm,
-                  media: media,
-                  file: file,
-                  isSeriesMedia: isSeriesMedia,
-                  downloadTitle: downloadTitle,
-                  downloadGlobalId: downloadGlobalId,
-                  localPath: localFilePath,
-                ),
-                child: const Icon(Icons.bug_report, color: Colors.orangeAccent),
-              ),
-            ],
+            ..._debugCompletedInfoAndBugSuffix(context, localFilePath),
             const SizedBox(width: 6),
             TVButton(
               onPressed: () => unawaited(
@@ -771,8 +782,7 @@ class _VariantAction extends ConsumerWidget {
               onPressed: () => _startDownload(context),
               child: const Icon(Icons.refresh, color: Colors.redAccent),
             ),
-            const SizedBox(width: 6),
-            _serverInfoButton(context),
+            ..._debugInfoSuffix(context),
           ],
         ),
     };
