@@ -1,6 +1,7 @@
 name: telecima_tv
 description: TeleCima Android TV — Flutter (TDLib + media_kit + Isar).
 publish_to: "none"
+# Local/dev default. GitHub Actions release sets --build-name/--build-number to 1.0.<run_number> (see release.yml).
 version: 1.0.0+1
 
 environment:

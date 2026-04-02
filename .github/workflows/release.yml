@@ -92,13 +92,17 @@ jobs:
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/ci-release.keystore
 
+      # Must match tag_name below (v1.0.N) so PackageManager.versionName / in-app update check see the real build.
       - name: Build APK
         env:
           TELE_CIMA_RELEASE_STORE_FILE: ${{ github.workspace }}/android/app/ci-release.keystore
           TELE_CIMA_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           TELE_CIMA_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TELE_CIMA_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: flutter build apk --release --split-per-abi
+        run: |
+          flutter build apk --release --split-per-abi \
+            --build-name="1.0.${{ github.run_number }}" \
+            --build-number="${{ github.run_number }}"
 
       - name: Build AppBundle
         env:
@@ -106,7 +110,10 @@ jobs:
           TELE_CIMA_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           TELE_CIMA_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TELE_CIMA_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: flutter build appbundle --release
+        run: |
+          flutter build appbundle --release \
+            --build-name="1.0.${{ github.run_number }}" \
+            --build-number="${{ github.run_number }}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
