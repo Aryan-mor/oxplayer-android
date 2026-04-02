@@ -713,7 +713,7 @@ class _VariantRow extends ConsumerWidget {
   }
 }
 
-class _VariantAction extends ConsumerWidget {
+class _VariantAction extends ConsumerStatefulWidget {
   const _VariantAction({
     required this.dm,
     required this.state,
@@ -731,6 +731,21 @@ class _VariantAction extends ConsumerWidget {
   final bool isSeriesMedia;
   final String downloadTitle;
   final String downloadGlobalId;
+
+  @override
+  ConsumerState<_VariantAction> createState() => _VariantActionState();
+}
+
+class _VariantActionState extends ConsumerState<_VariantAction> {
+  bool _isStartingStream = false;
+
+  DownloadManager get dm => widget.dm;
+  DownloadState get state => widget.state;
+  AppMedia get media => widget.media;
+  AppMediaFile get file => widget.file;
+  bool get isSeriesMedia => widget.isSeriesMedia;
+  String get downloadTitle => widget.downloadTitle;
+  String get downloadGlobalId => widget.downloadGlobalId;
 
   Widget _serverInfoButton(BuildContext context) {
     return TVButton(
@@ -779,17 +794,47 @@ class _VariantAction extends ConsumerWidget {
     ];
   }
 
+  Future<void> _onStreamPressed(BuildContext context, WidgetRef ref) async {
+    if (_isStartingStream) return;
+    setState(() => _isStartingStream = true);
+    try {
+      await _stream(context, ref);
+    } finally {
+      if (mounted) {
+        setState(() => _isStartingStream = false);
+      }
+    }
+  }
+
+  Widget _streamButton(BuildContext context, WidgetRef ref) {
+    return TVButton(
+      enabled: !_isStartingStream,
+      onPressed: _isStartingStream
+          ? null
+          : () => unawaited(_onStreamPressed(context, ref)),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: SizedBox(
+        width: 20,
+        height: 20,
+        child: _isStartingStream
+            ? const CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.highlight,
+              )
+            : const Icon(Icons.wifi_tethering, color: AppColors.highlight),
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final r = ref;
     return switch (state) {
       DownloadIdle() => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (file.canStream)
-              TVButton(
-                onPressed: () => unawaited(_stream(context, ref)),
-                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
-              ),
+              _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
             TVButton(
               onPressed: () => _startDownload(context),
@@ -810,11 +855,7 @@ class _VariantAction extends ConsumerWidget {
               ),
             ),
             if (file.canStream) const SizedBox(width: 8),
-            if (file.canStream)
-              TVButton(
-                onPressed: () => unawaited(_stream(context, ref)),
-                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
-              ),
+            if (file.canStream) _streamButton(context, r),
             ..._debugInfoSuffix(context),
           ],
         ),
@@ -830,11 +871,7 @@ class _VariantAction extends ConsumerWidget {
               ),
             ),
             if (file.canStream) const SizedBox(width: 8),
-            if (file.canStream)
-              TVButton(
-                onPressed: () => unawaited(_stream(context, ref)),
-                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
-              ),
+            if (file.canStream) _streamButton(context, r),
             ..._debugInfoSuffix(context),
           ],
         ),
@@ -842,7 +879,7 @@ class _VariantAction extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             TVButton(
-              onPressed: () => unawaited(_showDownloadUnavailableHelp(context, ref)),
+              onPressed: () => unawaited(_showDownloadUnavailableHelp(context, r)),
               child: const Text(
                 'Not available',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -856,11 +893,7 @@ class _VariantAction extends ConsumerWidget {
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.highlight)),
             const SizedBox(width: 8),
-            if (file.canStream)
-              TVButton(
-                onPressed: () => unawaited(_stream(context, ref)),
-                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
-              ),
+            if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
             TVButton(
               onPressed: () => dm.pauseDownload(downloadGlobalId),
@@ -874,11 +907,7 @@ class _VariantAction extends ConsumerWidget {
           children: [
             Text('$percent%', style: const TextStyle(color: AppColors.textMuted)),
             const SizedBox(width: 8),
-            if (file.canStream)
-              TVButton(
-                onPressed: () => unawaited(_stream(context, ref)),
-                child: const Icon(Icons.wifi_tethering, color: AppColors.highlight),
-              ),
+            if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
             TVButton(
               onPressed: () => dm.resumeDownload(downloadGlobalId),
