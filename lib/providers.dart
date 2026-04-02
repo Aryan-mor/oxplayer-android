@@ -124,14 +124,18 @@ class _DownloadManagerNotifier extends AsyncNotifier<DownloadManager> {
   @override
   Future<DownloadManager> build() async {
     final tdlib = ref.watch(tdlibFacadeProvider);
+    final config = ref.read(appConfigProvider);
     final dm = DownloadManager(
       tdlib: tdlib,
+      indexTagForFileSearch: config.indexTag,
+      providerBotUsernameForDownloads: config.providerBotUsername.trim().isEmpty
+          ? null
+          : config.providerBotUsername,
       recoverFromBackup: (mediaFileId) async {
         final auth = ref.read(authNotifierProvider);
         final token = auth.apiAccessToken;
         if (token == null) return false;
         final api = ref.read(tvAppApiServiceProvider);
-        final config = ref.read(appConfigProvider);
         return api.recoverMediaFileFromBackup(
           config: config,
           accessToken: token,

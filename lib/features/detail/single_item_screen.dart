@@ -21,6 +21,26 @@ import '../../providers.dart';
 void _itemLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
 
+Future<void> _showDownloadUnavailableHelp(BuildContext context, WidgetRef ref) async {
+  final bot = ref.read(appConfigProvider).captionerBotUsername;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Could not locate file'),
+      content: Text(
+        'We could not find this video in Telegram or recover it from backup.\n\n'
+        'Send the media to @$bot, then run library sync in the app so it is indexed again.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
 // ─── Route args ──────────────────────────────────────────────────────────────
 
 class SingleItemArgs {
@@ -551,7 +571,7 @@ class _VariantRow extends ConsumerWidget {
   }
 }
 
-class _VariantAction extends StatelessWidget {
+class _VariantAction extends ConsumerWidget {
   const _VariantAction({
     required this.dm,
     required this.state,
@@ -584,7 +604,7 @@ class _VariantAction extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return switch (state) {
       DownloadIdle() => Row(
           mainAxisSize: MainAxisSize.min,
@@ -612,12 +632,30 @@ class _VariantAction extends StatelessWidget {
             _serverInfoButton(context),
           ],
         ),
+      DownloadLocating() => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.highlight,
+              ),
+            ),
+            const SizedBox(width: 6),
+            _serverInfoButton(context),
+          ],
+        ),
       DownloadUnavailable() => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Not available',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            TVButton(
+              onPressed: () => unawaited(_showDownloadUnavailableHelp(context, ref)),
+              child: const Text(
+                'Not available',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
             ),
             const SizedBox(width: 8),
             _serverInfoButton(context),

@@ -73,6 +73,11 @@ class DownloadRecovering extends DownloadState {
   const DownloadRecovering();
 }
 
+/// Resolving which Telegram message/file to download (before [Downloading]).
+class DownloadLocating extends DownloadState {
+  const DownloadLocating();
+}
+
 /// Telegram file missing and backup recovery failed or exhausted.
 class DownloadUnavailable extends DownloadState {
   const DownloadUnavailable();
@@ -212,10 +217,16 @@ class DownloadManager extends ChangeNotifier {
     Future<void> Function()? afterBackupRecoveryRefresh,
     Future<DownloadLocatorRefresh?> Function(String globalId, String variantId)?
         reloadLocatorAfterRecovery,
+    /// Matches captioner lines like `#tag_F_<id>` (from [AppConfig.indexTag]).
+    String? indexTagForFileSearch,
+    /// After provider [copyMessage], media lives in the user–bot private chat — not the index source.
+    String? providerBotUsernameForDownloads,
   })  : _tdlib = tdlib,
         _recoverFromBackup = recoverFromBackup,
         _afterBackupRecoveryRefresh = afterBackupRecoveryRefresh,
-        _reloadLocatorAfterRecovery = reloadLocatorAfterRecovery {
+        _reloadLocatorAfterRecovery = reloadLocatorAfterRecovery,
+        _indexTagForFileSearch = indexTagForFileSearch,
+        _providerBotUsernameForDownloads = providerBotUsernameForDownloads {
     _updateSub = tdlib.updates().listen(_onTdlibUpdate);
   }
 
@@ -224,6 +235,8 @@ class DownloadManager extends ChangeNotifier {
   final Future<void> Function()? _afterBackupRecoveryRefresh;
   final Future<DownloadLocatorRefresh?> Function(String globalId, String variantId)?
       _reloadLocatorAfterRecovery;
+  final String? _indexTagForFileSearch;
+  final String? _providerBotUsernameForDownloads;
   StreamSubscription<Map<String, dynamic>>? _updateSub;
 
   final Map<String, DownloadState> _states = {};
@@ -365,7 +378,8 @@ class DownloadManager extends ChangeNotifier {
       return;
     }
     if (_states[globalId] is Downloading ||
-        _states[globalId] is DownloadRecovering) {
+        _states[globalId] is DownloadRecovering ||
+        _states[globalId] is DownloadLocating) {
       return;
     }
 
@@ -376,7 +390,7 @@ class DownloadManager extends ChangeNotifier {
       'locatorType=$locatorType locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId',
     );
 
-    _setState(globalId, const Downloading(bytesDownloaded: 0, totalBytes: null));
+    _setState(globalId, const DownloadLocating());
 
     try {
       td.File? tdFile;
@@ -422,6 +436,27 @@ class DownloadManager extends ChangeNotifier {
         );
         if (resolved != null) {
           tdFile = resolved;
+        }
+      }
+
+      // Provider bot delivers backup copies into the user's private chat with that bot; TDLib cannot
+      // use Bot API `telegramFileId` from [file_backups] via getRemoteFile.
+      if (tdFile == null &&
+          (_providerBotUsernameForDownloads ?? '').trim().isNotEmpty &&
+          mediaFileId != null &&
+          mediaFileId.isNotEmpty) {
+        final providerChatId =
+            await _resolveBotPrivateChatId(_providerBotUsernameForDownloads!.trim());
+        if (providerChatId != null) {
+          _dmglog(
+            'DownloadManager: trying provider private chat for mediaFileId=$mediaFileId '
+            '(recover / copyMessage deliveries)',
+          );
+          final resolved = await _resolveFileFromSourceChat(
+            sourceChatId: providerChatId,
+            mediaFileId: mediaFileId,
+          );
+          if (resolved != null) tdFile = resolved;
         }
       }
 
@@ -475,6 +510,14 @@ class DownloadManager extends ChangeNotifier {
       if (tdFile == null) {
         throw Exception('File metadata missing; cannot identify file to download.');
       }
+
+      _setState(
+        globalId,
+        Downloading(
+          bytesDownloaded: tdFile.local.downloadedSize,
+          totalBytes: fileSize ?? (tdFile.expectedSize > 0 ? tdFile.expectedSize : null),
+        ),
+      );
 
       final ext = _extensionFromMime(mimeType) ??
           _extensionFromFileName(tdFile.local.path) ??
@@ -633,7 +676,22 @@ class DownloadManager extends ChangeNotifier {
     try {
       final msgObj = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: messageId));
       if (msgObj is! td.Message) return null;
-      final file = _extractFileFromMessage(msgObj);
+      var file = _extractFileFromMessage(msgObj);
+      if (file == null && msgObj.replyTo is td.MessageReplyToMessage) {
+        final replyToId = (msgObj.replyTo as td.MessageReplyToMessage).messageId;
+        try {
+          final repliedObj =
+              await _tdlib.send(td.GetMessage(chatId: chatId, messageId: replyToId));
+          if (repliedObj is td.Message) {
+            file = _extractFileFromMessage(repliedObj);
+          }
+        } on td.TdError catch (e) {
+          _dmglog(
+            'DownloadManager: GetMessage(replyTo from locator) failed chatId=$chatId '
+            'messageId=$replyToId code=${e.code}',
+          );
+        }
+      }
       if (file != null) {
         _dmglog(
           'DownloadManager: locator chat_message resolved chatId=$chatId messageId=$messageId fileId=${file.id}',
@@ -648,6 +706,42 @@ class DownloadManager extends ChangeNotifier {
       );
       return null;
     }
+  }
+
+  /// Caption / text that may contain `#tag_F_<mediaFileId>` (indexer convention).
+  String _flattenMessageCaptionAndText(td.Message msg) {
+    final parts = <String>[];
+    switch (msg.content) {
+      case td.MessageText t:
+        parts.add(t.text.text);
+      case td.MessageVideo v:
+        parts.add(v.caption.text);
+      case td.MessageDocument d:
+        parts.add(d.caption.text);
+      case td.MessageAnimation a:
+        parts.add(a.caption.text);
+      default:
+        break;
+    }
+    return parts.join('\n');
+  }
+
+  bool _messageReferencesMediaFileId(td.Message msg, String mediaFileId) {
+    final haystack = _flattenMessageCaptionAndText(msg);
+    if (haystack.isEmpty) return false;
+    final escaped = RegExp.escape(mediaFileId);
+    return RegExp('_F_$escaped(?!\\d)').hasMatch(haystack);
+  }
+
+  List<String> _searchQueriesForMediaFileId(String mediaFileId) {
+    final q = <String>['_F_$mediaFileId'];
+    final tag = (_indexTagForFileSearch ?? '').trim();
+    if (tag.isNotEmpty) {
+      final withHash = tag.startsWith('#') ? tag : '#$tag';
+      q.add('${withHash}_F_$mediaFileId');
+    }
+    q.add(mediaFileId);
+    return q;
   }
 
   Future<int?> _resolveBotPrivateChatId(String botUsername) async {
@@ -672,33 +766,42 @@ class DownloadManager extends ChangeNotifier {
     _dmglog(
       'DownloadManager: resolving source message chatId=$sourceChatId mediaFileId=$mediaFileId',
     );
-    final result = await _tdlib.send(
-      td.SearchChatMessages(
-        chatId: sourceChatId,
-        query: mediaFileId,
-        senderId: null,
-        filter: null,
-        messageThreadId: 0,
-        fromMessageId: 0,
-        offset: 0,
-        limit: 20,
-      ),
-    );
+    final queries = _searchQueriesForMediaFileId(mediaFileId);
+    final seenMessageIds = <int>{};
 
-    final messages = <td.Message>[];
-    if (result is td.FoundChatMessages) {
-      messages.addAll(result.messages);
-    } else if (result is td.Messages) {
-      messages.addAll(result.messages);
-    }
+    for (final query in queries) {
+      _dmglog('DownloadManager: SearchChatMessages query="$query"');
+      final result = await _tdlib.send(
+        td.SearchChatMessages(
+          chatId: sourceChatId,
+          query: query,
+          senderId: null,
+          filter: null,
+          messageThreadId: 0,
+          fromMessageId: 0,
+          offset: 0,
+          limit: 20,
+        ),
+      );
 
-    for (final msg in messages) {
-      final file = _extractFileFromMessage(msg);
-      if (file != null) {
-        _dmglog(
-          'DownloadManager: source message resolved messageId=${msg.id} fileId=${file.id}',
-        );
-        return file;
+      final messages = <td.Message>[];
+      if (result is td.FoundChatMessages) {
+        messages.addAll(result.messages);
+      } else if (result is td.Messages) {
+        messages.addAll(result.messages);
+      }
+
+      for (final msg in messages) {
+        if (seenMessageIds.contains(msg.id)) continue;
+        if (!_messageReferencesMediaFileId(msg, mediaFileId)) continue;
+        seenMessageIds.add(msg.id);
+        final file = _extractFileFromMessage(msg);
+        if (file != null) {
+          _dmglog(
+            'DownloadManager: source message resolved messageId=${msg.id} fileId=${file.id} query="$query"',
+          );
+          return file;
+        }
       }
     }
 

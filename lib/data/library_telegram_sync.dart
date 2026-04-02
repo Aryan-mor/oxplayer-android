@@ -70,6 +70,7 @@ Future<void> runTelegramLibrarySync({
     },
   );
 
+  await DiscoveryRefsStore.pruneLegacyUuidKeys();
   final persistedRefs = await DiscoveryRefsStore.loadAll();
   if (persistedRefs.isEmpty) {
     _synclog('LibrarySync: discovery store empty, sync skipped');

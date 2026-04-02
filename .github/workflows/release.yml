@@ -44,6 +44,7 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || vars.TELEGRAM_API_HASH }}
           INDEX_TAG: ${{ vars.INDEX_TAG }}
           BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+          CAPTIONER_BOT_USERNAME: ${{ vars.CAPTIONER_BOT_USERNAME }}
           PROVIDER_BOT_USERNAME: ${{ vars.PROVIDER_BOT_USERNAME }}
           REQUIRED_CHANNEL_USERNAME: ${{ vars.REQUIRED_CHANNEL_USERNAME }}
           TV_APP_API_BASE_URL: ${{ vars.TV_APP_API_BASE_URL }}
@@ -61,6 +62,9 @@ jobs:
               printf 'TELEGRAM_API_HASH=%s\n' "$TELEGRAM_API_HASH"
               printf 'INDEX_TAG="%s"\n' "$INDEX_VAL"
               printf 'BOT_USERNAME=%s\n' "$BOT_USERNAME"
+              if [ -n "$CAPTIONER_BOT_USERNAME" ]; then
+                printf 'CAPTIONER_BOT_USERNAME=%s\n' "$CAPTIONER_BOT_USERNAME"
+              fi
               printf 'PROVIDER_BOT_USERNAME=%s\n' "$PROVIDER_BOT_USERNAME"
               printf 'REQUIRED_CHANNEL_USERNAME=%s\n' "$REQUIRED_CHANNEL_USERNAME"
               printf 'TV_APP_API_BASE_URL=%s\n' "$TV_APP_API_BASE_URL"

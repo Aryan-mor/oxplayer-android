@@ -387,7 +387,7 @@ class TvAppApiService {
       for (final msg in batch.messages) {
         if (byMediaFileId.length >= _kMaxSyncDiscoverItems) break;
         final text = _extractText(msg);
-        final mediaFileId = _extractMediaFileId(text);
+        final mediaFileId = _extractMediaFileId(text, config.indexTag);
         if (mediaFileId == null) continue;
         final telegramFileId = await _resolveTelegramFileId(tdlib, msg);
         var fileSizeBytes =
@@ -542,14 +542,25 @@ class TvAppApiService {
     return '';
   }
 
-  String? _extractMediaFileId(String text) {
+  static final RegExp _legacyMediaFileIdPattern = RegExp(
+    r'MediaFileID:\s*(?:<code>)?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})',
+    caseSensitive: false,
+  );
+
+  String? _extractMediaFileId(String text, String indexTag) {
     if (text.isEmpty) return null;
-    final pattern = RegExp(
-      r'MediaFileID:\s*(?:<code>)?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})',
+    final taggedNumeric = RegExp(
+      '${RegExp.escape(indexTag)}_F_(\\d{1,19})',
       caseSensitive: false,
-    );
-    final match = pattern.firstMatch(text);
-    return match?.group(1);
+    ).firstMatch(text);
+    if (taggedNumeric != null) return taggedNumeric.group(1);
+    final legacy = _legacyMediaFileIdPattern.firstMatch(text)?.group(1);
+    if (legacy != null) return legacy;
+    final taggedUuid = RegExp(
+      '${RegExp.escape(indexTag)}_F_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})',
+      caseSensitive: false,
+    ).firstMatch(text);
+    return taggedUuid?.group(1);
   }
 
   String? _extractTelegramFileId(td.Message msg) {

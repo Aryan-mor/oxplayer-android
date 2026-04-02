@@ -5,12 +5,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'tv_app_api_service.dart';
 
 /// Persists [DiscoveredMediaRef] from successful Telegram searches so we can
-/// call [/me/sync] again after incremental [minDate] returns zero hits — otherwise
-/// [user_file_locators] are never upserted and downloads stay broken.
+/// call [/me/sync] again after incremental [minDate] returns zero hits — so the
+/// API still receives [refs] (caption, file id, chat/message) for ingest and backups.
 class DiscoveryRefsStore {
   DiscoveryRefsStore._();
 
   static const _prefsKey = 'telecima.discovery_refs_v1';
+
+  /// Matches server [DECIMAL_ID_REGEX] / Prisma [MediaFile.id] (BIGINT).
+  static final _numericMediaFileId = RegExp(r'^\d{1,19}$');
+
+  /// Removes persisted entries keyed by legacy UUIDs (pre-BIGINT migration).
+  static Future<void> pruneLegacyUuidKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    final map = await _loadMap(prefs);
+    map.removeWhere((key, _) => !_numericMediaFileId.hasMatch(key.trim()));
+    await prefs.setString(_prefsKey, jsonEncode(map));
+  }
 
   static Future<void> merge(List<DiscoveredMediaRef> batch) async {
     if (batch.isEmpty) return;
