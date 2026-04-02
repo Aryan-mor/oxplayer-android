@@ -1,0 +1,46 @@
+---
+description: TV-first Flutter app — D-pad, focus, and leanback UX for tele-cima tv-app
+globs: tv-app/**/*.dart
+alwaysApply: false
+---
+
+# TV-first development (TeleCima `tv-app`)
+
+This project targets **Android TV / leanback-style** usage. Treat **remote control (D-pad)** as the primary input, not touch or mouse.
+
+## Input and navigation
+
+- Design every interactive screen for **directional navigation**: up / down / left / right, **Select / OK / Enter**, and **Back**.
+- **Do not rely on hover, scroll wheels, or precise touch** for core flows. Clicks are optional; focus must drive the UI.
+- Use explicit **`FocusNode`s** and **`FocusScope`** where there are distinct regions (e.g. sidebar vs content grid). Document debug labels on nodes when helpful.
+- **Arrow-right / arrow-left** often should move focus between major panes (e.g. sidebar ↔ grid). Handle this in `onKeyEvent` on `TVButton` / `Focus` widgets and return `KeyEventResult.handled` when consumed.
+- Map **Back** with `PopScope` / `WillPopScope` patterns where appropriate (e.g. double-back to exit, or return focus before popping).
+
+## Focus visibility and affordance
+
+- **Focused elements must be obvious at a distance** (10-foot UI): scale, border, glow, or shadow — follow existing `TVButton` patterns.
+- Maintain **readable contrast** and **large enough hit areas** (think ≥ 48dp effective targets; padding on `TVButton` already helps).
+- **Autofocus** should land on the primary action for the screen (e.g. sync on home), not on decorative text.
+
+## Lists and scrolling
+
+- Long lists must stay usable with the remote: **`ListView` / `CustomScrollView` / `GridView`** with a **`ScrollController`** where programmatic scroll is needed.
+- When focus moves to an item that may be off-screen, use **`Scrollable.ensureVisible`** (often from `addPostFrameCallback` on focus gain) so the focused row stays in view.
+- Prefer **`primary: false`** on nested vertical scroll views inside a `Column`.
+- Use a **visible scrollbar** (`Scrollbar` with `thumbVisibility: true`) when content scrolls, so users see there is more content.
+
+## Layout and TV safe areas
+
+- Respect **overscan**: avoid placing critical focus indicators or labels flush against screen edges; keep consistent padding like the rest of the app.
+- **Landscape, large type, and clear section hierarchy** matter more than dense mobile layouts.
+
+## Performance
+
+- Use lazy builders (`ListView.builder`, `SliverList`, `GridView.builder`) for large collections; tune **`cacheExtent`** where posters or heavy children benefit.
+
+## What to avoid
+
+- Mobile-first patterns as the default: bottom sheets driven only by swipe, small touch-only targets, hover-only menus.
+- Assuming **Material ripple** alone indicates focus — TV needs **keyboard/focus** styling.
+
+When adding new screens or controls, **test mentally with D-pad**: tab order, wrap-around, and what happens on Back.

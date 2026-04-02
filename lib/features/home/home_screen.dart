@@ -411,22 +411,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         Container(
                           width: 44,
                           height: 44,
+                          clipBehavior: Clip.antiAlias,
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: AppColors.border),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                AppColors.highlight.withValues(alpha: 0.35),
-                                AppColors.highlight.withValues(alpha: 0.08),
-                              ],
-                            ),
+                            color: AppColors.highlight.withValues(alpha: 0.12),
                           ),
-                          child: const Icon(
-                            Icons.live_tv_rounded,
-                            color: Colors.white,
-                            size: 26,
+                          child: Image.asset(
+                            'assets/icon.png',
+                            width: 44,
+                            height: 44,
+                            fit: BoxFit.cover,
+                            filterQuality: FilterQuality.high,
                           ),
                         ),
                         const SizedBox(width: 14),

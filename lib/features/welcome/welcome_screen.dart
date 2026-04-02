@@ -427,6 +427,13 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    Image.asset(
+                      'assets/icon.png',
+                      width: 88,
+                      height: 88,
+                      filterQuality: FilterQuality.high,
+                    ),
+                    const SizedBox(height: 16),
                     const Text(
                       'TeleCima',
                       style:

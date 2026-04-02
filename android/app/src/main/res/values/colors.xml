@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches app / icon mood; used for TV banner & splash behind launcher art -->
+    <color name="telecima_brand_surface">#141428</color>
+</resources>
