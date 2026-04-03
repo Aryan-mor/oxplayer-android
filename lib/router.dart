@@ -28,6 +28,9 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       final path = state.uri.path;
       if (auth.isLoggedIn && path == '/welcome') return '/';
       if (!auth.isLoggedIn && path != '/welcome') return '/welcome';
+      if (auth.isLoggedIn && path == '/explore' && !auth.canAccessExplore) {
+        return '/';
+      }
       return null;
     },
     routes: [

@@ -6,6 +6,7 @@ import '../../data/local/telegram_session_store.dart' as session_store;
 const kSessionKey = 'TELEGRAM_SESSION';
 const kApiAccessTokenKey = 'TV_APP_API_ACCESS_TOKEN';
 const kPreferredSubtitleLanguageKey = 'TV_APP_PREFERRED_SUBTITLE_LANGUAGE';
+const kUserTypeKey = 'TV_APP_USER_TYPE';
 
 /// Minimal session gate (parity with `localStorage` in `tv-app-old`).
 class AuthNotifier extends ChangeNotifier {
@@ -17,6 +18,8 @@ class AuthNotifier extends ChangeNotifier {
   String? _session;
   String? _apiAccessToken;
   String? _preferredSubtitleLanguage;
+  /// Server [UserType]: DEFAULT, ADMIN, VIP (uppercase).
+  String? _userType;
 
   bool get ready => _ready;
   String? get session => _session;
@@ -34,12 +37,20 @@ class AuthNotifier extends ChangeNotifier {
   bool get hasApiAccessToken => (_apiAccessToken ?? '').isNotEmpty;
   bool get isLoggedIn => hasTelegramSession && hasApiAccessToken;
 
+  /// Full catalog / explore APIs (ADMIN and VIP only).
+  bool get canAccessExplore {
+    final t = _userType?.trim().toUpperCase();
+    return t == 'ADMIN' || t == 'VIP';
+  }
+
   Future<void> hydrate() async {
     final prefs = await SharedPreferences.getInstance();
     _session = prefs.getString(kSessionKey);
     // Always force fresh server verification on each app launch.
     await prefs.remove(kApiAccessTokenKey);
+    await prefs.remove(kUserTypeKey);
     _apiAccessToken = null;
+    _userType = null;
     final subLang = prefs.getString(kPreferredSubtitleLanguageKey)?.trim();
     _preferredSubtitleLanguage =
         (subLang != null && subLang.isNotEmpty) ? subLang : null;
@@ -59,9 +70,11 @@ class AuthNotifier extends ChangeNotifier {
     await prefs.remove(kSessionKey);
     await prefs.remove(kApiAccessTokenKey);
     await prefs.remove(kPreferredSubtitleLanguageKey);
+    await prefs.remove(kUserTypeKey);
     _session = null;
     _apiAccessToken = null;
     _preferredSubtitleLanguage = null;
+    _userType = null;
     notifyListeners();
   }
 
@@ -75,7 +88,9 @@ class AuthNotifier extends ChangeNotifier {
   Future<void> clearApiAccessToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(kApiAccessTokenKey);
+    await prefs.remove(kUserTypeKey);
     _apiAccessToken = null;
+    _userType = null;
     notifyListeners();
   }
 
@@ -110,6 +125,17 @@ class AuthNotifier extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kPreferredSubtitleLanguageKey, v);
     _preferredSubtitleLanguage = v;
+    notifyListeners();
+  }
+
+  /// Persists role from POST [/auth/telegram] `user.userType` (DEFAULT | ADMIN | VIP).
+  Future<void> syncUserTypeFromServer(String? serverValue) async {
+    final raw = serverValue?.trim();
+    final normalized =
+        (raw == null || raw.isEmpty) ? 'DEFAULT' : raw.toUpperCase();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(kUserTypeKey, normalized);
+    _userType = normalized;
     notifyListeners();
   }
 }

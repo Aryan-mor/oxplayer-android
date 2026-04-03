@@ -175,6 +175,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
       await authNotifier.syncPreferredSubtitleLanguageFromServer(
         authResult.preferredSubtitleLanguage,
       );
+      await authNotifier.syncUserTypeFromServer(authResult.userType);
       if (!mounted) return;
       context.go('/');
     } catch (e) {

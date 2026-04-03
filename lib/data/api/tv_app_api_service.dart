@@ -16,10 +16,13 @@ class TelegramAuthResult {
   const TelegramAuthResult({
     required this.accessToken,
     this.preferredSubtitleLanguage,
+    this.userType,
   });
 
   final String accessToken;
   final String? preferredSubtitleLanguage;
+  /// DEFAULT, ADMIN, or VIP from API `user.userType`.
+  final String? userType;
 }
 
 class LibrarySourceFilterRow {
@@ -294,18 +297,22 @@ class TvAppApiService {
       throw StateError('API did not return accessToken');
     }
     String? prefLang;
+    String? userType;
     final userRaw = response.data?['user'];
     if (userRaw is Map) {
       final p = userRaw['preferredSubtitleLanguage']?.toString().trim();
       prefLang = (p != null && p.isNotEmpty) ? p : null;
+      final ut = userRaw['userType']?.toString().trim();
+      userType = (ut != null && ut.isNotEmpty) ? ut : null;
     }
     _apilog(
       'API auth success: tokenLength=${accessToken.length} '
-      'preferredSubtitleLanguage=${prefLang ?? '(null)'}',
+      'preferredSubtitleLanguage=${prefLang ?? '(null)'} userType=${userType ?? '(null)'}',
     );
     return TelegramAuthResult(
       accessToken: accessToken,
       preferredSubtitleLanguage: prefLang,
+      userType: userType,
     );
   }
 

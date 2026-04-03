@@ -123,6 +123,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     await auth.syncPreferredSubtitleLanguageFromServer(
       authResult.preferredSubtitleLanguage,
     );
+    await auth.syncUserTypeFromServer(authResult.userType);
     _homeLog(
       'HomeScreen: API token saved (len=${authResult.accessToken.length})',
     );
@@ -362,6 +363,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final sources = ref.watch(sourceFilterOptionsProvider);
     final selectedType = ref.watch(selectedTypeFilterProvider);
     final selectedSource = ref.watch(selectedSourceFilterProvider);
+    final canExplore = ref.watch(authNotifierProvider).canAccessExplore;
     if (selectedSource != null && !sources.any((s) => s.id == selectedSource)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ref.read(selectedSourceFilterProvider.notifier).state = null;
@@ -543,46 +545,48 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const _SidebarSectionLabel('Explore'),
-                                  const SizedBox(height: 10),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: TVButton(
-                                      focusNode: _exploreFocusNode,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 14,
-                                      ),
-                                      onKeyEvent: (_, event) {
-                                        if (_isRight(event)) {
-                                          _focusGridFromSidebar();
-                                          return KeyEventResult.handled;
-                                        }
-                                        return KeyEventResult.ignored;
-                                      },
-                                      onPressed: () => context.push('/explore'),
-                                      child: const Row(
-                                        children: [
-                                          Icon(
-                                            Icons.explore_rounded,
-                                            color: Colors.white,
-                                          ),
-                                          SizedBox(width: 12),
-                                          Expanded(
-                                            child: Text(
-                                              'Browse catalog',
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                fontSize: 15,
-                                                fontWeight: FontWeight.w500,
+                                  if (canExplore) ...[
+                                    const _SidebarSectionLabel('Explore'),
+                                    const SizedBox(height: 10),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: TVButton(
+                                        focusNode: _exploreFocusNode,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 14,
+                                        ),
+                                        onKeyEvent: (_, event) {
+                                          if (_isRight(event)) {
+                                            _focusGridFromSidebar();
+                                            return KeyEventResult.handled;
+                                          }
+                                          return KeyEventResult.ignored;
+                                        },
+                                        onPressed: () => context.push('/explore'),
+                                        child: const Row(
+                                          children: [
+                                            Icon(
+                                              Icons.explore_rounded,
+                                              color: Colors.white,
+                                            ),
+                                            SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                'Browse catalog',
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
                                               ),
                                             ),
-                                          ),
-                                        ],
+                                          ],
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 20),
+                                    const SizedBox(height: 20),
+                                  ],
                                   const _SidebarSectionLabel(
                                     'Browse by type',
                                   ),

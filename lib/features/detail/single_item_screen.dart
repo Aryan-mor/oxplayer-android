@@ -122,7 +122,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
 
     final auth = ref.read(authNotifierProvider);
     final token = auth.apiAccessToken;
-    if (token != null && token.isNotEmpty) {
+    if (auth.canAccessExplore && token != null && token.isNotEmpty) {
       try {
         final config = ref.read(appConfigProvider);
         final api = ref.read(tvAppApiServiceProvider);
@@ -173,6 +173,8 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
 
     final item = agg.media;
     final isSeries = item.type == 'SERIES' || item.type == '#series';
+    final exploreGenreLinksEnabled =
+        ref.watch(authNotifierProvider).canAccessExplore;
 
     // Simple backdrop resolution wrapper to preserve API layout
     String? resolvePosterUrl(String? posterPath) {
@@ -216,7 +218,11 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
               children: [
                 _PosterPanel(aggregate: agg),
                 Expanded(
-                  child: _DetailsPanel(aggregate: agg, isSeries: isSeries),
+                  child: _DetailsPanel(
+                    aggregate: agg,
+                    isSeries: isSeries,
+                    exploreGenreLinksEnabled: exploreGenreLinksEnabled,
+                  ),
                 ),
               ],
             ),
@@ -394,10 +400,15 @@ class _OverviewSectionState extends State<_OverviewSection> {
 }
 
 class _DetailsPanel extends StatelessWidget {
-  const _DetailsPanel({required this.aggregate, required this.isSeries});
+  const _DetailsPanel({
+    required this.aggregate,
+    required this.isSeries,
+    required this.exploreGenreLinksEnabled,
+  });
 
   final AppMediaAggregate aggregate;
   final bool isSeries;
+  final bool exploreGenreLinksEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -457,6 +468,9 @@ class _DetailsPanel extends StatelessWidget {
                           separatorBuilder: (_, __) => const SizedBox(width: 8),
                           itemBuilder: (ctx, i) {
                             final g = item.genres[i];
+                            if (!exploreGenreLinksEnabled) {
+                              return _chip(g.title);
+                            }
                             return TVButton(
                               onPressed: () {
                                 context.push(
