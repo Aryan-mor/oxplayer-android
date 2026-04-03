@@ -7,18 +7,42 @@ import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.storage.StorageManager
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : FlutterActivity() {
 
     companion object {
+        private val handoffMainActivityRef = AtomicReference<MainActivity?>(null)
+
+        fun registerMainActivityForHandoff(activity: MainActivity) {
+            handoffMainActivityRef.set(activity)
+        }
+
+        fun unregisterMainActivityForHandoff(activity: MainActivity) {
+            handoffMainActivityRef.compareAndSet(activity, null)
+        }
+
+        /**
+         * Delivers [UserPreferenceHandoff] to Flutter when the engine lives in a paused [MainActivity]
+         * (e.g. user returned to [InternalPlayerActivity] without [MainActivity.onResume]).
+         */
+        fun flushUserPreferenceHandoffsIfPossible() {
+            val main = handoffMainActivityRef.get() ?: return
+            UserPreferenceHandoff.flushPendingToFlutter(main.flutterEngine)
+        }
+
         private const val CHANNEL_PLAYER = "telecima/external_player"
         private const val CHANNEL_INTERNAL_PLAYER = "telecima/internal_player"
+        private const val CHANNEL_PLAYBACK_HANDOFF = "telecima/playback_handoff"
+        private const val CHANNEL_USER_PREFS = "telecima/user_prefs"
         private const val CHANNEL_MEDIA = "telecima/media_utils"
         private const val CHANNEL_APP = "telecima/app_info"
         private const val CHANNEL_STORAGE = "telecima/storage_space"
@@ -33,6 +57,16 @@ class MainActivity : FlutterActivity() {
                 // Dart init will surface a clearer error if the ABI folder is missing.
             }
         }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        registerMainActivityForHandoff(this)
+    }
+
+    override fun onDestroy() {
+        unregisterMainActivityForHandoff(this)
+        super.onDestroy()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -258,6 +292,7 @@ class MainActivity : FlutterActivity() {
                                 Intent(this, InternalPlayerActivity::class.java).apply {
                                     putExtra(InternalPlayerActivity.EXTRA_STREAM_URL, url)
                                     putExtra(InternalPlayerActivity.EXTRA_TITLE, title)
+                                    applyInternalPlayerMetadataFrom(call)
                                 },
                             )
                             result.success(true)
@@ -283,6 +318,7 @@ class MainActivity : FlutterActivity() {
                                 Intent(this, InternalPlayerActivity::class.java).apply {
                                     putExtra(InternalPlayerActivity.EXTRA_LOCAL_PATH, path)
                                     putExtra(InternalPlayerActivity.EXTRA_TITLE, title)
+                                    applyInternalPlayerMetadataFrom(call)
                                 },
                             )
                             result.success(true)
@@ -336,6 +372,37 @@ class MainActivity : FlutterActivity() {
             }
     }
 
+    override fun onResume() {
+        super.onResume()
+        flushPlaybackHandoffToFlutter()
+        flushUserPreferenceHandoffToFlutter()
+    }
+
+    private fun flushPlaybackHandoffToFlutter() {
+        val pending = ExternalPlaybackHandoff.takePending() ?: return
+        val engine = flutterEngine ?: return
+        MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL_PLAYBACK_HANDOFF).invokeMethod(
+            "onHandoff",
+            pending,
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {}
+
+                override fun error(
+                    errorCode: String,
+                    errorMessage: String?,
+                    errorDetails: Any?,
+                ) {
+                }
+
+                override fun notImplemented() {}
+            },
+        )
+    }
+
+    private fun flushUserPreferenceHandoffToFlutter() {
+        UserPreferenceHandoff.flushPendingToFlutter(flutterEngine)
+    }
+
     private fun usableSpaceBytes(path: File): Long = try {
         if (!path.exists()) 0L else path.usableSpace
     } catch (_: Exception) {
@@ -387,5 +454,36 @@ class MainActivity : FlutterActivity() {
             }
         }
         return best
+    }
+}
+
+private fun Intent.applyInternalPlayerMetadataFrom(call: MethodCall) {
+    call.argument<String>("mediaTitle")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_MEDIA_TITLE, it)
+    }
+    call.argument<Int>("releaseYear")?.let { putExtra(InternalPlayerActivity.EXTRA_RELEASE_YEAR, it) }
+    call.argument<Int>("season")?.let { putExtra(InternalPlayerActivity.EXTRA_SEASON, it) }
+    call.argument<Int>("episode")?.let { putExtra(InternalPlayerActivity.EXTRA_EPISODE, it) }
+    putExtra(InternalPlayerActivity.EXTRA_IS_SERIES, call.argument<Boolean>("isSeries") ?: false)
+    call.argument<String>("imdbId")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_IMDB_ID, it)
+    }
+    call.argument<String>("tmdbId")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_TMDB_ID, it)
+    }
+    call.argument<String>("subdlApiKey")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_SUBDL_API_KEY, it)
+    }
+    call.argument<String>("metadataSubtitle")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_METADATA_SUBTITLE, it)
+    }
+    call.argument<String>("preferredSubtitleLanguage")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_PREFERRED_SUBTITLE_LANGUAGE, it)
+    }
+    call.argument<String>("apiAccessToken")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_API_ACCESS_TOKEN, it)
+    }
+    call.argument<String>("apiBaseUrl")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        putExtra(InternalPlayerActivity.EXTRA_API_BASE_URL, it)
     }
 }

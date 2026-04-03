@@ -30,12 +30,34 @@
         android:labelFor="@id/subdl_search_language"
         android:text="@string/internal_player_label_language" />
 
+    <LinearLayout
+        android:id="@+id/subdl_language_loading_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+      <ProgressBar
+          style="?android:attr/progressBarStyleSmall"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:indeterminate="true" />
+
+      <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_marginStart="8dp"
+          android:text="@string/internal_player_loading_languages" />
+    </LinearLayout>
+
     <Spinner
         android:id="@+id/subdl_search_language"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="12dp"
-        android:focusable="true" />
+        android:focusable="true"
+        android:visibility="gone" />
 
     <TextView
         android:layout_width="match_parent"
@@ -64,12 +86,5 @@
         android:layout_marginBottom="16dp"
         android:inputType="number"
         android:importantForAutofill="no" />
-
-    <Button
-        android:id="@+id/subdl_search_check"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:focusable="true"
-        android:text="@string/internal_player_check" />
   </LinearLayout>
 </ScrollView>

@@ -168,9 +168,13 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
       final tdlib = ref.read(tdlibFacadeProvider);
       await tdlib.ensureAuthorized();
       final api = ref.read(tvAppApiServiceProvider);
-      final accessToken =
+      final authResult =
           await api.authenticateWithTelegram(tdlib: tdlib, config: config);
-      await ref.read(authNotifierProvider).setApiAccessToken(accessToken);
+      final authNotifier = ref.read(authNotifierProvider);
+      await authNotifier.setApiAccessToken(authResult.accessToken);
+      await authNotifier.syncPreferredSubtitleLanguageFromServer(
+        authResult.preferredSubtitleLanguage,
+      );
       if (!mounted) return;
       context.go('/');
     } catch (e) {

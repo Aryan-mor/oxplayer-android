@@ -117,11 +117,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final tdlib = ref.read(tdlibFacadeProvider);
     final api = ref.read(tvAppApiServiceProvider);
     _homeLog('HomeScreen: requesting fresh API access token');
-    final accessToken =
+    final authResult =
         await api.authenticateWithTelegram(tdlib: tdlib, config: config);
-    await auth.setApiAccessToken(accessToken);
-    _homeLog('HomeScreen: API token saved (len=${accessToken.length})');
-    return accessToken;
+    await auth.setApiAccessToken(authResult.accessToken);
+    await auth.syncPreferredSubtitleLanguageFromServer(
+      authResult.preferredSubtitleLanguage,
+    );
+    _homeLog(
+      'HomeScreen: API token saved (len=${authResult.accessToken.length})',
+    );
+    return authResult.accessToken;
   }
 
   bool _isUnauthorized(DioException e) {

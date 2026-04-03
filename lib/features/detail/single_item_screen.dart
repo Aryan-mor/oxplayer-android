@@ -17,11 +17,8 @@ import '../../core/theme/tv_button.dart';
 import '../../core/tv/tv_expandable_section.dart';
 import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
-import '../../player/external_player.dart';
 import '../../player/internal_player.dart';
-import '../../player/playback_surface_dialog.dart';
 import '../../player/telegram_range_playback.dart';
-import '../../player/vlc_install_prompt.dart';
 import '../../providers.dart';
 
 void _itemLog(String m) =>
@@ -1105,41 +1102,28 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
   }
 
   Future<void> _play(BuildContext context, String path) async {
-    final surface = await showPlaybackSurfacePicker(
-      context,
-      kind: PlaybackSurfaceKind.localFile,
-    );
-    if (!context.mounted || surface == null) return;
-
-    if (surface == PlaybackSurface.internal) {
-      final ok = await InternalPlayer.playLocalFile(
-        path: path,
-        title: downloadTitle,
-      );
-      if (!ok && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open internal player.')),
-        );
-      }
-      return;
-    }
-
-    final proceed = await ensureVlcOrProceedToExternalPlayer(context);
-    if (!proceed || !context.mounted) return;
-    await ExternalPlayer.injectMetadata(
+    if (!context.mounted) return;
+    final cfg = ref.read(appConfigProvider);
+    final auth = ref.read(authNotifierProvider);
+    final ok = await InternalPlayer.playLocalFile(
       path: path,
       title: downloadTitle,
-      year: media.releaseYear?.toString() ?? '',
       mediaTitle: media.title,
-      displayTitle: downloadTitle,
-      subtitle: _seasonEpisodeLine(isSeriesMedia, file),
+      releaseYear: media.releaseYear,
+      season: file.season,
+      episode: file.episode,
       isSeries: isSeriesMedia,
+      imdbId: media.imdbId,
+      tmdbId: media.tmdbId,
+      subdlApiKey: cfg.subdlApiKey,
+      metadataSubtitle: _seasonEpisodeLine(isSeriesMedia, file),
+      preferredSubtitleLanguage: auth.preferredSubtitleLanguage,
+      apiAccessToken: auth.apiAccessToken,
+      apiBaseUrl: cfg.tvAppApiBaseUrl,
     );
-    final launched =
-        await ExternalPlayer.launchVideo(path: path, title: downloadTitle);
-    if (!launched && context.mounted) {
+    if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No player found.')),
+        const SnackBar(content: Text('Could not open internal player.')),
       );
     }
   }
@@ -1247,35 +1231,25 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
     }
     if (!context.mounted) return;
 
-    final surface = await showPlaybackSurfacePicker(
-      context,
-      kind: PlaybackSurfaceKind.stream,
-    );
-    if (!context.mounted || surface == null) return;
-
-    if (surface == PlaybackSurface.internal) {
-      final ok = await InternalPlayer.playHttpUrl(
-        url: url.toString(),
-        title: downloadTitle,
-      );
-      if (!ok && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open internal player.')),
-        );
-      }
-      return;
-    }
-
-    final streamOk = await ensureVlcOrProceedToExternalPlayer(context);
-    if (!streamOk || !context.mounted) return;
-    final launched = await ExternalPlayer.launchStreamUrl(
+    final ok = await InternalPlayer.playHttpUrl(
       url: url.toString(),
       title: downloadTitle,
-      mimeType: 'video/*',
+      mediaTitle: media.title,
+      releaseYear: media.releaseYear,
+      season: file.season,
+      episode: file.episode,
+      isSeries: isSeriesMedia,
+      imdbId: media.imdbId,
+      tmdbId: media.tmdbId,
+      subdlApiKey: cfg.subdlApiKey,
+      metadataSubtitle: _seasonEpisodeLine(isSeriesMedia, file),
+      preferredSubtitleLanguage: auth.preferredSubtitleLanguage,
+      apiAccessToken: auth.apiAccessToken,
+      apiBaseUrl: cfg.tvAppApiBaseUrl,
     );
-    if (!launched && context.mounted) {
+    if (!ok && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No player found.')),
+        const SnackBar(content: Text('Could not open internal player.')),
       );
     }
   }

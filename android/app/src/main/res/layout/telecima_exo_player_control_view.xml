@@ -58,6 +58,18 @@
           android:layout_height="0dp"
           android:layout_weight="1" />
 
+      <ImageButton
+          android:id="@+id/telecima_overflow_menu"
+          android:layout_width="@dimen/exo_icon_size"
+          android:layout_height="@dimen/exo_icon_size"
+          android:layout_marginEnd="4dp"
+          android:background="?android:attr/selectableItemBackgroundBorderless"
+          android:contentDescription="@string/internal_player_overflow_menu"
+          android:focusable="true"
+          android:padding="8dp"
+          android:scaleType="fitCenter"
+          android:src="@drawable/ic_more_vert_24" />
+
       <LinearLayout android:id="@id/exo_basic_controls"
           android:layout_width="wrap_content"
           android:layout_height="wrap_content"

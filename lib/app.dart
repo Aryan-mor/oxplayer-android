@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +12,8 @@ import 'core/tv/tv_screen_wrapper.dart';
 import 'core/update/app_update_layer.dart';
 import 'core/update/app_update_notifier.dart';
 import 'providers.dart';
+import 'player/external_playback_handoff.dart';
+import 'player/user_preference_handoff.dart';
 import 'router.dart';
 
 class TeleCimaApp extends ConsumerStatefulWidget {
@@ -24,6 +27,12 @@ class _TeleCimaAppState extends ConsumerState<TeleCimaApp> {
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb && Platform.isAndroid) {
+      ExternalPlaybackHandoff.register();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        UserPreferenceHandoff.register(ref.read(authNotifierProvider));
+      });
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _tryInitTdlib());
   }
 

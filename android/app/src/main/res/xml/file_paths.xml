@@ -17,4 +17,9 @@
     <files-path
         name="tdlib_files"
         path="tdlib_files/" />
+
+    <!-- Extracted SubDL subtitles under cacheDir/subtitles/ -->
+    <cache-path
+        name="subtitles_cache"
+        path="subtitles/" />
 </paths>

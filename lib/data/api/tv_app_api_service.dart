@@ -12,6 +12,16 @@ import '../models/app_media.dart';
 void _apilog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.api);
 
+class TelegramAuthResult {
+  const TelegramAuthResult({
+    required this.accessToken,
+    this.preferredSubtitleLanguage,
+  });
+
+  final String accessToken;
+  final String? preferredSubtitleLanguage;
+}
+
 class LibrarySourceFilterRow {
   const LibrarySourceFilterRow({
     required this.id,
@@ -260,7 +270,7 @@ class TvAppApiService {
     return dio;
   }
 
-  Future<String> authenticateWithTelegram({
+  Future<TelegramAuthResult> authenticateWithTelegram({
     required TdlibFacade tdlib,
     required AppConfig config,
   }) async {
@@ -283,10 +293,20 @@ class TvAppApiService {
     if (accessToken.isEmpty) {
       throw StateError('API did not return accessToken');
     }
+    String? prefLang;
+    final userRaw = response.data?['user'];
+    if (userRaw is Map) {
+      final p = userRaw['preferredSubtitleLanguage']?.toString().trim();
+      prefLang = (p != null && p.isNotEmpty) ? p : null;
+    }
     _apilog(
-      'API auth success: tokenLength=${accessToken.length}',
+      'API auth success: tokenLength=${accessToken.length} '
+      'preferredSubtitleLanguage=${prefLang ?? '(null)'}',
     );
-    return accessToken;
+    return TelegramAuthResult(
+      accessToken: accessToken,
+      preferredSubtitleLanguage: prefLang,
+    );
   }
 
   DateTime? _parseLastIndexedAt(Map<String, dynamic>? body) {

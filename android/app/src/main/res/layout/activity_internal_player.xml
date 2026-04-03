@@ -19,7 +19,7 @@
       android:layout_height="wrap_content"
       android:layout_gravity="bottom|start"
       android:layout_marginStart="24dp"
-      android:layout_marginBottom="24dp"
+      android:layout_marginBottom="@dimen/internal_player_trial_bar_margin_bottom"
       android:background="#CC000000"
       android:gravity="center_vertical"
       android:orientation="horizontal"

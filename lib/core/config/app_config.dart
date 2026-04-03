@@ -13,6 +13,7 @@ class AppConfig {
     required this.tvAppApiBaseUrl,
     required this.tvAppWebAppShortName,
     required this.tvAppWebAppUrl,
+    required this.subdlApiKey,
   });
 
   final String telegramApiId;
@@ -27,6 +28,8 @@ class AppConfig {
   final String tvAppApiBaseUrl;
   final String tvAppWebAppShortName;
   final String tvAppWebAppUrl;
+  /// SubDL API key for in-app subtitle search (internal player). Empty = disabled.
+  final String subdlApiKey;
 
   static AppConfig fromEnv() {
     String v(String key) => dotenv.env[key]?.trim() ?? '';
@@ -44,6 +47,7 @@ class AppConfig {
       tvAppApiBaseUrl: v('TV_APP_API_BASE_URL'),
       tvAppWebAppShortName: v('TV_APP_WEBAPP_SHORT_NAME'),
       tvAppWebAppUrl: v('TV_APP_WEBAPP_URL'),
+      subdlApiKey: v('SUBDL_API_KEY'),
     );
   }
 
