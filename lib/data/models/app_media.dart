@@ -267,10 +267,13 @@ class AppMediaAggregate {
   AppMediaAggregate({
     required this.media,
     required this.files,
+    this.currentUserHasAccess = false,
   });
 
   final AppMedia media;
   final List<AppMediaFile> files;
+  /// From API: user has [UserAccess] for this media (e.g. after requesting a file).
+  final bool currentUserHasAccess;
 
   factory AppMediaAggregate.fromJson(Map<String, dynamic> json) {
     return AppMediaAggregate(
@@ -279,6 +282,7 @@ class AppMediaAggregate {
               ?.map((e) => AppMediaFile.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
+      currentUserHasAccess: json['currentUserHasAccess'] == true,
     );
   }
 }

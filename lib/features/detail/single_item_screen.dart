@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/debug/app_debug_log.dart';
 import '../../core/storage/storage_headroom.dart';
@@ -510,6 +511,154 @@ class _DetailsPanel extends StatelessWidget {
   }
 }
 
+class _EmptyFilesRequestBlock extends ConsumerStatefulWidget {
+  const _EmptyFilesRequestBlock({required this.aggregate});
+
+  final AppMediaAggregate aggregate;
+
+  @override
+  ConsumerState<_EmptyFilesRequestBlock> createState() =>
+      _EmptyFilesRequestBlockState();
+}
+
+class _EmptyFilesRequestBlockState extends ConsumerState<_EmptyFilesRequestBlock> {
+  /// After a successful POST, until the parent rebuilds with API [currentUserHasAccess].
+  bool _requestedLocally = false;
+
+  static const _alreadyRequestedBody =
+      'You have already requested a file for this title. The team has been '
+      'notified when possible. You can still send the video to the bot using '
+      'the QR code above so it can be indexed.';
+
+  @override
+  void didUpdateWidget(covariant _EmptyFilesRequestBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.aggregate.media.id != widget.aggregate.media.id) {
+      _requestedLocally = false;
+    }
+  }
+
+  bool get _alreadyRequested =>
+      widget.aggregate.currentUserHasAccess || _requestedLocally;
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = ref.watch(appConfigProvider);
+    final botUser = cfg.botUsername.trim();
+    final telegramUri = botUser.isNotEmpty ? 'https://t.me/$botUser' : '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.aggregate.media.type == 'SERIES' ||
+                  widget.aggregate.media.type == '#series'
+              ? 'No episodes indexed yet.'
+              : 'No files indexed yet.',
+          style: const TextStyle(color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 14),
+        if (telegramUri.isNotEmpty) ...[
+          SizedBox(
+            width: 156,
+            height: 156,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: QrImageView(
+                  data: telegramUri,
+                  version: QrVersions.auto,
+                  gapless: true,
+                  eyeStyle: const QrEyeStyle(
+                    eyeShape: QrEyeShape.square,
+                    color: Color(0xFF000000),
+                  ),
+                  dataModuleStyle: const QrDataModuleStyle(
+                    dataModuleShape: QrDataModuleShape.square,
+                    color: Color(0xFF000000),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (_alreadyRequested) ...[
+          const Text(
+            _alreadyRequestedBody,
+            style: TextStyle(
+              color: AppColors.textMuted,
+              height: 1.35,
+              fontSize: 14,
+            ),
+          ),
+        ] else ...[
+          Text(
+            botUser.isNotEmpty
+                ? 'You can add this title to your library by sending the '
+                    'video file to @$botUser on Telegram. Scan the QR code above '
+                    'to open that bot, then send the file so it can be indexed.'
+                : 'You can add this title to your library by sending the video '
+                    'file to your indexing bot (set BOT_USERNAME in the app env).',
+            style: const TextStyle(
+              color: AppColors.textMuted,
+              height: 1.35,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TVButton(
+            onPressed: () => unawaited(_onRequestFile(context)),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            child: const Text('Request file'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _onRequestFile(BuildContext context) async {
+    final auth = ref.read(authNotifierProvider);
+    final token = auth.apiAccessToken;
+    if (token == null || token.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Not signed in.')),
+        );
+      }
+      return;
+    }
+    try {
+      final config = ref.read(appConfigProvider);
+      final api = ref.read(tvAppApiServiceProvider);
+      final r = await api.requestMediaFile(
+        config: config,
+        accessToken: token,
+        mediaId: widget.aggregate.media.id,
+      );
+      if (!context.mounted) return;
+      setState(() => _requestedLocally = true);
+      final msg = r.notifyFailed
+          ? 'Request saved. Admins could not be notified.'
+          : (r.notifiedAdmins > 0
+              ? 'Request sent to admins.'
+              : 'Request saved.');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      ref.invalidate(libraryFetchProvider);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Request failed: $e')),
+        );
+      }
+    }
+  }
+}
+
 Widget _chip(String text) {
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -523,16 +672,15 @@ Widget _chip(String text) {
   );
 }
 
-class _MovieVariantsSection extends StatelessWidget {
+class _MovieVariantsSection extends ConsumerWidget {
   const _MovieVariantsSection({required this.aggregate});
 
   final AppMediaAggregate aggregate;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     if (aggregate.files.isEmpty) {
-      return const Text('No files indexed yet.',
-          style: TextStyle(color: AppColors.textMuted));
+      return _EmptyFilesRequestBlock(aggregate: aggregate);
     }
 
     return Column(
@@ -560,16 +708,15 @@ class _MovieVariantsSection extends StatelessWidget {
   }
 }
 
-class _SeriesVariantsSection extends StatelessWidget {
+class _SeriesVariantsSection extends ConsumerWidget {
   const _SeriesVariantsSection({required this.aggregate});
 
   final AppMediaAggregate aggregate;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     if (aggregate.files.isEmpty) {
-      return const Text('No episodes indexed yet.',
-          style: TextStyle(color: AppColors.textMuted));
+      return _EmptyFilesRequestBlock(aggregate: aggregate);
     }
 
     final grouped = <int, Map<int, List<AppMediaFile>>>{};

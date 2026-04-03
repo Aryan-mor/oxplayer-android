@@ -134,12 +134,15 @@ final filteredMediaProvider = Provider<List<AppMediaAggregate>>((ref) {
   final sourceFilter = ref.watch(selectedSourceFilterProvider);
 
   return media.where((item) {
+    if (item.files.isEmpty) {
+      return false;
+    }
     final byType = switch (typeFilter) {
       LibraryTypeFilter.all => true,
       LibraryTypeFilter.movies => item.media.type == 'MOVIE' || item.media.type == '#movie',
       LibraryTypeFilter.series => item.media.type == 'SERIES' || item.media.type == '#series',
     };
-    
+
     // Check if any file matching this source exists
     final bySource = sourceFilter == null ? true : item.files.any((f) => f.sourceId == sourceFilter);
     return byType && bySource;

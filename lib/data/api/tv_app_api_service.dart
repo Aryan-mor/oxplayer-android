@@ -80,6 +80,20 @@ class LibraryFetchResult {
   final DateTime? lastIndexedAt;
 }
 
+class RequestMediaFileResult {
+  const RequestMediaFileResult({
+    required this.ok,
+    required this.mediaId,
+    required this.notifiedAdmins,
+    required this.notifyFailed,
+  });
+
+  final bool ok;
+  final String mediaId;
+  final int notifiedAdmins;
+  final bool notifyFailed;
+}
+
 /// Row from GET [/me/explore/media] (full catalog, not scoped to user library).
 class ExploreCatalogItem {
   ExploreCatalogItem({
@@ -107,14 +121,47 @@ class ExploreCatalogItem {
   }
 }
 
+/// TMDB search row from GET [/me/explore/media] when `q` is non-empty.
+class ExploreTmdbItem {
+  ExploreTmdbItem({
+    required this.tmdbKey,
+    required this.title,
+    required this.type,
+    this.releaseYear,
+    this.posterPath,
+  });
+
+  final String tmdbKey;
+  final String title;
+  final String type;
+  final int? releaseYear;
+  final String? posterPath;
+
+  factory ExploreTmdbItem.fromJson(Map<String, dynamic> json) {
+    return ExploreTmdbItem(
+      tmdbKey: (json['tmdbKey'] ?? json['tmdb_key'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      type: (json['type'] ?? 'UNKNOWN').toString(),
+      releaseYear: json['releaseYear'] as int? ?? json['release_year'] as int?,
+      posterPath: json['posterPath']?.toString() ?? json['poster_path']?.toString(),
+    );
+  }
+}
+
 class ExploreCatalogPage {
   const ExploreCatalogPage({
     required this.items,
     this.nextCursor,
+    this.pendingItems = const [],
+    this.pendingNextCursor,
+    this.tmdbItems = const [],
   });
 
   final List<ExploreCatalogItem> items;
   final String? nextCursor;
+  final List<ExploreCatalogItem> pendingItems;
+  final String? pendingNextCursor;
+  final List<ExploreTmdbItem> tmdbItems;
 }
 
 /// Row from GET [/me/explore/genres].
@@ -454,6 +501,7 @@ class TvAppApiService {
     required String accessToken,
     String query = '',
     String? cursor,
+    String? pendingCursor,
     String? genreId,
     int limit = 30,
   }) async {
@@ -463,11 +511,13 @@ class TvAppApiService {
     if (q.isNotEmpty) qp['q'] = q;
     final c = cursor?.trim();
     if (c != null && c.isNotEmpty) qp['cursor'] = c;
+    final pc = pendingCursor?.trim();
+    if (pc != null && pc.isNotEmpty) qp['pendingCursor'] = pc;
     final g = genreId?.trim();
     if (g != null && g.isNotEmpty) qp['genreId'] = g;
 
     _apilog(
-      'API fetchExploreCatalogPage q="$q" cursor=$c genreId=$g limit=$limit',
+      'API fetchExploreCatalogPage q="$q" cursor=$c pendingCursor=$pc genreId=$g limit=$limit',
     );
     final response = await dio.get<Map<String, dynamic>>(
       '/me/explore/media',
@@ -488,13 +538,104 @@ class TvAppApiService {
         }
       }
     }
+
+    final pendingRaw = response.data?['pendingItems'] ?? response.data?['pending_items'];
+    final pendingList = <ExploreCatalogItem>[];
+    if (pendingRaw is List) {
+      for (final e in pendingRaw) {
+        if (e is Map<String, dynamic>) {
+          try {
+            pendingList.add(ExploreCatalogItem.fromJson(e));
+          } catch (_) {}
+        }
+      }
+    }
+
+    final tmdbRaw = response.data?['tmdbItems'] ?? response.data?['tmdb_items'];
+    final tmdbList = <ExploreTmdbItem>[];
+    if (tmdbRaw is List) {
+      for (final e in tmdbRaw) {
+        if (e is Map<String, dynamic>) {
+          try {
+            tmdbList.add(ExploreTmdbItem.fromJson(e));
+          } catch (_) {}
+        }
+      }
+    }
+
     final nc = response.data?['nextCursor']?.toString().trim();
+    final pnc =
+        response.data?['pendingNextCursor']?.toString().trim() ??
+        response.data?['pending_next_cursor']?.toString().trim();
     _apilog(
-      'API fetchExploreCatalogPage done items=${list.length} nextCursor=$nc',
+      'API fetchExploreCatalogPage done items=${list.length} pending=${pendingList.length} tmdb=${tmdbList.length} nextCursor=$nc pendingNext=$pnc',
     );
     return ExploreCatalogPage(
       items: list,
       nextCursor: (nc != null && nc.isNotEmpty) ? nc : null,
+      pendingItems: pendingList,
+      pendingNextCursor: (pnc != null && pnc.isNotEmpty) ? pnc : null,
+      tmdbItems: tmdbList,
+    );
+  }
+
+  /// Creates or updates a [Media] row from TMDB (explore).
+  Future<String> exploreEnsureMediaFromTmdb({
+    required AppConfig config,
+    required String accessToken,
+    required String tmdbKey,
+  }) async {
+    final dio = _dio(config.tvAppApiBaseUrl);
+    final k = tmdbKey.trim();
+    _apilog('API exploreEnsureMediaFromTmdb tmdbKey=$k');
+    final response = await dio.post<Map<String, dynamic>>(
+      '/me/explore/media/from-tmdb',
+      data: <String, dynamic>{'tmdbKey': k},
+      options: Options(
+        headers: {'Authorization': 'Bearer $accessToken'},
+        validateStatus: (s) => s != null && s < 500,
+      ),
+    );
+    final code = response.statusCode ?? 0;
+    if (code != 200 || response.data == null) {
+      final msg = response.data?['message']?.toString() ?? 'Could not add title';
+      throw Exception(msg);
+    }
+    final id = response.data!['mediaId']?.toString().trim() ?? '';
+    if (id.isEmpty) throw Exception('Invalid response');
+    return id;
+  }
+
+  /// Request that admins upload a file; grants [user_access] for this media.
+  Future<RequestMediaFileResult> requestMediaFile({
+    required AppConfig config,
+    required String accessToken,
+    required String mediaId,
+  }) async {
+    final dio = _dio(config.tvAppApiBaseUrl);
+    final id = mediaId.trim();
+    final encoded = Uri.encodeComponent(id);
+    _apilog('API requestMediaFile mediaId=$id');
+    final response = await dio.post<Map<String, dynamic>>(
+      '/me/media/$encoded/request-file',
+      options: Options(
+        headers: {'Authorization': 'Bearer $accessToken'},
+        validateStatus: (s) => s != null && s < 500,
+      ),
+    );
+    final code = response.statusCode ?? 0;
+    if (code != 200 || response.data == null) {
+      final msg = response.data?['message']?.toString() ?? 'Request failed';
+      throw Exception(msg);
+    }
+    final d = response.data!;
+    return RequestMediaFileResult(
+      ok: d['ok'] == true,
+      mediaId: d['mediaId']?.toString() ?? id,
+      notifiedAdmins: (d['notifiedAdmins'] is int)
+          ? d['notifiedAdmins'] as int
+          : int.tryParse(d['notifiedAdmins']?.toString() ?? '') ?? 0,
+      notifyFailed: d['notifyFailed'] == true,
     );
   }
 

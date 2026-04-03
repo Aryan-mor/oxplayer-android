@@ -48,11 +48,13 @@ class _TVSearchFieldState extends State<TVSearchField> {
     }
     _fieldFocus = FocusNode(debugLabel: 'TVSearchField.field');
     widget.controller.addListener(_onControllerChanged);
+    _fieldFocus.addListener(_onFieldFocusChanged);
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
+    _fieldFocus.removeListener(_onFieldFocusChanged);
     _shellInternal?.dispose();
     _fieldFocus.dispose();
     super.dispose();
@@ -60,6 +62,12 @@ class _TVSearchFieldState extends State<TVSearchField> {
 
   void _onControllerChanged() {
     if (mounted) setState(() {});
+  }
+
+  void _onFieldFocusChanged() {
+    if (!_fieldFocus.hasFocus && mounted && _typing) {
+      _exitTyping(requestShellFocus: false);
+    }
   }
 
   bool _isCenterOrSelect(LogicalKeyboardKey key) {
@@ -76,11 +84,6 @@ class _TVSearchFieldState extends State<TVSearchField> {
         key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter ||
         key == LogicalKeyboardKey.gameButtonA;
-  }
-
-  bool _isBackKey(LogicalKeyboardKey key) {
-    return key == LogicalKeyboardKey.goBack ||
-        key == LogicalKeyboardKey.escape;
   }
 
   void _enterTyping() {
@@ -104,14 +107,6 @@ class _TVSearchFieldState extends State<TVSearchField> {
   KeyEventResult _onShellKey(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent && _isActivateKey(event.logicalKey)) {
       _enterTyping();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
-  KeyEventResult _onFieldKey(FocusNode node, KeyEvent event) {
-    if (event is KeyDownEvent && _isBackKey(event.logicalKey)) {
-      _exitTyping(requestShellFocus: true);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -191,13 +186,16 @@ class _TVSearchFieldState extends State<TVSearchField> {
   }
 
   Widget _buildField() {
-    return Focus(
-      focusNode: _fieldFocus,
-      onKeyEvent: _onFieldKey,
-      onFocusChange: (hasFocus) {
-        if (!hasFocus && mounted && _typing) {
-          _exitTyping(requestShellFocus: false);
-        }
+    // Do not wrap [TextField] in [Focus] with the same [focusNode] — that
+    // triggers assert 'child != this' in the focus manager.
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.goBack): () {
+          if (_typing) _exitTyping(requestShellFocus: true);
+        },
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          if (_typing) _exitTyping(requestShellFocus: true);
+        },
       },
       child: Transform.scale(
         scale: 1.0,

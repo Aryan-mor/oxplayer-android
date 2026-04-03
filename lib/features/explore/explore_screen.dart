@@ -40,8 +40,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   Timer? _searchDebounce;
   List<ExploreCatalogItem> _items = const [];
+  List<ExploreCatalogItem> _pendingItems = const [];
+  List<ExploreTmdbItem> _tmdbItems = const [];
   List<ExploreGenreRow> _exploreGenres = const [];
   String? _nextCursor;
+  String? _pendingNextCursor;
+  String? _busyTmdbKey;
   bool _end = false;
   bool _loadingInitial = true;
   bool _loadingMore = false;
@@ -118,7 +122,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     if (!_scrollController.hasClients) return;
     final pos = _scrollController.position;
     if (pos.pixels < pos.maxScrollExtent - 720) return;
-    if (_loadingMore || _loadingInitial || _end || _nextCursor == null) {
+    if (_loadingMore || _loadingInitial || _end) {
       return;
     }
     unawaited(_loadNextPage());
@@ -200,7 +204,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final g = _selectedGenreId;
     if (q == _activeQuery &&
         g == _activeGenreId &&
-        _items.isNotEmpty &&
+        (_items.isNotEmpty ||
+            _pendingItems.isNotEmpty ||
+            _tmdbItems.isNotEmpty) &&
         !_loadingInitial) {
       return;
     }
@@ -208,7 +214,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _activeQuery = q;
       _activeGenreId = g;
       _items = const [];
+      _pendingItems = const [];
+      _tmdbItems = const [];
       _nextCursor = null;
+      _pendingNextCursor = null;
+      _busyTmdbKey = null;
       _end = false;
       _loadingInitial = true;
       _lastLoadError = '';
@@ -238,7 +248,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _activeQuery = q;
       _activeGenreId = g;
       _items = const [];
+      _pendingItems = const [];
+      _tmdbItems = const [];
       _nextCursor = null;
+      _pendingNextCursor = null;
+      _busyTmdbKey = null;
       _end = false;
       _loadingInitial = true;
       _lastLoadError = '';
@@ -288,21 +302,28 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         accessToken: token,
         query: _activeQuery,
         cursor: append ? _nextCursor : null,
+        pendingCursor: append ? _pendingNextCursor : null,
         genreId: _activeGenreId,
       );
       if (!mounted) return;
       setState(() {
         if (append) {
           _items = [..._items, ...page.items];
+          _pendingItems = [..._pendingItems, ...page.pendingItems];
         } else {
           _items = List.of(page.items);
+          _pendingItems = List.of(page.pendingItems);
+          _tmdbItems = List.of(page.tmdbItems);
         }
         _nextCursor = page.nextCursor;
-        _end = page.nextCursor == null || page.items.isEmpty;
+        _pendingNextCursor = page.pendingNextCursor;
+        _end = page.nextCursor == null && page.pendingNextCursor == null;
         _loadingInitial = false;
         _loadingMore = false;
       });
-      _resizeGridFocus(_items.length);
+      _resizeGridFocus(
+        _items.length + _pendingItems.length + _tmdbItems.length,
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -332,6 +353,302 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
     if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
     return value;
+  }
+
+  Widget _sectionTitle(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 18, 0, 10),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  Widget _catalogPosterTile({
+    required BuildContext context,
+    required ExploreCatalogItem item,
+    required FocusNode focusNode,
+  }) {
+    final poster = _posterUrl(item.posterPath) ?? '';
+    return TVButton(
+      focusNode: focusNode,
+      onPressed: () {
+        context.push('/item/${Uri.encodeComponent(item.id)}');
+      },
+      padding: EdgeInsets.zero,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: poster.isEmpty
+                  ? Container(
+                      color: Colors.black26,
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.movie, size: 42),
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: poster,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                      errorWidget: (_, __, ___) => const Center(
+                        child: Icon(Icons.broken_image),
+                      ),
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Text(
+                item.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tmdbPosterTile({
+    required BuildContext context,
+    required ExploreTmdbItem item,
+    required FocusNode focusNode,
+  }) {
+    final poster = _posterUrl(item.posterPath) ?? '';
+    final busy = _busyTmdbKey == item.tmdbKey;
+    return TVButton(
+      focusNode: focusNode,
+      enabled: !busy,
+      onPressed: () => unawaited(_onTmdbItemPressed(context, item)),
+      padding: EdgeInsets.zero,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        color: AppColors.card,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (poster.isEmpty)
+                    Container(
+                      color: Colors.black26,
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.movie_creation_outlined, size: 42),
+                    )
+                  else
+                    CachedNetworkImage(
+                      imageUrl: poster,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                      errorWidget: (_, __, ___) => const Center(
+                        child: Icon(Icons.broken_image),
+                      ),
+                    ),
+                  Positioned(
+                    left: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        item.type == 'SERIES' ? 'TV' : 'TMDB',
+                        style: const TextStyle(fontSize: 10, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                  if (busy)
+                    Container(
+                      color: Colors.black45,
+                      alignment: Alignment.center,
+                      child: const SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Text(
+                item.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onTmdbItemPressed(BuildContext context, ExploreTmdbItem item) async {
+    final auth = ref.read(authNotifierProvider);
+    final token = auth.apiAccessToken;
+    if (token == null || token.isEmpty) return;
+    setState(() => _busyTmdbKey = item.tmdbKey);
+    try {
+      final config = ref.read(appConfigProvider);
+      final api = ref.read(tvAppApiServiceProvider);
+      final mediaId = await api.exploreEnsureMediaFromTmdb(
+        config: config,
+        accessToken: token,
+        tmdbKey: item.tmdbKey,
+      );
+      if (!context.mounted) return;
+      unawaited(
+        context.push('/item/${Uri.encodeComponent(mediaId)}'),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not add title: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busyTmdbKey = null);
+      }
+    }
+  }
+
+  Widget _buildExploreCatalogBody(BuildContext context) {
+    final total =
+        _items.length + _pendingItems.length + _tmdbItems.length;
+    if (_loadingInitial && total == 0) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (total == 0) {
+      return const Center(
+        child: Text(
+          'No titles match your filters.',
+          style: TextStyle(color: AppColors.textMuted),
+        ),
+      );
+    }
+
+    const gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: _gridColumns,
+      childAspectRatio: 0.66,
+      crossAxisSpacing: 14,
+      mainAxisSpacing: 14,
+    );
+
+    var focusBase = 0;
+    final slivers = <Widget>[];
+
+    if (_items.isNotEmpty) {
+      slivers.add(SliverToBoxAdapter(child: _sectionTitle('Available')));
+      final fb = focusBase;
+      slivers.add(
+        SliverGrid(
+          gridDelegate: gridDelegate,
+          delegate: SliverChildBuilderDelegate(
+            (ctx, i) => _catalogPosterTile(
+              context: ctx,
+              item: _items[i],
+              focusNode: _gridFocusNodes[fb + i],
+            ),
+            childCount: _items.length,
+          ),
+        ),
+      );
+      focusBase += _items.length;
+    }
+
+    if (_pendingItems.isNotEmpty) {
+      slivers.add(SliverToBoxAdapter(child: _sectionTitle('Requested titles')));
+      final fb = focusBase;
+      slivers.add(
+        SliverGrid(
+          gridDelegate: gridDelegate,
+          delegate: SliverChildBuilderDelegate(
+            (ctx, i) => _catalogPosterTile(
+              context: ctx,
+              item: _pendingItems[i],
+              focusNode: _gridFocusNodes[fb + i],
+            ),
+            childCount: _pendingItems.length,
+          ),
+        ),
+      );
+      focusBase += _pendingItems.length;
+    }
+
+    if (_tmdbItems.isNotEmpty) {
+      slivers.add(SliverToBoxAdapter(child: _sectionTitle('TMDB')));
+      final fb = focusBase;
+      slivers.add(
+        SliverGrid(
+          gridDelegate: gridDelegate,
+          delegate: SliverChildBuilderDelegate(
+            (ctx, i) => _tmdbPosterTile(
+              context: ctx,
+              item: _tmdbItems[i],
+              focusNode: _gridFocusNodes[fb + i],
+            ),
+            childCount: _tmdbItems.length,
+          ),
+        ),
+      );
+    }
+
+    return Stack(
+      children: [
+        CustomScrollView(
+          controller: _scrollController,
+          cacheExtent: 1800,
+          slivers: slivers,
+        ),
+        if (_loadingMore)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 12,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 10),
+                    Text('Loading more…'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -490,7 +807,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       Text(
                         _loadingInitial
                             ? 'Loading…'
-                            : '${_items.length} title${_items.length == 1 ? '' : 's'}',
+                            : '${_items.length + _pendingItems.length + _tmdbItems.length} '
+                                'title${_items.length + _pendingItems.length + _tmdbItems.length == 1 ? '' : 's'}',
                         style: const TextStyle(color: AppColors.textMuted),
                       ),
                     ],
@@ -507,132 +825,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   ],
                   const SizedBox(height: 14),
                   Expanded(
-                    child: _loadingInitial && _items.isEmpty
-                        ? const Center(child: CircularProgressIndicator())
-                        : _items.isEmpty
-                            ? const Center(
-                                child: Text(
-                                  'No titles match your filters.',
-                                  style: TextStyle(color: AppColors.textMuted),
-                                ),
-                              )
-                            : Stack(
-                                children: [
-                                  GridView.builder(
-                                    controller: _scrollController,
-                                    cacheExtent: 1800,
-                                    gridDelegate:
-                                        const SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: _gridColumns,
-                                      childAspectRatio: 0.66,
-                                      crossAxisSpacing: 14,
-                                      mainAxisSpacing: 14,
-                                    ),
-                                    itemCount: _items.length,
-                                    itemBuilder: (context, index) {
-                                      final item = _items[index];
-                                      final poster =
-                                          _posterUrl(item.posterPath) ?? '';
-                                      return TVButton(
-                                        focusNode: _gridFocusNodes[index],
-                                        onPressed: () {
-                                          context.push(
-                                            '/item/${Uri.encodeComponent(item.id)}',
-                                          );
-                                        },
-                                        padding: EdgeInsets.zero,
-                                        child: Card(
-                                          clipBehavior: Clip.antiAlias,
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.stretch,
-                                            children: [
-                                              Expanded(
-                                                child: poster.isEmpty
-                                                    ? Container(
-                                                        color: Colors.black26,
-                                                        alignment:
-                                                            Alignment.center,
-                                                        child: const Icon(
-                                                          Icons.movie,
-                                                          size: 42,
-                                                        ),
-                                                      )
-                                                    : CachedNetworkImage(
-                                                        imageUrl: poster,
-                                                        fit: BoxFit.cover,
-                                                        placeholder: (_, __) =>
-                                                            const Center(
-                                                          child:
-                                                              CircularProgressIndicator(),
-                                                        ),
-                                                        errorWidget:
-                                                            (_, __, ___) =>
-                                                                const Center(
-                                                          child: Icon(
-                                                            Icons.broken_image,
-                                                          ),
-                                                        ),
-                                                      ),
-                                              ),
-                                              Padding(
-                                                padding:
-                                                    const EdgeInsets.all(10),
-                                                child: Text(
-                                                  item.title,
-                                                  maxLines: 2,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  if (_loadingMore)
-                                    Positioned(
-                                      left: 0,
-                                      right: 0,
-                                      bottom: 12,
-                                      child: Center(
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 8,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.card,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            border: Border.all(
-                                              color: AppColors.border,
-                                            ),
-                                          ),
-                                          child: const Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              SizedBox(
-                                                width: 18,
-                                                height: 18,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                ),
-                                              ),
-                                              SizedBox(width: 10),
-                                              Text('Loading more…'),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
+                    child: _buildExploreCatalogBody(context),
                   ),
                 ],
               ),
