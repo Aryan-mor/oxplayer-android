@@ -369,6 +369,31 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     );
   }
 
+  /// TMDB block is always its own section; label reflects search vs genre filter.
+  String _tmdbSectionLabel() {
+    String? genreName;
+    final gid = _activeGenreId;
+    if (gid != null && gid.isNotEmpty) {
+      for (final g in _exploreGenres) {
+        if (g.id == gid) {
+          genreName = g.title;
+          break;
+        }
+      }
+    }
+    final q = _activeQuery.trim();
+    if (q.isNotEmpty && genreName != null) {
+      return 'TMDB search · $genreName';
+    }
+    if (q.isNotEmpty) {
+      return 'TMDB search results';
+    }
+    if (genreName != null) {
+      return 'TMDB · $genreName';
+    }
+    return 'TMDB';
+  }
+
   Widget _catalogPosterTile({
     required BuildContext context,
     required ExploreCatalogItem item,
@@ -595,7 +620,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
 
     if (_tmdbItems.isNotEmpty) {
-      slivers.add(SliverToBoxAdapter(child: _sectionTitle('TMDB')));
+      slivers.add(
+        SliverToBoxAdapter(child: _sectionTitle(_tmdbSectionLabel())),
+      );
       final fb = focusBase;
       slivers.add(
         SliverGrid(
