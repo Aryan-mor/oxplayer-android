@@ -400,8 +400,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         );
       },
       child: Scaffold(
-      body: Row(
-        children: [
+        body: Padding(
+          padding: const EdgeInsets.only(bottom: AppLayout.screenBottomInset),
+          child: Row(
+            children: [
           Container(
             width: 328,
             decoration: BoxDecoration(
@@ -829,9 +831,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
             ),
           ),
-        ],
+            ],
+          ),
+        ),
       ),
-    ),
     );
   }
 }

@@ -9,6 +9,13 @@ class AppColors {
   static const textMuted = Color(0xFF9CA3AF);
 }
 
+/// Shared TV-safe layout (bezel / overscan breathing room).
+class AppLayout {
+  AppLayout._();
+
+  static const double screenBottomInset = 28;
+}
+
 ThemeData buildTeleCimaTheme() {
   final base = ThemeData(
     useMaterial3: true,

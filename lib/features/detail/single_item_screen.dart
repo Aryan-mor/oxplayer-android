@@ -215,18 +215,21 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
             ),
           // ── Content ──────────────────────────────────────────────────────
           SafeArea(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _PosterPanel(aggregate: agg),
-                Expanded(
-                  child: _DetailsPanel(
-                    aggregate: agg,
-                    isSeries: isSeries,
-                    exploreGenreLinksEnabled: exploreGenreLinksEnabled,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: AppLayout.screenBottomInset),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _PosterPanel(aggregate: agg),
+                  Expanded(
+                    child: _DetailsPanel(
+                      aggregate: agg,
+                      isSeries: isSeries,
+                      exploreGenreLinksEnabled: exploreGenreLinksEnabled,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -512,9 +515,11 @@ class _DetailsPanel extends StatelessWidget {
   }
 }
 
-/// QR + “send to bot” copy (no Request file). Used for incomplete episodes and dialogs.
+/// QR + “send to bot” copy. Optional [trailingBesideQr] sits to the right of the QR (e.g. Request file).
 class _IndexingBotQrPanel extends ConsumerWidget {
-  const _IndexingBotQrPanel();
+  const _IndexingBotQrPanel({this.trailingBesideQr});
+
+  final Widget? trailingBesideQr;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -527,32 +532,44 @@ class _IndexingBotQrPanel extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (telegramUri.isNotEmpty) ...[
-          SizedBox(
-            width: 156,
-            height: 156,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: QrImageView(
-                  data: telegramUri,
-                  version: QrVersions.auto,
-                  gapless: true,
-                  eyeStyle: const QrEyeStyle(
-                    eyeShape: QrEyeShape.square,
-                    color: Color(0xFF000000),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 156,
+                height: 156,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  dataModuleStyle: const QrDataModuleStyle(
-                    dataModuleShape: QrDataModuleShape.square,
-                    color: Color(0xFF000000),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: QrImageView(
+                      data: telegramUri,
+                      version: QrVersions.auto,
+                      gapless: true,
+                      eyeStyle: const QrEyeStyle(
+                        eyeShape: QrEyeShape.square,
+                        color: Color(0xFF000000),
+                      ),
+                      dataModuleStyle: const QrDataModuleStyle(
+                        dataModuleShape: QrDataModuleShape.square,
+                        color: Color(0xFF000000),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+              if (trailingBesideQr != null) ...[
+                const SizedBox(width: 16),
+                trailingBesideQr!,
+              ],
+            ],
           ),
+          const SizedBox(height: 12),
+        ] else if (trailingBesideQr != null) ...[
+          trailingBesideQr!,
           const SizedBox(height: 12),
         ],
         Text(
@@ -617,7 +634,18 @@ class _EmptyFilesRequestBlockState extends ConsumerState<_EmptyFilesRequestBlock
           style: const TextStyle(color: AppColors.textMuted),
         ),
         const SizedBox(height: 14),
-        const _IndexingBotQrPanel(),
+        _IndexingBotQrPanel(
+          trailingBesideQr: _alreadyRequested
+              ? null
+              : TVButton(
+                  onPressed: () => unawaited(_onRequestFile(context)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 12,
+                  ),
+                  child: const Text('Request file'),
+                ),
+        ),
         if (_alreadyRequested) ...[
           const Text(
             _alreadyRequestedBody,
@@ -628,6 +656,7 @@ class _EmptyFilesRequestBlockState extends ConsumerState<_EmptyFilesRequestBlock
             ),
           ),
         ] else ...[
+          const SizedBox(height: 12),
           Text(
             botUser.isNotEmpty
                 ? 'You can add this title to your library by sending the '
@@ -640,12 +669,6 @@ class _EmptyFilesRequestBlockState extends ConsumerState<_EmptyFilesRequestBlock
               height: 1.35,
               fontSize: 14,
             ),
-          ),
-          const SizedBox(height: 16),
-          TVButton(
-            onPressed: () => unawaited(_onRequestFile(context)),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            child: const Text('Request file'),
           ),
         ],
       ],
