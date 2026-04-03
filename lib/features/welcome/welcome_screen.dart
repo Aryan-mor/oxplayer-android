@@ -172,10 +172,15 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
           await api.authenticateWithTelegram(tdlib: tdlib, config: config);
       final authNotifier = ref.read(authNotifierProvider);
       await authNotifier.setApiAccessToken(authResult.accessToken);
-      await authNotifier.syncPreferredSubtitleLanguageFromServer(
-        authResult.preferredSubtitleLanguage,
+      await authNotifier.applyFromTelegramAuthResult(
+        userId: authResult.userId,
+        telegramId: authResult.telegramId,
+        username: authResult.username,
+        firstName: authResult.firstName,
+        phoneNumber: authResult.phoneNumber,
+        preferredSubtitleLanguage: authResult.preferredSubtitleLanguage,
+        userType: authResult.userType,
       );
-      await authNotifier.syncUserTypeFromServer(authResult.userType);
       if (!mounted) return;
       context.go('/');
     } catch (e) {

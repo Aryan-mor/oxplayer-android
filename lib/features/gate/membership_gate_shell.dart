@@ -5,6 +5,7 @@ import 'package:tdlib/td_api.dart' as td;
 import '../../core/debug/app_debug_log.dart';
 import '../../providers.dart';
 import '../../services/membership_service.dart';
+import 'profile_phone_gate.dart';
 
 /// Hard-blocks the child until required channel + bot membership is satisfied (auto-heal).
 class MembershipGateShell extends ConsumerStatefulWidget {
@@ -132,6 +133,6 @@ class _MembershipGateShellState extends ConsumerState<MembershipGateShell> {
         ),
       );
     }
-    return widget.child;
+    return ProfilePhoneGate(child: widget.child);
   }
 }

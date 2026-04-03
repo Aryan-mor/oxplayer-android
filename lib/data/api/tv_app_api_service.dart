@@ -17,12 +17,22 @@ class TelegramAuthResult {
     required this.accessToken,
     this.preferredSubtitleLanguage,
     this.userType,
+    this.userId,
+    this.telegramId,
+    this.username,
+    this.firstName,
+    this.phoneNumber,
   });
 
   final String accessToken;
   final String? preferredSubtitleLanguage;
   /// DEFAULT, ADMIN, or VIP from API `user.userType`.
   final String? userType;
+  final String? userId;
+  final String? telegramId;
+  final String? username;
+  final String? firstName;
+  final String? phoneNumber;
 }
 
 class LibrarySourceFilterRow {
@@ -298,22 +308,63 @@ class TvAppApiService {
     }
     String? prefLang;
     String? userType;
+    String? userId;
+    String? telegramId;
+    String? username;
+    String? firstName;
+    String? phoneNumber;
     final userRaw = response.data?['user'];
     if (userRaw is Map) {
-      final p = userRaw['preferredSubtitleLanguage']?.toString().trim();
+      final um = Map<String, dynamic>.from(userRaw);
+      final p = um['preferredSubtitleLanguage']?.toString().trim();
       prefLang = (p != null && p.isNotEmpty) ? p : null;
-      final ut = userRaw['userType']?.toString().trim();
+      final ut = um['userType']?.toString().trim();
       userType = (ut != null && ut.isNotEmpty) ? ut : null;
+      final id = um['id']?.toString().trim();
+      userId = (id != null && id.isNotEmpty) ? id : null;
+      final tid = um['telegramId']?.toString().trim();
+      telegramId = (tid != null && tid.isNotEmpty) ? tid : null;
+      final u = um['username']?.toString().trim();
+      username = (u != null && u.isNotEmpty) ? u : null;
+      final fn = um['firstName']?.toString().trim();
+      firstName = (fn != null && fn.isNotEmpty) ? fn : null;
+      final ph = um['phoneNumber']?.toString().trim();
+      phoneNumber = (ph != null && ph.isNotEmpty) ? ph : null;
     }
     _apilog(
       'API auth success: tokenLength=${accessToken.length} '
-      'preferredSubtitleLanguage=${prefLang ?? '(null)'} userType=${userType ?? '(null)'}',
+      'preferredSubtitleLanguage=${prefLang ?? '(null)'} userType=${userType ?? '(null)'} '
+      'phoneNumber=${phoneNumber ?? '(null)'}',
     );
     return TelegramAuthResult(
       accessToken: accessToken,
       preferredSubtitleLanguage: prefLang,
       userType: userType,
+      userId: userId,
+      telegramId: telegramId,
+      username: username,
+      firstName: firstName,
+      phoneNumber: phoneNumber,
     );
+  }
+
+  /// PATCH [/me/profile] — returns updated `user` map from the server.
+  Future<Map<String, dynamic>> patchMeProfile({
+    required AppConfig config,
+    required String accessToken,
+    required String phoneNumber,
+  }) async {
+    final dio = _dio(config.tvAppApiBaseUrl);
+    final response = await dio.patch<Map<String, dynamic>>(
+      '/me/profile',
+      data: {'phoneNumber': phoneNumber.trim()},
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
+    final u = response.data?['user'];
+    if (u is Map) {
+      return Map<String, dynamic>.from(u);
+    }
+    throw StateError('API did not return user object');
   }
 
   DateTime? _parseLastIndexedAt(Map<String, dynamic>? body) {

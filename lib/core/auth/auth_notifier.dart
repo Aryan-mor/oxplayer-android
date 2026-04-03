@@ -20,6 +20,11 @@ class AuthNotifier extends ChangeNotifier {
   String? _preferredSubtitleLanguage;
   /// Server [UserType]: DEFAULT, ADMIN, VIP (uppercase).
   String? _userType;
+  String? _serverUserId;
+  String? _serverTelegramId;
+  String? _serverUsername;
+  String? _serverFirstName;
+  String? _phoneNumber;
 
   bool get ready => _ready;
   String? get session => _session;
@@ -43,6 +48,22 @@ class AuthNotifier extends ChangeNotifier {
     return t == 'ADMIN' || t == 'VIP';
   }
 
+  bool get hasServerUserProfile =>
+      (_serverUserId != null && _serverUserId!.isNotEmpty);
+
+  /// True when the server account has no [phoneNumber] yet (prompt in TV app).
+  bool get needsPhoneNumber {
+    if (!hasServerUserProfile) return false;
+    final p = _phoneNumber?.trim();
+    return p == null || p.isEmpty;
+  }
+
+  String? get serverUserId => _serverUserId;
+  String? get serverTelegramId => _serverTelegramId;
+  String? get serverUsername => _serverUsername;
+  String? get serverFirstName => _serverFirstName;
+  String? get phoneNumber => _phoneNumber;
+
   Future<void> hydrate() async {
     final prefs = await SharedPreferences.getInstance();
     _session = prefs.getString(kSessionKey);
@@ -51,6 +72,7 @@ class AuthNotifier extends ChangeNotifier {
     await prefs.remove(kUserTypeKey);
     _apiAccessToken = null;
     _userType = null;
+    _clearServerProfileFields();
     final subLang = prefs.getString(kPreferredSubtitleLanguageKey)?.trim();
     _preferredSubtitleLanguage =
         (subLang != null && subLang.isNotEmpty) ? subLang : null;
@@ -75,6 +97,7 @@ class AuthNotifier extends ChangeNotifier {
     _apiAccessToken = null;
     _preferredSubtitleLanguage = null;
     _userType = null;
+    _clearServerProfileFields();
     notifyListeners();
   }
 
@@ -91,7 +114,16 @@ class AuthNotifier extends ChangeNotifier {
     await prefs.remove(kUserTypeKey);
     _apiAccessToken = null;
     _userType = null;
+    _clearServerProfileFields();
     notifyListeners();
+  }
+
+  void _clearServerProfileFields() {
+    _serverUserId = null;
+    _serverTelegramId = null;
+    _serverUsername = null;
+    _serverFirstName = null;
+    _phoneNumber = null;
   }
 
   Future<void> clearTelegramSession() async {
@@ -136,6 +168,102 @@ class AuthNotifier extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kUserTypeKey, normalized);
     _userType = normalized;
+    notifyListeners();
+  }
+
+  /// Applies POST [/auth/telegram] `user` fields (subtitle / role use existing rules).
+  Future<void> applyFromTelegramAuthResult({
+    required String? userId,
+    required String? telegramId,
+    required String? username,
+    required String? firstName,
+    required String? phoneNumber,
+    required String? preferredSubtitleLanguage,
+    required String? userType,
+  }) async {
+    await syncPreferredSubtitleLanguageFromServer(preferredSubtitleLanguage);
+    await syncUserTypeFromServer(userType);
+
+    final id = userId?.trim();
+    _serverUserId = (id != null && id.isNotEmpty) ? id : null;
+    final tid = telegramId?.trim();
+    _serverTelegramId = (tid != null && tid.isNotEmpty) ? tid : null;
+    final u = username?.trim();
+    _serverUsername = (u != null && u.isNotEmpty) ? u : null;
+    final fn = firstName?.trim();
+    _serverFirstName = (fn != null && fn.isNotEmpty) ? fn : null;
+    final ph = phoneNumber?.trim();
+    _phoneNumber = (ph != null && ph.isNotEmpty) ? ph : null;
+
+    notifyListeners();
+  }
+
+  /// Overlays server `user` JSON on the local snapshot (e.g. after PATCH [/me/profile]).
+  Future<void> mergeServerUserJson(Object? raw) async {
+    if (raw is! Map) return;
+    final m = Map<String, dynamic>.from(raw);
+
+    if (m.containsKey('id')) {
+      final v = m['id'];
+      if (v == null) {
+        _serverUserId = null;
+      } else {
+        final s = v.toString().trim();
+        _serverUserId = s.isEmpty ? null : s;
+      }
+    }
+    if (m.containsKey('telegramId')) {
+      final v = m['telegramId'];
+      if (v == null) {
+        _serverTelegramId = null;
+      } else {
+        final s = v.toString().trim();
+        _serverTelegramId = s.isEmpty ? null : s;
+      }
+    }
+    if (m.containsKey('username')) {
+      final v = m['username'];
+      if (v == null) {
+        _serverUsername = null;
+      } else {
+        final s = v.toString().trim();
+        _serverUsername = s.isEmpty ? null : s;
+      }
+    }
+    if (m.containsKey('firstName')) {
+      final v = m['firstName'];
+      if (v == null) {
+        _serverFirstName = null;
+      } else {
+        final s = v.toString().trim();
+        _serverFirstName = s.isEmpty ? null : s;
+      }
+    }
+    if (m.containsKey('phoneNumber')) {
+      final v = m['phoneNumber'];
+      if (v == null) {
+        _phoneNumber = null;
+      } else {
+        final s = v.toString().trim();
+        _phoneNumber = s.isEmpty ? null : s;
+      }
+    }
+
+    if (m.containsKey('preferredSubtitleLanguage')) {
+      final v = m['preferredSubtitleLanguage'];
+      if (v == null || v.toString().trim().isEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(kPreferredSubtitleLanguageKey);
+        _preferredSubtitleLanguage = null;
+      } else {
+        await syncPreferredSubtitleLanguageFromServer(v.toString());
+      }
+    }
+
+    if (m.containsKey('userType')) {
+      await syncUserTypeFromServer(m['userType']?.toString());
+    }
+
     notifyListeners();
   }
 }

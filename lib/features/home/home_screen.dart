@@ -120,10 +120,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final authResult =
         await api.authenticateWithTelegram(tdlib: tdlib, config: config);
     await auth.setApiAccessToken(authResult.accessToken);
-    await auth.syncPreferredSubtitleLanguageFromServer(
-      authResult.preferredSubtitleLanguage,
+    await auth.applyFromTelegramAuthResult(
+      userId: authResult.userId,
+      telegramId: authResult.telegramId,
+      username: authResult.username,
+      firstName: authResult.firstName,
+      phoneNumber: authResult.phoneNumber,
+      preferredSubtitleLanguage: authResult.preferredSubtitleLanguage,
+      userType: authResult.userType,
     );
-    await auth.syncUserTypeFromServer(authResult.userType);
     _homeLog(
       'HomeScreen: API token saved (len=${authResult.accessToken.length})',
     );
