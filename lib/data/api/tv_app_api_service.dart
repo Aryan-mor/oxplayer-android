@@ -156,6 +156,7 @@ class ExploreCatalogPage {
     this.pendingItems = const [],
     this.pendingNextCursor,
     this.tmdbItems = const [],
+    this.tmdbHasMore = false,
   });
 
   final List<ExploreCatalogItem> items;
@@ -163,6 +164,7 @@ class ExploreCatalogPage {
   final List<ExploreCatalogItem> pendingItems;
   final String? pendingNextCursor;
   final List<ExploreTmdbItem> tmdbItems;
+  final bool tmdbHasMore;
 }
 
 /// Row from GET [/me/explore/genres].
@@ -504,7 +506,9 @@ class TvAppApiService {
     String? cursor,
     String? pendingCursor,
     String? genreId,
-    int limit = 30,
+    int limit = 20,
+    String? section,
+    int? tmdbPage,
   }) async {
     final dio = _dio(config.tvAppApiBaseUrl);
     final qp = <String, dynamic>{'limit': limit};
@@ -516,9 +520,12 @@ class TvAppApiService {
     if (pc != null && pc.isNotEmpty) qp['pendingCursor'] = pc;
     final g = genreId?.trim();
     if (g != null && g.isNotEmpty) qp['genreId'] = g;
+    final sec = section?.trim();
+    if (sec != null && sec.isNotEmpty) qp['section'] = sec;
+    if (tmdbPage != null && tmdbPage >= 1) qp['tmdbPage'] = tmdbPage;
 
     _apilog(
-      'API fetchExploreCatalogPage q="$q" cursor=$c pendingCursor=$pc genreId=$g limit=$limit',
+      'API fetchExploreCatalogPage q="$q" cursor=$c pendingCursor=$pc genreId=$g limit=$limit section=$sec tmdbPage=$tmdbPage',
     );
     final response = await dio.get<Map<String, dynamic>>(
       '/me/explore/media',
@@ -568,8 +575,10 @@ class TvAppApiService {
     final pnc =
         response.data?['pendingNextCursor']?.toString().trim() ??
         response.data?['pending_next_cursor']?.toString().trim();
+    final thm = response.data?['tmdbHasMore'] ?? response.data?['tmdb_has_more'];
+    final tmdbHasMore = thm == true || thm == 1 || thm == '1' || thm == 'true';
     _apilog(
-      'API fetchExploreCatalogPage done items=${list.length} pending=${pendingList.length} tmdb=${tmdbList.length} nextCursor=$nc pendingNext=$pnc',
+      'API fetchExploreCatalogPage done items=${list.length} pending=${pendingList.length} tmdb=${tmdbList.length} nextCursor=$nc pendingNext=$pnc tmdbHasMore=$tmdbHasMore',
     );
     return ExploreCatalogPage(
       items: list,
@@ -577,6 +586,7 @@ class TvAppApiService {
       pendingItems: pendingList,
       pendingNextCursor: (pnc != null && pnc.isNotEmpty) ? pnc : null,
       tmdbItems: tmdbList,
+      tmdbHasMore: tmdbHasMore,
     );
   }
 

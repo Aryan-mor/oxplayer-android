@@ -7,8 +7,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/debug/app_debug_log.dart';
+import '../../core/storage/storage_headroom.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
+import '../../download/download_manager.dart';
 import '../../data/library_telegram_sync.dart';
 import '../../data/models/app_media.dart';
 import '../../providers.dart';
@@ -47,6 +49,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final List<FocusNode> _sourceFocusNodes = <FocusNode>[];
   final List<FocusNode> _gridFocusNodes = <FocusNode>[];
   late final FocusNode _syncButtonFocusNode;
+  late final FocusNode _storageCacheButtonFocusNode;
   late final FocusNode _exploreFocusNode;
   late final FocusNode _logoutButtonFocusNode;
 
@@ -58,6 +61,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       (index) => FocusNode(debugLabel: 'TypeFocus$index'),
     );
     _syncButtonFocusNode = FocusNode(debugLabel: 'SyncButtonFocus');
+    _storageCacheButtonFocusNode =
+        FocusNode(debugLabel: 'StorageCacheButtonFocus');
     _exploreFocusNode = FocusNode(debugLabel: 'ExploreNav');
     _logoutButtonFocusNode = FocusNode(debugLabel: 'LogoutButtonFocus');
 
@@ -81,6 +86,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       node.dispose();
     }
     _syncButtonFocusNode.dispose();
+    _storageCacheButtonFocusNode.dispose();
     _exploreFocusNode.dispose();
     _logoutButtonFocusNode.dispose();
     _sidebarScopeNode.dispose();
@@ -353,6 +359,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     context.push('/item/${Uri.encodeComponent(id)}');
   }
 
+  Future<void> _showStorageManageDialog(BuildContext context) async {
+    final dm = ref.read(downloadManagerProvider).valueOrNull;
+    if (dm == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _StorageManageDialog(dm: dm),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaAsync = ref.watch(mediaListProvider);
@@ -369,6 +384,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final selectedType = ref.watch(selectedTypeFilterProvider);
     final selectedSource = ref.watch(selectedSourceFilterProvider);
     final canExplore = ref.watch(authNotifierProvider).canAccessExplore;
+    final downloadMgrAsync = ref.watch(downloadManagerProvider);
+    final showStorageCacheButton = downloadMgrAsync.hasValue &&
+        downloadMgrAsync.requireValue.hasLocalStorageFootprintQuick();
     if (selectedSource != null && !sources.any((s) => s.id == selectedSource)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ref.read(selectedSourceFilterProvider.notifier).state = null;
@@ -485,56 +503,97 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: TVButton(
-                        focusNode: _syncButtonFocusNode,
-                        autofocus: true,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        onKeyEvent: (_, event) {
-                          if (_isRight(event)) {
-                            _focusGridFromSidebar();
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        onPressed: () {
-                          if (_isSyncing) {
-                            setState(() => _syncCancelRequested = true);
-                            _homeSyncLog('HomeScreen: sync cancel requested');
-                            return;
-                          }
-                          _triggerSync(isManual: true);
-                        },
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.sync_rounded,
-                              color: Colors.white.withValues(
-                                alpha: 1,
-                              ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: TVButton(
+                            focusNode: _syncButtonFocusNode,
+                            autofocus: true,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                _isSyncing
-                                    ? (_syncCancelRequested
-                                        ? 'Cancelling…'
-                                        : 'Syncing… (press to cancel)')
-                                    : 'Sync library',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w500,
+                            onKeyEvent: (_, event) {
+                              if (_isRight(event)) {
+                                if (showStorageCacheButton) {
+                                  _storageCacheButtonFocusNode.requestFocus();
+                                  return KeyEventResult.handled;
+                                }
+                                _focusGridFromSidebar();
+                                return KeyEventResult.handled;
+                              }
+                              return KeyEventResult.ignored;
+                            },
+                            onPressed: () {
+                              if (_isSyncing) {
+                                setState(() => _syncCancelRequested = true);
+                                _homeSyncLog(
+                                  'HomeScreen: sync cancel requested',
+                                );
+                                return;
+                              }
+                              _triggerSync(isManual: true);
+                            },
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.sync_rounded,
+                                  color: Colors.white.withValues(
+                                    alpha: 1,
+                                  ),
                                 ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _isSyncing
+                                        ? (_syncCancelRequested
+                                            ? 'Cancelling…'
+                                            : 'Syncing… (press to cancel)')
+                                        : 'Sync library',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (showStorageCacheButton) ...[
+                          const SizedBox(width: 10),
+                          SizedBox(
+                            width: 56,
+                            child: TVButton(
+                              focusNode: _storageCacheButtonFocusNode,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 14,
+                              ),
+                              onKeyEvent: (_, event) {
+                                if (_isLeft(event)) {
+                                  _syncButtonFocusNode.requestFocus();
+                                  return KeyEventResult.handled;
+                                }
+                                if (_isRight(event)) {
+                                  _focusGridFromSidebar();
+                                  return KeyEventResult.handled;
+                                }
+                                return KeyEventResult.ignored;
+                              },
+                              onPressed: () =>
+                                  unawaited(_showStorageManageDialog(context)),
+                              child: const Icon(
+                                Icons.delete_sweep_rounded,
+                                color: Colors.white,
+                                size: 26,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 18),
                     Expanded(
@@ -1016,6 +1075,225 @@ class _PosterGridTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Local downloads + Telegram cache management (opened from sidebar cache icon).
+class _StorageManageDialog extends StatefulWidget {
+  const _StorageManageDialog({required this.dm});
+
+  final DownloadManager dm;
+
+  @override
+  State<_StorageManageDialog> createState() => _StorageManageDialogState();
+}
+
+class _StorageManageDialogState extends State<_StorageManageDialog> {
+  LocalMediaStorageStats? _stats;
+  bool _loading = true;
+  String? _error;
+  bool _clearingCache = false;
+  bool _clearingAll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_reloadStats());
+  }
+
+  Future<void> _reloadStats({bool showLoadingSpinner = true}) async {
+    if (showLoadingSpinner) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    try {
+      final s = await widget.dm.queryLocalMediaStorageStats();
+      if (!mounted) return;
+      setState(() {
+        _stats = s;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _onClearCache() async {
+    if (_stats == null || _stats!.cacheBytes <= 0 || _clearingCache) return;
+    setState(() => _clearingCache = true);
+    try {
+      await widget.dm.clearTelegramTemporaryCache();
+      if (!mounted) return;
+      await _reloadStats(showLoadingSpinner: false);
+    } finally {
+      if (mounted) setState(() => _clearingCache = false);
+    }
+  }
+
+  Future<void> _onClearAll() async {
+    if (_stats == null || _stats!.totalBytes <= 0 || _clearingAll) return;
+    setState(() => _clearingAll = true);
+    try {
+      await widget.dm.clearAllDownloadsAndCache();
+      if (!mounted) return;
+      await _reloadStats(showLoadingSpinner: false);
+    } finally {
+      if (mounted) setState(() => _clearingAll = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.card,
+      title: const Text(
+        'Storage & cache',
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+      ),
+      content: SizedBox(
+        width: 520,
+        child: _loading
+            ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            : _error != null
+                ? Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.redAccent),
+                  )
+                : SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'This screen shows video files saved on this device '
+                          'through TeleCima (finished downloads) and temporary data '
+                          'Telegram keeps while you stream or pause a download. '
+                          'Clear cache frees that temporary data only. Clear all '
+                          'removes saved files and download history on this device.',
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            height: 1.4,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Downloaded on this device (${_stats!.downloadedFiles.length})',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (_stats!.downloadedFiles.isEmpty)
+                          const Text(
+                            'No finished downloads on this device.',
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 14,
+                            ),
+                          )
+                        else
+                          ..._stats!.downloadedFiles.map(
+                            (e) => Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      e.label,
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    formatStorageHuman(e.bytes),
+                                    style: const TextStyle(
+                                      color: AppColors.textMuted,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+      ),
+      actions: [
+        FocusTraversalGroup(
+          policy: OrderedTraversalPolicy(),
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              if (!_loading && _error == null && _stats != null) ...[
+                TVButton(
+                  enabled: !_clearingCache &&
+                      !_clearingAll &&
+                      _stats!.cacheBytes > 0,
+                  onPressed: () => unawaited(_onClearCache()),
+                  child: _clearingCache
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(
+                          'Clear cache (${formatStorageHuman(_stats!.cacheBytes)})',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                ),
+                TVButton(
+                  enabled: !_clearingCache &&
+                      !_clearingAll &&
+                      _stats!.totalBytes > 0,
+                  onPressed: () => unawaited(_onClearAll()),
+                  child: _clearingAll
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(
+                          'Clear all (${formatStorageHuman(_stats!.totalBytes)})',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                ),
+              ],
+              TVButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

@@ -14,6 +14,9 @@ import '../../providers.dart';
 /// First screenful of genre chips before "+n" expands the rest.
 const int _kGenrePreviewCount = 10;
 
+/// Matches API default [/me/explore/media] page size.
+const int _kExplorePageSize = 20;
+
 class ExploreScreen extends ConsumerStatefulWidget {
   const ExploreScreen({super.key, this.initialGenreId});
 
@@ -35,6 +38,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       FocusNode(debugLabel: 'ExploreSearchShell');
   final FocusNode _genreAllFocusNode = FocusNode(debugLabel: 'ExploreGenreAll');
   final FocusNode _genreMoreFocusNode = FocusNode(debugLabel: 'ExploreGenreMore');
+  final FocusNode _showMoreAvailableFocusNode =
+      FocusNode(debugLabel: 'ExploreShowMoreAvailable');
+  final FocusNode _showMorePendingFocusNode =
+      FocusNode(debugLabel: 'ExploreShowMorePending');
+  final FocusNode _showMoreTmdbFocusNode =
+      FocusNode(debugLabel: 'ExploreShowMoreTmdb');
   final List<FocusNode> _gridFocusNodes = <FocusNode>[];
   final List<FocusNode> _genreChipFocusNodes = <FocusNode>[];
 
@@ -46,9 +55,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   String? _nextCursor;
   String? _pendingNextCursor;
   String? _busyTmdbKey;
-  bool _end = false;
+  bool _tmdbHasMore = false;
+  /// Next TMDB API page to request for “Show more” (1 after initial load consumed page 1).
+  int _tmdbFetchPage = 1;
   bool _loadingInitial = true;
-  bool _loadingMore = false;
+  bool _loadingMoreAvailable = false;
+  bool _loadingMorePending = false;
+  bool _loadingMoreTmdb = false;
   String _activeQuery = '';
   String? _activeGenreId;
   String? _selectedGenreId;
@@ -62,7 +75,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     super.initState();
     _selectedGenreId = _normalizeGenreId(widget.initialGenreId);
     _activeGenreId = _selectedGenreId;
-    _scrollController.addListener(_onScroll);
     _searchController.addListener(_onSearchTextChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_loadGenres());
@@ -92,7 +104,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _sidebarScrollController.dispose();
     _searchController.removeListener(_onSearchTextChanged);
@@ -101,6 +112,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     _searchShellFocusNode.dispose();
     _genreAllFocusNode.dispose();
     _genreMoreFocusNode.dispose();
+    _showMoreAvailableFocusNode.dispose();
+    _showMorePendingFocusNode.dispose();
+    _showMoreTmdbFocusNode.dispose();
     for (final n in _gridFocusNodes) {
       n.dispose();
     }
@@ -116,16 +130,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (!mounted) return;
       unawaited(_restartCatalogFromSearch());
     });
-  }
-
-  void _onScroll() {
-    if (!_scrollController.hasClients) return;
-    final pos = _scrollController.position;
-    if (pos.pixels < pos.maxScrollExtent - 720) return;
-    if (_loadingMore || _loadingInitial || _end) {
-      return;
-    }
-    unawaited(_loadNextPage());
   }
 
   void _resizeGridFocus(int count) {
@@ -219,7 +223,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _nextCursor = null;
       _pendingNextCursor = null;
       _busyTmdbKey = null;
-      _end = false;
+      _tmdbHasMore = false;
+      _tmdbFetchPage = 1;
       _loadingInitial = true;
       _lastLoadError = '';
     });
@@ -228,7 +233,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       await Future<void>.delayed(Duration.zero);
     }
     _scrollController.jumpTo(0);
-    await _fetchPage(append: false);
+    await _fetchFullCatalog();
   }
 
   Future<void> _loadFirstPage() async {
@@ -238,7 +243,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         _activeGenreId = _selectedGenreId;
       });
     }
-    await _fetchPage(append: false);
+    await _fetchFullCatalog();
   }
 
   Future<void> _reloadCatalogAfterLibrarySync() async {
@@ -253,7 +258,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _nextCursor = null;
       _pendingNextCursor = null;
       _busyTmdbKey = null;
-      _end = false;
+      _tmdbHasMore = false;
+      _tmdbFetchPage = 1;
       _loadingInitial = true;
       _lastLoadError = '';
     });
@@ -264,22 +270,15 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
-    await _fetchPage(append: false);
+    await _fetchFullCatalog();
     unawaited(_loadGenres());
   }
 
-  Future<void> _loadNextPage() => _fetchPage(append: true);
-
-  Future<void> _fetchPage({required bool append}) async {
-    if (_loadingMore && append) return;
-    if (append) {
-      setState(() => _loadingMore = true);
-    } else {
-      setState(() {
-        _loadingInitial = true;
-        _lastLoadError = '';
-      });
-    }
+  Future<void> _fetchFullCatalog() async {
+    setState(() {
+      _loadingInitial = true;
+      _lastLoadError = '';
+    });
 
     final auth = ref.read(authNotifierProvider);
     final token = auth.apiAccessToken;
@@ -287,7 +286,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (mounted) {
         setState(() {
           _loadingInitial = false;
-          _loadingMore = false;
           _lastLoadError = 'Not signed in.';
         });
       }
@@ -301,25 +299,20 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         config: config,
         accessToken: token,
         query: _activeQuery,
-        cursor: append ? _nextCursor : null,
-        pendingCursor: append ? _pendingNextCursor : null,
         genreId: _activeGenreId,
+        limit: _kExplorePageSize,
+        tmdbPage: 1,
       );
       if (!mounted) return;
       setState(() {
-        if (append) {
-          _items = [..._items, ...page.items];
-          _pendingItems = [..._pendingItems, ...page.pendingItems];
-        } else {
-          _items = List.of(page.items);
-          _pendingItems = List.of(page.pendingItems);
-          _tmdbItems = List.of(page.tmdbItems);
-        }
+        _items = List.of(page.items);
+        _pendingItems = List.of(page.pendingItems);
+        _tmdbItems = List.of(page.tmdbItems);
         _nextCursor = page.nextCursor;
         _pendingNextCursor = page.pendingNextCursor;
-        _end = page.nextCursor == null && page.pendingNextCursor == null;
+        _tmdbHasMore = page.tmdbHasMore;
+        _tmdbFetchPage = page.tmdbHasMore ? 2 : 1;
         _loadingInitial = false;
-        _loadingMore = false;
       });
       _resizeGridFocus(
         _items.length + _pendingItems.length + _tmdbItems.length,
@@ -328,8 +321,129 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (!mounted) return;
       setState(() {
         _loadingInitial = false;
-        _loadingMore = false;
         _lastLoadError = 'Could not load catalog: $e';
+      });
+    }
+  }
+
+  Future<void> _appendAvailable() async {
+    final c = _nextCursor;
+    if (c == null || c.isEmpty || _loadingMoreAvailable) return;
+    setState(() => _loadingMoreAvailable = true);
+    final auth = ref.read(authNotifierProvider);
+    final token = auth.apiAccessToken;
+    if (token == null || token.isEmpty) {
+      if (mounted) setState(() => _loadingMoreAvailable = false);
+      return;
+    }
+    try {
+      final config = ref.read(appConfigProvider);
+      final api = ref.read(tvAppApiServiceProvider);
+      final page = await api.fetchExploreCatalogPage(
+        config: config,
+        accessToken: token,
+        query: _activeQuery,
+        cursor: c,
+        genreId: _activeGenreId,
+        limit: _kExplorePageSize,
+        section: 'available',
+      );
+      if (!mounted) return;
+      setState(() {
+        _items = [..._items, ...page.items];
+        _nextCursor = page.nextCursor;
+        _loadingMoreAvailable = false;
+      });
+      _resizeGridFocus(
+        _items.length + _pendingItems.length + _tmdbItems.length,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingMoreAvailable = false;
+        _lastLoadError = 'Could not load more: $e';
+      });
+    }
+  }
+
+  Future<void> _appendPending() async {
+    final c = _pendingNextCursor;
+    if (c == null || c.isEmpty || _loadingMorePending) return;
+    setState(() => _loadingMorePending = true);
+    final auth = ref.read(authNotifierProvider);
+    final token = auth.apiAccessToken;
+    if (token == null || token.isEmpty) {
+      if (mounted) setState(() => _loadingMorePending = false);
+      return;
+    }
+    try {
+      final config = ref.read(appConfigProvider);
+      final api = ref.read(tvAppApiServiceProvider);
+      final page = await api.fetchExploreCatalogPage(
+        config: config,
+        accessToken: token,
+        query: _activeQuery,
+        pendingCursor: c,
+        genreId: _activeGenreId,
+        limit: _kExplorePageSize,
+        section: 'pending',
+      );
+      if (!mounted) return;
+      setState(() {
+        _pendingItems = [..._pendingItems, ...page.pendingItems];
+        _pendingNextCursor = page.pendingNextCursor;
+        _loadingMorePending = false;
+      });
+      _resizeGridFocus(
+        _items.length + _pendingItems.length + _tmdbItems.length,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingMorePending = false;
+        _lastLoadError = 'Could not load more: $e';
+      });
+    }
+  }
+
+  Future<void> _appendTmdb() async {
+    if (!_tmdbHasMore || _loadingMoreTmdb) return;
+    setState(() => _loadingMoreTmdb = true);
+    final auth = ref.read(authNotifierProvider);
+    final token = auth.apiAccessToken;
+    if (token == null || token.isEmpty) {
+      if (mounted) setState(() => _loadingMoreTmdb = false);
+      return;
+    }
+    try {
+      final config = ref.read(appConfigProvider);
+      final api = ref.read(tvAppApiServiceProvider);
+      final page = await api.fetchExploreCatalogPage(
+        config: config,
+        accessToken: token,
+        query: _activeQuery,
+        genreId: _activeGenreId,
+        limit: _kExplorePageSize,
+        section: 'tmdb',
+        tmdbPage: _tmdbFetchPage,
+      );
+      if (!mounted) return;
+      setState(() {
+        _tmdbItems = [..._tmdbItems, ...page.tmdbItems];
+        _tmdbHasMore = page.tmdbHasMore;
+        if (page.tmdbHasMore) {
+          _tmdbFetchPage += 1;
+        }
+        _loadingMoreTmdb = false;
+      });
+      _resizeGridFocus(
+        _items.length + _pendingItems.length + _tmdbItems.length,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingMoreTmdb = false;
+        _lastLoadError = 'Could not load more: $e';
       });
     }
   }
@@ -391,7 +505,39 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     if (genreName != null) {
       return 'TMDB · $genreName';
     }
-    return 'TMDB';
+    return 'Popular on TMDB';
+  }
+
+  Widget _showMoreSliver({
+    required bool visible,
+    required bool loading,
+    required VoidCallback onPressed,
+    required FocusNode focusNode,
+  }) {
+    if (!visible) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(0, 6, 0, 20),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: TVButton(
+            focusNode: focusNode,
+            enabled: !loading,
+            onPressed: onPressed,
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+            child: loading
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Show more'),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _catalogPosterTile({
@@ -557,12 +703,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   Widget _buildExploreCatalogBody(BuildContext context) {
-    final total =
-        _items.length + _pendingItems.length + _tmdbItems.length;
+    final total = _items.length + _pendingItems.length + _tmdbItems.length;
+    final showTmdbChrome = _tmdbItems.isNotEmpty || _tmdbHasMore;
+
     if (_loadingInitial && total == 0) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (total == 0) {
+    if (!_loadingInitial && total == 0 && !showTmdbChrome) {
       return const Center(
         child: Text(
           'No titles match your filters.',
@@ -598,6 +745,14 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         ),
       );
       focusBase += _items.length;
+      slivers.add(
+        _showMoreSliver(
+          visible: _nextCursor != null && _nextCursor!.isNotEmpty,
+          loading: _loadingMoreAvailable,
+          focusNode: _showMoreAvailableFocusNode,
+          onPressed: () => unawaited(_appendAvailable()),
+        ),
+      );
     }
 
     if (_pendingItems.isNotEmpty) {
@@ -617,64 +772,51 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         ),
       );
       focusBase += _pendingItems.length;
+      slivers.add(
+        _showMoreSliver(
+          visible: _pendingNextCursor != null && _pendingNextCursor!.isNotEmpty,
+          loading: _loadingMorePending,
+          focusNode: _showMorePendingFocusNode,
+          onPressed: () => unawaited(_appendPending()),
+        ),
+      );
     }
 
-    if (_tmdbItems.isNotEmpty) {
+    if (showTmdbChrome) {
       slivers.add(
         SliverToBoxAdapter(child: _sectionTitle(_tmdbSectionLabel())),
       );
-      final fb = focusBase;
-      slivers.add(
-        SliverGrid(
-          gridDelegate: gridDelegate,
-          delegate: SliverChildBuilderDelegate(
-            (ctx, i) => _tmdbPosterTile(
-              context: ctx,
-              item: _tmdbItems[i],
-              focusNode: _gridFocusNodes[fb + i],
+      if (_tmdbItems.isNotEmpty) {
+        final fb = focusBase;
+        slivers.add(
+          SliverGrid(
+            gridDelegate: gridDelegate,
+            delegate: SliverChildBuilderDelegate(
+              (ctx, i) => _tmdbPosterTile(
+                context: ctx,
+                item: _tmdbItems[i],
+                focusNode: _gridFocusNodes[fb + i],
+              ),
+              childCount: _tmdbItems.length,
             ),
-            childCount: _tmdbItems.length,
           ),
+        );
+        focusBase += _tmdbItems.length;
+      }
+      slivers.add(
+        _showMoreSliver(
+          visible: _tmdbHasMore,
+          loading: _loadingMoreTmdb,
+          focusNode: _showMoreTmdbFocusNode,
+          onPressed: () => unawaited(_appendTmdb()),
         ),
       );
     }
 
-    return Stack(
-      children: [
-        CustomScrollView(
-          controller: _scrollController,
-          cacheExtent: 1800,
-          slivers: slivers,
-        ),
-        if (_loadingMore)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 12,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 10),
-                    Text('Loading more…'),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
+    return CustomScrollView(
+      controller: _scrollController,
+      cacheExtent: 1800,
+      slivers: slivers,
     );
   }
 

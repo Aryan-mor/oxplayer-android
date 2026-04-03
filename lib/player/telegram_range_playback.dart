@@ -68,6 +68,9 @@ class TelegramRangePlayback {
 
   static final TelegramRangePlayback instance = TelegramRangePlayback._();
 
+  /// Approximate bytes TDLib holds for the active range stream (0 if idle).
+  int get activeStreamCacheBytes => _downloadedSize;
+
   HttpServer? _server;
   TdlibFacade? _tdlib;
   /// Bumped on each [open] / [releaseActiveCacheIfAny] so stale loopback

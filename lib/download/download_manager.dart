@@ -217,6 +217,29 @@ class MediaDownloadRecord {
       };
 }
 
+/// One saved file on disk (completed download) for storage UI.
+class DownloadedFileOnDevice {
+  const DownloadedFileOnDevice({required this.label, required this.bytes});
+
+  final String label;
+  final int bytes;
+}
+
+/// Breakdown for “cache” vs “all” local Telegram media footprint.
+class LocalMediaStorageStats {
+  const LocalMediaStorageStats({
+    required this.downloadedFiles,
+    required this.completedBytes,
+    required this.cacheBytes,
+    required this.totalBytes,
+  });
+
+  final List<DownloadedFileOnDevice> downloadedFiles;
+  final int completedBytes;
+  final int cacheBytes;
+  final int totalBytes;
+}
+
 // ─── Manager ─────────────────────────────────────────────────────────────────
 
 /// Manages TDLib-based downloads for a single [globalId] at a time.
@@ -309,6 +332,116 @@ class DownloadManager extends ChangeNotifier {
     final active = _records.toList();
     active.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return active;
+  }
+
+  /// Fast sync check for whether the storage icon should appear (no disk I/O except existsSync).
+  bool hasLocalStorageFootprintQuick() {
+    for (final r in _records) {
+      if (r.status == 'completed') {
+        final p = r.localFilePath?.trim() ?? '';
+        if (p.isNotEmpty) {
+          try {
+            if (File(p).existsSync()) return true;
+          } catch (_) {}
+        }
+      } else {
+        if (r.bytesDownloaded > 0) return true;
+        if (r.tdlibFileId != null) return true;
+      }
+    }
+    return TelegramRangePlayback.instance.activeStreamCacheBytes > 0;
+  }
+
+  Future<LocalMediaStorageStats> queryLocalMediaStorageStats() async {
+    await _loadRecords();
+    final downloaded = <DownloadedFileOnDevice>[];
+    var completedBytes = 0;
+    for (final r in _records) {
+      if (r.status != 'completed') continue;
+      final p = r.localFilePath?.trim() ?? '';
+      if (p.isEmpty) continue;
+      try {
+        final f = File(p);
+        if (!await f.exists()) continue;
+        final len = await f.length();
+        if (len <= 0) continue;
+        completedBytes += len;
+        final label = (r.displayTitle ?? r.mediaTitle ?? r.fileName).trim();
+        downloaded.add(DownloadedFileOnDevice(
+          label: label.isEmpty ? 'Downloaded file' : label,
+          bytes: len,
+        ));
+      } catch (_) {}
+    }
+    var partialBytes = 0;
+    for (final r in _records) {
+      if (r.status == 'completed') continue;
+      partialBytes += r.bytesDownloaded;
+    }
+    final streamBytes = TelegramRangePlayback.instance.activeStreamCacheBytes;
+    final cacheBytes = partialBytes + streamBytes;
+    return LocalMediaStorageStats(
+      downloadedFiles: downloaded,
+      completedBytes: completedBytes,
+      cacheBytes: cacheBytes,
+      totalBytes: completedBytes + cacheBytes,
+    );
+  }
+
+  /// Drops in-progress Telegram buffers (stream + partial TDLib files) without removing finished downloads.
+  Future<void> clearTelegramTemporaryCache() async {
+    await TelegramRangePlayback.instance.releaseActiveCacheIfAny(reason: 'user_clear_cache');
+    var changed = false;
+    for (final row in List<MediaDownloadRecord>.of(_records)) {
+      if (row.status == 'completed') continue;
+      var touched = false;
+      final partialPath = row.localFilePath?.trim() ?? '';
+      if (partialPath.isNotEmpty) {
+        try {
+          await File(partialPath).delete();
+        } catch (_) {}
+        row.localFilePath = null;
+        touched = true;
+      }
+      if (row.tdlibFileId != null) {
+        _stopCompletionPolling(row.tdlibFileId!);
+        _lastProgressLogBytes.remove(row.tdlibFileId!);
+        _fileIdToGlobalId.remove(row.tdlibFileId);
+        try {
+          await _tdlib.send(td.CancelDownloadFile(
+            fileId: row.tdlibFileId!,
+            onlyIfPending: false,
+          ));
+        } catch (_) {}
+        try {
+          await _tdlib.send(td.DeleteFile(fileId: row.tdlibFileId!));
+        } catch (_) {}
+        row.tdlibFileId = null;
+        touched = true;
+      }
+      if (touched) {
+        row.bytesDownloaded = 0;
+        row.status = 'paused';
+        row.updatedAt = DateTime.now().millisecondsSinceEpoch;
+        changed = true;
+        _setState(
+          row.globalId,
+          DownloadPaused(bytesDownloaded: 0, totalBytes: row.totalBytes),
+        );
+      }
+    }
+    if (changed) await _saveRecords();
+    notifyListeners();
+  }
+
+  /// Deletes every persisted download row and local file, and clears temporary Telegram cache.
+  Future<void> clearAllDownloadsAndCache() async {
+    await TelegramRangePlayback.instance.releaseActiveCacheIfAny(reason: 'user_clear_all');
+    final ids = getAllRecords().map((r) => r.globalId).toList();
+    for (final id in ids) {
+      await deleteDownload(id);
+    }
+    notifyListeners();
   }
 
   // ─── Public API ────────────────────────────────────────────────────────────
