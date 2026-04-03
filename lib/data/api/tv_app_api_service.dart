@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -189,6 +190,7 @@ class DiscoveredMediaRef {
 
 class TvAppApiService {
   static const int _kMaxSyncDiscoverItems = 500;
+  static const Duration _kSearchMessagesTimeout = Duration(seconds: 120);
 
   TvAppApiService();
   int _requestCounter = 0;
@@ -602,7 +604,9 @@ class TvAppApiService {
       Set<String> discoveredMediaIds,
     ) onBatch,
     DateTime? minMessageDateUtc,
+    void Function()? onSyncAbortRequested,
   }) async {
+    void abortStep() => onSyncAbortRequested?.call();
     final minDateUnix = minMessageDateUtc != null
         ? (minMessageDateUtc.toUtc().millisecondsSinceEpoch ~/ 1000)
         : 0;
@@ -611,12 +615,14 @@ class TvAppApiService {
       'minDateUnix=$minDateUnix',
     );
     await tdlib.ensureAuthorized();
+    abortStep();
 
     int? myUserId;
     try {
       final me = await tdlib.send(const td.GetMe());
       if (me is td.User) myUserId = me.id;
     } catch (_) {}
+    abortStep();
 
     final chatLabelCache = <int, String>{};
     final byMediaFileId = <String, DiscoveredMediaRef>{};
@@ -656,21 +662,57 @@ class TvAppApiService {
     var offset = '';
     syncPages:
     for (var page = 0; page < 30; page++) {
+      abortStep();
       if (byMediaFileId.length >= _kMaxSyncDiscoverItems &&
           discoveredMediaIds.length >= _kMaxSyncDiscoverItems) {
         break syncPages;
       }
-      final batch = await tdlib.send(
-        td.SearchMessages(
-          chatList: null,
-          query: config.indexTag,
-          offset: offset,
-          limit: 100,
-          filter: null,
-          minDate: minDateUnix,
-          maxDate: 0,
-        ),
-      );
+      td.TdObject batch;
+      StreamSubscription<void>? abortWhileSearch;
+      try {
+        final searchFuture = tdlib
+            .send(
+              td.SearchMessages(
+                chatList: null,
+                query: config.indexTag,
+                offset: offset,
+                limit: 100,
+                filter: null,
+                minDate: minDateUnix,
+                maxDate: 0,
+              ),
+            )
+            .timeout(_kSearchMessagesTimeout);
+
+        if (onSyncAbortRequested != null) {
+          final abortFromPoll = Completer<td.TdObject>();
+          abortWhileSearch =
+              Stream<void>.periodic(const Duration(milliseconds: 300))
+                  .listen((_) {
+            try {
+              onSyncAbortRequested();
+            } catch (e, st) {
+              if (!abortFromPoll.isCompleted) {
+                abortFromPoll.completeError(e, st);
+              }
+            }
+          });
+          batch = await Future.any<td.TdObject>([
+            searchFuture,
+            abortFromPoll.future,
+          ]);
+        } else {
+          batch = await searchFuture;
+        }
+      } on TimeoutException {
+        _apilog(
+          'Sync discover: searchMessages timed out after '
+          '${_kSearchMessagesTimeout.inSeconds}s (page=$page), using partial results',
+        );
+        break syncPages;
+      } finally {
+        await abortWhileSearch?.cancel();
+      }
 
       if (batch is! td.FoundMessages) {
         _apilog(
@@ -678,7 +720,14 @@ class TvAppApiService {
         );
         break;
       }
+      if (page == 0) {
+        _apilog(
+          'Sync discover: first page rawMessages=${batch.messages.length} '
+          'nextOffsetLen=${batch.nextOffset.length}',
+        );
+      }
       for (final msg in batch.messages) {
+        abortStep();
         if (byMediaFileId.length >= _kMaxSyncDiscoverItems &&
             discoveredMediaIds.length >= _kMaxSyncDiscoverItems) {
           break syncPages;

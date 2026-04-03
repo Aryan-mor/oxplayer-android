@@ -11,6 +11,11 @@ import '../core/config/app_config.dart';
 void _synclog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.sync);
 
+/// Thrown when the user cancels an in-progress library sync (e.g. second tap on Sync).
+class LibrarySyncCancelled implements Exception {
+  const LibrarySyncCancelled();
+}
+
 /// How aggressively Telegram [searchMessages] is filtered by date.
 enum TelegramLibrarySyncMode {
   incremental,
@@ -18,6 +23,8 @@ enum TelegramLibrarySyncMode {
 }
 
 /// Telegram hashtag discovery + [DiscoveryRefsStore] merge + POST [/me/sync].
+///
+/// [onSyncAbortRequested]: call between steps; throw [LibrarySyncCancelled] to stop.
 Future<void> runTelegramLibrarySync({
   required TvAppApiService api,
   required AppConfig config,
@@ -25,20 +32,23 @@ Future<void> runTelegramLibrarySync({
   required String accessToken,
   required void Function() invalidateLibrary,
   TelegramLibrarySyncMode mode = TelegramLibrarySyncMode.incremental,
+  void Function()? onSyncAbortRequested,
 }) async {
+  void abortStep() => onSyncAbortRequested?.call();
+
+  abortStep();
   final libraryFetch = await api.fetchLibrary(
     config: config,
     accessToken: accessToken,
   );
   final currentLibrary = libraryFetch.items;
 
-  final existingFileIds = currentLibrary
-      .expand((agg) => agg.files)
-      .map((f) => f.id)
-      .toSet();
+  final existingFileIds =
+      currentLibrary.expand((agg) => agg.files).map((f) => f.id).toSet();
 
   DateTime? minMessageDateUtc;
-  if (mode == TelegramLibrarySyncMode.incremental && currentLibrary.isNotEmpty) {
+  if (mode == TelegramLibrarySyncMode.incremental &&
+      currentLibrary.isNotEmpty) {
     final prefs = await SharedPreferences.getInstance();
     final localMs = prefs.getInt(kSyncIndexWatermarkPrefsKey);
     final localW = localMs != null
@@ -58,12 +68,15 @@ Future<void> runTelegramLibrarySync({
     _synclog('LibrarySync: full Telegram search (no minDate)');
   }
 
+  abortStep();
   _synclog('LibrarySync: scanning Telegram…');
   await api.collectMediaFileIdsFromTelegram(
     tdlib: tdlib,
     config: config,
     minMessageDateUtc: minMessageDateUtc,
+    onSyncAbortRequested: onSyncAbortRequested,
     onBatch: (discoveredRefs, discoveredMediaIds) async {
+      abortStep();
       await DiscoveryRefsStore.merge(discoveredRefs);
       await DiscoveryMediaIdsStore.merge(discoveredMediaIds);
       _synclog(
@@ -73,23 +86,27 @@ Future<void> runTelegramLibrarySync({
     },
   );
 
+  abortStep();
   await DiscoveryRefsStore.pruneLegacyUuidKeys();
   await DiscoveryMediaIdsStore.pruneInvalid();
   final persistedRefs = await DiscoveryRefsStore.loadAll();
-  final persistedMediaIds = (await DiscoveryMediaIdsStore.loadAll()).toList(growable: false);
+  final persistedMediaIds =
+      (await DiscoveryMediaIdsStore.loadAll()).toList(growable: false);
   if (persistedRefs.isEmpty && persistedMediaIds.isEmpty) {
     _synclog('LibrarySync: discovery store empty, sync skipped');
     invalidateLibrary();
     return;
   }
 
+  abortStep();
   _synclog(
     'LibrarySync: syncing ${persistedRefs.length} ref(s), ${persistedMediaIds.length} mediaId(s)',
   );
   final syncResult = await api.syncLibrary(
     config: config,
     accessToken: accessToken,
-    mediaFileIds: persistedRefs.map((r) => r.mediaFileId).toList(growable: false),
+    mediaFileIds:
+        persistedRefs.map((r) => r.mediaFileId).toList(growable: false),
     mediaIds: persistedMediaIds.isEmpty ? null : persistedMediaIds,
     refs: persistedRefs.isEmpty ? null : persistedRefs,
   );

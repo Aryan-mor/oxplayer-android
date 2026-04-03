@@ -32,6 +32,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   static const int _gridColumns = 5;
   static const double _gridRowExtent = 390;
   bool _isSyncing = false;
+  bool _syncCancelRequested = false;
   DateTime? _lastSyncTime;
   DateTime? _lastBackPress;
   bool _isExiting = false;
@@ -87,7 +88,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     super.dispose();
   }
 
-  /// Runs [TelegramLibrarySyncMode.incremental] every time the home screen opens (app session).
+  /// Runs incremental Telegram discovery on home open; manual Sync uses a full hashtag scan (no minDate).
   Future<void> _checkAutoSync() async {
     final auth = ref.read(authNotifierProvider);
     if (auth.apiAccessToken == null || auth.apiAccessToken!.isEmpty) {
@@ -128,16 +129,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return status == 401 || status == 403;
   }
 
-  Future<void> _runSyncWithToken(String accessToken) async {
+  Future<void> _runSyncWithToken(
+    String accessToken, {
+    required TelegramLibrarySyncMode mode,
+  }) async {
     _homeSyncLog(
-        'HomeScreen: running Telegram library sync (incremental)');
+        'HomeScreen: running Telegram library sync (${mode.name})');
     await runTelegramLibrarySync(
       api: ref.read(tvAppApiServiceProvider),
       config: ref.read(appConfigProvider),
       tdlib: ref.read(tdlibFacadeProvider),
       accessToken: accessToken,
       invalidateLibrary: () => ref.invalidate(libraryFetchProvider),
-      mode: TelegramLibrarySyncMode.incremental,
+      mode: mode,
+      onSyncAbortRequested: () {
+        if (_syncCancelRequested) throw const LibrarySyncCancelled();
+      },
     );
   }
 
@@ -146,13 +153,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     bool notifyUserOnFailure = true,
   }) async {
     if (_isSyncing) return;
+    _syncCancelRequested = false;
+    final syncMode = isManual
+        ? TelegramLibrarySyncMode.full
+        : TelegramLibrarySyncMode.incremental;
     setState(() => _isSyncing = true);
     _homeSyncLog('HomeScreen: Sync started (isManual=$isManual)');
 
     try {
       var accessToken = await _requireApiAccessToken();
       try {
-        await _runSyncWithToken(accessToken);
+        await _runSyncWithToken(accessToken, mode: syncMode);
       } on DioException catch (e) {
         if (!_isUnauthorized(e)) rethrow;
 
@@ -163,7 +174,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         await auth.clearApiAccessToken();
         try {
           accessToken = await _requireApiAccessToken();
-          await _runSyncWithToken(accessToken);
+          await _runSyncWithToken(accessToken, mode: syncMode);
         } catch (refreshError) {
           _homeSyncLog(
             'HomeScreen: token refresh/retry failed, logging out: $refreshError',
@@ -176,6 +187,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (mounted) setState(() => _lastSyncTime = DateTime.now());
       ref.read(exploreCatalogRefreshGenerationProvider.notifier).state++;
       _homeSyncLog('HomeScreen: Sync completed successfully');
+    } on LibrarySyncCancelled catch (_) {
+      _homeSyncLog('HomeScreen: Sync cancelled by user');
     } catch (e) {
       _homeSyncLog('HomeScreen: Sync failed: $e');
       if (e is DioException) {
@@ -198,6 +211,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         );
       }
     } finally {
+      _syncCancelRequested = false;
       if (mounted) setState(() => _isSyncing = false);
       _homeSyncLog('HomeScreen: Sync finished (_isSyncing=false)');
     }
@@ -473,21 +487,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           }
                           return KeyEventResult.ignored;
                         },
-                        onPressed: _isSyncing
-                            ? null
-                            : () => _triggerSync(isManual: true),
+                        onPressed: () {
+                          if (_isSyncing) {
+                            setState(() => _syncCancelRequested = true);
+                            _homeSyncLog('HomeScreen: sync cancel requested');
+                            return;
+                          }
+                          _triggerSync(isManual: true);
+                        },
                         child: Row(
                           children: [
                             Icon(
                               Icons.sync_rounded,
                               color: Colors.white.withValues(
-                                alpha: _isSyncing ? 0.5 : 1,
+                                alpha: 1,
                               ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                _isSyncing ? 'Syncing…' : 'Sync library',
+                                _isSyncing
+                                    ? (_syncCancelRequested
+                                        ? 'Cancelling…'
+                                        : 'Syncing… (press to cancel)')
+                                    : 'Sync library',
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontSize: 15,
