@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
 
 import '../core/debug/app_debug_log.dart';
+import '../core/storage/storage_headroom.dart';
+import '../player/telegram_range_playback.dart';
 import '../telegram/media_file_locator_resolver.dart';
 import '../telegram/tdlib_facade.dart';
 
@@ -393,6 +395,7 @@ class DownloadManager extends ChangeNotifier {
     String? mimeType,
     int? fileSize,
     bool allowBackupRecovery = true,
+    void Function(String message)? onStatus,
   }) async {
     if (_unavailableGlobalIds.contains(globalId)) {
       _setState(globalId, const DownloadUnavailable());
@@ -562,6 +565,11 @@ class DownloadManager extends ChangeNotifier {
       await _saveRecords();
       _fileIdToGlobalId[tdFile.id] = globalId;
 
+      await _maybeRunLowStorageCleanupBeforeTransfer(
+        activeFileId: tdFile.id,
+        onStatus: onStatus,
+      );
+
       await _tdlib.send(td.DownloadFile(
         fileId: tdFile.id,
         priority: _kDownloadPriority,
@@ -644,6 +652,7 @@ class DownloadManager extends ChangeNotifier {
         mimeType: mimeType,
         fileSize: fileSize,
         allowBackupRecovery: false,
+        onStatus: onStatus,
       );
     }
   }
@@ -652,6 +661,53 @@ class DownloadManager extends ChangeNotifier {
     final s = e.toString().toLowerCase();
     return s.contains('file metadata missing') ||
         s.contains('cannot identify file');
+  }
+
+  Future<void> _maybeRunLowStorageCleanupBeforeTransfer({
+    required int activeFileId,
+    void Function(String message)? onStatus,
+  }) async {
+    final decision = await queryStorageCleanupDecision();
+    if (!decision.cleanupMode) return;
+
+    final freeText = decision.freeBytes == null
+        ? 'unknown'
+        : '${(decision.freeBytes! / (1024 * 1024)).toStringAsFixed(0)}MB';
+    _dmglog('DownloadManager: low storage free=$freeText -> cleanup');
+    onStatus?.call('Low storage detected. Cleaning cache...');
+
+    final releasedStream = await TelegramRangePlayback.instance
+        .releaseActiveCacheIfAny(reason: 'low_storage_download_start');
+    final releasedDownloads =
+        await releaseInactiveTdlibCache(keepFileId: activeFileId);
+    _dmglog(
+      'DownloadManager: cleanup released stream=$releasedStream downloads=$releasedDownloads',
+    );
+
+    await Future<void>.delayed(kStorageCleanupPause);
+    onStatus?.call('Cache cleanup done. Starting download...');
+  }
+
+  Future<int> releaseInactiveTdlibCache({int? keepFileId}) async {
+    var cleaned = 0;
+    final ordered = _records.toList()
+      ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+    for (final row in ordered) {
+      final fileId = row.tdlibFileId;
+      if (fileId == null) continue;
+      if (fileId == keepFileId) continue;
+      if (row.status == 'downloading') continue;
+      try {
+        await _tdlib
+            .send(td.CancelDownloadFile(fileId: fileId, onlyIfPending: false));
+      } catch (_) {}
+      try {
+        await _tdlib.send(td.DeleteFile(fileId: fileId));
+        cleaned++;
+      } catch (_) {}
+      if (cleaned >= 3) break;
+    }
+    return cleaned;
   }
 
   td.File? _extractFileFromMessage(td.Message msg) {
@@ -696,6 +752,9 @@ class DownloadManager extends ChangeNotifier {
     }
 
     try {
+      await _maybeRunLowStorageCleanupBeforeTransfer(
+        activeFileId: row.tdlibFileId!,
+      );
       _fileIdToGlobalId[row.tdlibFileId!] = globalId;
       await _tdlib.send(td.DownloadFile(
         fileId: row.tdlibFileId!,

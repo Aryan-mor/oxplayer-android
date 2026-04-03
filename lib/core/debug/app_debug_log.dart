@@ -8,6 +8,7 @@ enum AppDebugLogCategory {
   download,
   sync,
   app,
+  stream,
   general,
 }
 
@@ -19,6 +20,7 @@ extension AppDebugLogCategoryLabel on AppDebugLogCategory {
         AppDebugLogCategory.download => 'Download',
         AppDebugLogCategory.sync => 'Sync',
         AppDebugLogCategory.app => 'App',
+        AppDebugLogCategory.stream => 'Stream',
         AppDebugLogCategory.general => 'Other',
       };
 }
@@ -44,6 +46,7 @@ class AppDebugLog extends ChangeNotifier {
     AppDebugLogCategory.download,
     AppDebugLogCategory.sync,
     AppDebugLogCategory.app,
+    AppDebugLogCategory.stream,
     AppDebugLogCategory.general,
   ];
 
@@ -55,8 +58,7 @@ class AppDebugLog extends ChangeNotifier {
     AppDebugLogCategory category = AppDebugLogCategory.general,
   }) {
     if (!kDebugMode) return;
-    final ts = DateTime.now().toIso8601String();
-    final line = '[$ts] $message';
+    final line = message;
     _entries.add(_LogEntry(line, category));
     debugPrint('[${category.name}] $line');
     while (_entries.length > maxLines) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:tdlib/td_api.dart' as td;
 
 import '../core/debug/app_debug_log.dart';
@@ -5,6 +7,9 @@ import 'tdlib_facade.dart';
 
 void _locatorLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
+
+const Duration _kResolveSendTimeout = Duration(seconds: 8);
+const Duration _kResolveOverallTimeout = Duration(seconds: 35);
 
 class ResolvedTelegramMediaFile {
   const ResolvedTelegramMediaFile({
@@ -51,6 +56,42 @@ Future<ResolvedTelegramMediaFile?> resolveTelegramMediaFile({
   String? providerBotUsername,
   Future<bool> Function(String mediaFileId)? recoverFromBackup,
 }) async {
+  return _resolveTelegramMediaFileImpl(
+    tdlib: tdlib,
+    mediaFileId: mediaFileId,
+    indexTagForFileSearch: indexTagForFileSearch,
+    telegramFileId: telegramFileId,
+    sourceChatId: sourceChatId,
+    locatorType: locatorType,
+    locatorChatId: locatorChatId,
+    locatorMessageId: locatorMessageId,
+    locatorBotUsername: locatorBotUsername,
+    locatorRemoteFileId: locatorRemoteFileId,
+    providerBotUsername: providerBotUsername,
+    recoverFromBackup: recoverFromBackup,
+  ).timeout(_kResolveOverallTimeout, onTimeout: () {
+    _locatorLog(
+      'Locator: resolve timeout after ${_kResolveOverallTimeout.inSeconds}s '
+      'mediaFileId=$mediaFileId',
+    );
+    return null;
+  });
+}
+
+Future<ResolvedTelegramMediaFile?> _resolveTelegramMediaFileImpl({
+  required TdlibFacade tdlib,
+  required String mediaFileId,
+  required String indexTagForFileSearch,
+  String? telegramFileId,
+  int? sourceChatId,
+  String? locatorType,
+  int? locatorChatId,
+  int? locatorMessageId,
+  String? locatorBotUsername,
+  String? locatorRemoteFileId,
+  String? providerBotUsername,
+  Future<bool> Function(String mediaFileId)? recoverFromBackup,
+}) async {
   _locatorLog(
     'Locator: resolve start mediaFileId=$mediaFileId '
     'locatorType=$locatorType chat=$locatorChatId msg=$locatorMessageId',
@@ -76,11 +117,13 @@ Future<ResolvedTelegramMediaFile?> resolveTelegramMediaFile({
 
   if ((locatorRemoteFileId ?? '').trim().isNotEmpty) {
     try {
-      final remoteFile = await tdlib.send(
-        td.GetRemoteFile(
+      final remoteFile = await _sendWithTimeout(
+        tdlib: tdlib,
+        request: td.GetRemoteFile(
           remoteFileId: locatorRemoteFileId!.trim(),
           fileType: null,
         ),
+        op: 'GetRemoteFile(locatorRemoteFileId)',
       );
       if (remoteFile is td.File) {
         return ResolvedTelegramMediaFile(
@@ -102,7 +145,8 @@ Future<ResolvedTelegramMediaFile?> resolveTelegramMediaFile({
   }
 
   if ((locatorBotUsername ?? '').trim().isNotEmpty) {
-    final runtimeChatId = await _resolveBotPrivateChatId(tdlib, locatorBotUsername!.trim());
+    final runtimeChatId =
+        await _resolveBotPrivateChatId(tdlib, locatorBotUsername!.trim());
     if (runtimeChatId != null) {
       final fromBotChat = await _resolveFileFromSourceChat(
         tdlib: tdlib,
@@ -115,7 +159,8 @@ Future<ResolvedTelegramMediaFile?> resolveTelegramMediaFile({
   }
 
   if ((providerBotUsername ?? '').trim().isNotEmpty) {
-    final providerChatId = await _resolveBotPrivateChatId(tdlib, providerBotUsername!.trim());
+    final providerChatId =
+        await _resolveBotPrivateChatId(tdlib, providerBotUsername!.trim());
     if (providerChatId != null) {
       final fromProviderChat = await _resolveFileFromSourceChat(
         tdlib: tdlib,
@@ -129,8 +174,13 @@ Future<ResolvedTelegramMediaFile?> resolveTelegramMediaFile({
 
   if ((telegramFileId ?? '').trim().isNotEmpty) {
     try {
-      final remoteFile = await tdlib.send(
-        td.GetRemoteFile(remoteFileId: telegramFileId!.trim(), fileType: null),
+      final remoteFile = await _sendWithTimeout(
+        tdlib: tdlib,
+        request: td.GetRemoteFile(
+          remoteFileId: telegramFileId!.trim(),
+          fileType: null,
+        ),
+        op: 'GetRemoteFile(telegramFileId)',
       );
       if (remoteFile is td.File) {
         return ResolvedTelegramMediaFile(
@@ -176,18 +226,28 @@ Future<ResolvedTelegramMediaFile?> _resolveFileFromSourceChat({
   final queries = _searchQueriesForMediaFileId(mediaFileId, indexTagForFileSearch);
   final seenMessageIds = <int>{};
   for (final query in queries) {
-    final result = await tdlib.send(
-      td.SearchChatMessages(
-        chatId: sourceChatId,
-        query: query,
-        senderId: null,
-        filter: null,
-        messageThreadId: 0,
-        fromMessageId: 0,
-        offset: 0,
-        limit: 20,
-      ),
-    );
+    late final td.TdObject result;
+    try {
+      result = await _sendWithTimeout(
+        tdlib: tdlib,
+        request: td.SearchChatMessages(
+            chatId: sourceChatId,
+            query: query,
+            senderId: null,
+            filter: null,
+            messageThreadId: 0,
+            fromMessageId: 0,
+            offset: 0,
+            limit: 20),
+        op: 'SearchChatMessages(query=$query chat=$sourceChatId)',
+      );
+    } on TimeoutException {
+      _locatorLog(
+        'Locator: SearchChatMessages timed out, trying next query '
+        '(chat=$sourceChatId q=$query)',
+      );
+      continue;
+    }
     final messages = <td.Message>[];
     if (result is td.FoundChatMessages) {
       messages.addAll(result.messages);
@@ -210,8 +270,11 @@ Future<ResolvedTelegramMediaFile?> _resolveFileFromSourceChat({
       final rt = msg.replyTo;
       if (rt is! td.MessageReplyToMessage) continue;
       try {
-        final repliedObj =
-            await tdlib.send(td.GetMessage(chatId: sourceChatId, messageId: rt.messageId));
+        final repliedObj = await _sendWithTimeout(
+          tdlib: tdlib,
+          request: td.GetMessage(chatId: sourceChatId, messageId: rt.messageId),
+          op: 'GetMessage(replyTo=${rt.messageId} chat=$sourceChatId)',
+        );
         if (repliedObj is! td.Message) continue;
         final repliedFile = _extractFileFromMessage(repliedObj);
         if (repliedFile == null) continue;
@@ -233,7 +296,11 @@ Future<_ExtractedFromMessage?> _resolveFileByMessage({
   required int messageId,
 }) async {
   try {
-    final msgObj = await tdlib.send(td.GetMessage(chatId: chatId, messageId: messageId));
+    final msgObj = await _sendWithTimeout(
+      tdlib: tdlib,
+      request: td.GetMessage(chatId: chatId, messageId: messageId),
+      op: 'GetMessage(chat=$chatId msg=$messageId)',
+    );
     if (msgObj is! td.Message) return null;
     final direct = _extractFileFromMessage(msgObj);
     if (direct != null) {
@@ -241,7 +308,11 @@ Future<_ExtractedFromMessage?> _resolveFileByMessage({
     }
     final rt = msgObj.replyTo;
     if (rt is td.MessageReplyToMessage) {
-      final repliedObj = await tdlib.send(td.GetMessage(chatId: chatId, messageId: rt.messageId));
+      final repliedObj = await _sendWithTimeout(
+        tdlib: tdlib,
+        request: td.GetMessage(chatId: chatId, messageId: rt.messageId),
+        op: 'GetMessage(replyTo=${rt.messageId} chat=$chatId)',
+      );
       if (repliedObj is td.Message) {
         final repliedFile = _extractFileFromMessage(repliedObj);
         if (repliedFile != null) {
@@ -257,13 +328,36 @@ Future<_ExtractedFromMessage?> _resolveFileByMessage({
 
 Future<int?> _resolveBotPrivateChatId(TdlibFacade tdlib, String botUsername) async {
   try {
-    final resolved = await tdlib.send(td.SearchPublicChat(username: botUsername));
+    final resolved = await _sendWithTimeout(
+      tdlib: tdlib,
+      request: td.SearchPublicChat(username: botUsername),
+      op: 'SearchPublicChat($botUsername)',
+    );
     if (resolved is! td.Chat || resolved.type is! td.ChatTypePrivate) return null;
     final botUserId = (resolved.type as td.ChatTypePrivate).userId;
-    final privateChat = await tdlib.send(td.CreatePrivateChat(userId: botUserId, force: false));
+    final privateChat = await _sendWithTimeout(
+      tdlib: tdlib,
+      request: td.CreatePrivateChat(userId: botUserId, force: false),
+      op: 'CreatePrivateChat(user=$botUserId)',
+    );
     if (privateChat is td.Chat) return privateChat.id;
   } catch (_) {}
   return null;
+}
+
+Future<td.TdObject> _sendWithTimeout({
+  required TdlibFacade tdlib,
+  required td.TdFunction request,
+  required String op,
+}) async {
+  try {
+    return await tdlib.send(request).timeout(_kResolveSendTimeout);
+  } on TimeoutException {
+    _locatorLog(
+      'Locator: timeout op=$op after ${_kResolveSendTimeout.inSeconds}s',
+    );
+    rethrow;
+  }
 }
 
 td.File? _extractFileFromMessage(td.Message msg) {

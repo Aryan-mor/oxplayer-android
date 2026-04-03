@@ -18,6 +18,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL_PLAYER = "telecima/external_player"
+        private const val CHANNEL_INTERNAL_PLAYER = "telecima/internal_player"
         private const val CHANNEL_MEDIA = "telecima/media_utils"
         private const val CHANNEL_APP = "telecima/app_info"
         private const val CHANNEL_STORAGE = "telecima/storage_space"
@@ -234,6 +235,59 @@ class MainActivity : FlutterActivity() {
                         } catch (_: ActivityNotFoundException) {
                             result.success(false)
                         } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // ── In-app ExoPlayer (Media3) ────────────────────────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_INTERNAL_PLAYER)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "playHttpUrl" -> {
+                        val url = call.argument<String>("url")?.trim().orEmpty()
+                        val title = (call.argument<String>("title") ?: "Video").ifBlank { "Video" }
+                        if (url.isEmpty()) {
+                            result.error("INVALID_ARG", "url is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            startActivity(
+                                Intent(this, InternalPlayerActivity::class.java).apply {
+                                    putExtra(InternalPlayerActivity.EXTRA_STREAM_URL, url)
+                                    putExtra(InternalPlayerActivity.EXTRA_TITLE, title)
+                                },
+                            )
+                            result.success(true)
+                        } catch (e: Exception) {
+                            android.util.Log.e("TeleCima", "playHttpUrl", e)
+                            result.success(false)
+                        }
+                    }
+                    "playLocalFile" -> {
+                        val path = call.argument<String>("path")?.trim().orEmpty()
+                        val title = (call.argument<String>("title") ?: "Video").ifBlank { "Video" }
+                        if (path.isEmpty()) {
+                            result.error("INVALID_ARG", "path is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        val f = File(path)
+                        if (!f.isFile) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            startActivity(
+                                Intent(this, InternalPlayerActivity::class.java).apply {
+                                    putExtra(InternalPlayerActivity.EXTRA_LOCAL_PATH, path)
+                                    putExtra(InternalPlayerActivity.EXTRA_TITLE, title)
+                                },
+                            )
+                            result.success(true)
+                        } catch (e: Exception) {
+                            android.util.Log.e("TeleCima", "playLocalFile", e)
                             result.success(false)
                         }
                     }

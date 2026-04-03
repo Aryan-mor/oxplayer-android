@@ -18,6 +18,8 @@ import '../../core/tv/tv_expandable_section.dart';
 import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../player/external_player.dart';
+import '../../player/internal_player.dart';
+import '../../player/playback_surface_dialog.dart';
 import '../../player/telegram_range_playback.dart';
 import '../../player/vlc_install_prompt.dart';
 import '../../providers.dart';
@@ -1092,11 +1094,36 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
         episode: file.episode,
         quality: file.quality,
         fileSize: file.size,
+        onStatus: (message) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        },
       ),
     );
   }
 
   Future<void> _play(BuildContext context, String path) async {
+    final surface = await showPlaybackSurfacePicker(
+      context,
+      kind: PlaybackSurfaceKind.localFile,
+    );
+    if (!context.mounted || surface == null) return;
+
+    if (surface == PlaybackSurface.internal) {
+      final ok = await InternalPlayer.playLocalFile(
+        path: path,
+        title: downloadTitle,
+      );
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open internal player.')),
+        );
+      }
+      return;
+    }
+
     final proceed = await ensureVlcOrProceedToExternalPlayer(context);
     if (!proceed || !context.mounted) return;
     await ExternalPlayer.injectMetadata(
@@ -1125,6 +1152,29 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       );
       return;
     }
+    final cleanupDecision = await queryStorageCleanupDecision();
+    if (cleanupDecision.cleanupMode) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Low storage detected. Cleaning cache...')),
+        );
+      }
+      final releasedStream = await TelegramRangePlayback.instance
+          .releaseActiveCacheIfAny(reason: 'low_storage_stream_entry');
+      final releasedDownloads = await dm.releaseInactiveTdlibCache();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Cache cleaned (stream=$releasedStream, downloads=$releasedDownloads). Continuing...',
+            ),
+          ),
+        );
+      }
+      await Future<void>.delayed(kStorageCleanupPause);
+    }
+
+    if (!context.mounted) return;
     final proceed = await ensureStorageHeadroom(
       context: context,
       purpose: StorageHeadroomPurpose.stream,
@@ -1136,38 +1186,57 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
     final cfg = ref.read(appConfigProvider);
     final auth = ref.read(authNotifierProvider);
     final api = ref.read(tvAppApiServiceProvider);
-    final url = await TelegramRangePlayback.instance.open(
-      tdlib: tdlib,
-      globalId: downloadGlobalId,
-      variantId: file.id,
-      telegramFileId: file.telegramFileId,
-      sourceChatId: file.sourceChatId,
-      mediaFileId: file.id,
-      locatorType: file.locatorType,
-      locatorChatId: file.locatorChatId,
-      locatorMessageId: file.locatorMessageId,
-      locatorBotUsername: file.locatorBotUsername,
-      locatorRemoteFileId: file.locatorRemoteFileId,
-      mediaTitle: media.title,
-      displayTitle: downloadTitle,
-      releaseYear: media.releaseYear?.toString() ?? '',
-      isSeriesMedia: isSeriesMedia,
-      season: file.season,
-      episode: file.episode,
-      quality: file.quality,
-      fileSize: file.size,
-      indexTagForFileSearch: cfg.indexTag,
-      providerBotUsername: cfg.providerBotUsername,
-      recoverFromBackup: (mfid) async {
-        final token = auth.apiAccessToken;
-        if (token == null || token.isEmpty) return false;
-        return api.recoverMediaFileFromBackup(
-          config: cfg,
-          accessToken: token,
-          mediaFileId: mfid,
+    final Uri? url;
+    try {
+      url = await TelegramRangePlayback.instance.open(
+        tdlib: tdlib,
+        globalId: downloadGlobalId,
+        variantId: file.id,
+        telegramFileId: file.telegramFileId,
+        sourceChatId: file.sourceChatId,
+        mediaFileId: file.id,
+        locatorType: file.locatorType,
+        locatorChatId: file.locatorChatId,
+        locatorMessageId: file.locatorMessageId,
+        locatorBotUsername: file.locatorBotUsername,
+        locatorRemoteFileId: file.locatorRemoteFileId,
+        mediaTitle: media.title,
+        displayTitle: downloadTitle,
+        releaseYear: media.releaseYear?.toString() ?? '',
+        isSeriesMedia: isSeriesMedia,
+        season: file.season,
+        episode: file.episode,
+        quality: file.quality,
+        fileSize: file.size,
+        indexTagForFileSearch: cfg.indexTag,
+        providerBotUsername: cfg.providerBotUsername,
+        recoverFromBackup: (mfid) async {
+          final token = auth.apiAccessToken;
+          if (token == null || token.isEmpty) return false;
+          return api.recoverMediaFileFromBackup(
+            config: cfg,
+            accessToken: token,
+            mediaFileId: mfid,
+          );
+        },
+        onStatus: (message) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        },
+      );
+    } catch (e, st) {
+      _itemLog('SingleItemScreen: stream open failed: $e\n$st');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not start stream. Please try again.'),
+          ),
         );
-      },
-    );
+      }
+      return;
+    }
     if (url == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1177,6 +1246,26 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       return;
     }
     if (!context.mounted) return;
+
+    final surface = await showPlaybackSurfacePicker(
+      context,
+      kind: PlaybackSurfaceKind.stream,
+    );
+    if (!context.mounted || surface == null) return;
+
+    if (surface == PlaybackSurface.internal) {
+      final ok = await InternalPlayer.playHttpUrl(
+        url: url.toString(),
+        title: downloadTitle,
+      );
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open internal player.')),
+        );
+      }
+      return;
+    }
+
     final streamOk = await ensureVlcOrProceedToExternalPlayer(context);
     if (!streamOk || !context.mounted) return;
     final launched = await ExternalPlayer.launchStreamUrl(

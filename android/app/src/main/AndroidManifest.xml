@@ -44,6 +44,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".InternalPlayerActivity"
+            android:exported="false"
+            android:theme="@style/InternalPlayerTheme"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode" />
+
         <!-- FileProvider for secure content:// URIs shared with external players -->
         <provider
             android:name=".TeleCimaFileProvider"
