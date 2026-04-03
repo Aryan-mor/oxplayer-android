@@ -8,6 +8,7 @@ import '../../core/config/app_config.dart';
 import '../../core/debug/app_debug_log.dart';
 import '../../telegram/tdlib_facade.dart';
 import '../models/app_media.dart';
+import '../models/tv_episode_guide.dart';
 
 void _apilog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.api);
@@ -662,6 +663,34 @@ class TvAppApiService {
     if (code != 200 || response.data == null) return null;
     try {
       return AppMediaAggregate.fromJson(response.data!);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// TMDB season/episode names for a TV series (`tmdbId` like `tv:123`). Empty seasons if not TV / no TMDB.
+  Future<TvEpisodeGuide?> fetchTvEpisodeGuide({
+    required AppConfig config,
+    required String accessToken,
+    required String mediaId,
+  }) async {
+    final id = mediaId.trim();
+    if (id.isEmpty) return null;
+    final dio = _dio(config.tvAppApiBaseUrl);
+    final encoded = Uri.encodeComponent(id);
+    _apilog('API fetchTvEpisodeGuide mediaId=$id');
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/media/$encoded/tv-episode-guide',
+      options: Options(
+        headers: {'Authorization': 'Bearer $accessToken'},
+        validateStatus: (s) => s != null && s < 500,
+      ),
+    );
+    final code = response.statusCode ?? 0;
+    if (code == 403 || code == 401 || code == 404) return null;
+    if (code != 200 || response.data == null) return null;
+    try {
+      return TvEpisodeGuide.fromJson(response.data!);
     } catch (_) {
       return null;
     }

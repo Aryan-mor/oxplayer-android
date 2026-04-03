@@ -17,6 +17,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
 import '../../core/tv/tv_expandable_section.dart';
 import '../../data/models/app_media.dart';
+import '../../data/models/tv_episode_guide.dart';
 import '../../download/download_manager.dart';
 import '../../player/internal_player.dart';
 import '../../player/telegram_range_playback.dart';
@@ -511,6 +512,65 @@ class _DetailsPanel extends StatelessWidget {
   }
 }
 
+/// QR + “send to bot” copy (no Request file). Used for incomplete episodes and dialogs.
+class _IndexingBotQrPanel extends ConsumerWidget {
+  const _IndexingBotQrPanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cfg = ref.watch(appConfigProvider);
+    final botUser = cfg.botUsername.trim();
+    final telegramUri = botUser.isNotEmpty ? 'https://t.me/$botUser' : '';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (telegramUri.isNotEmpty) ...[
+          SizedBox(
+            width: 156,
+            height: 156,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: QrImageView(
+                  data: telegramUri,
+                  version: QrVersions.auto,
+                  gapless: true,
+                  eyeStyle: const QrEyeStyle(
+                    eyeShape: QrEyeShape.square,
+                    color: Color(0xFF000000),
+                  ),
+                  dataModuleStyle: const QrDataModuleStyle(
+                    dataModuleShape: QrDataModuleShape.square,
+                    color: Color(0xFF000000),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Text(
+          botUser.isNotEmpty
+              ? 'Send this episode’s video file to @$botUser on Telegram. '
+                  'Scan the QR code to open the bot, then upload the file so it can be indexed.'
+              : 'Send the video file to your indexing bot (set BOT_USERNAME in the app env).',
+          style: const TextStyle(
+            color: AppColors.textMuted,
+            height: 1.35,
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _EmptyFilesRequestBlock extends ConsumerStatefulWidget {
   const _EmptyFilesRequestBlock({required this.aggregate});
 
@@ -545,7 +605,6 @@ class _EmptyFilesRequestBlockState extends ConsumerState<_EmptyFilesRequestBlock
   Widget build(BuildContext context) {
     final cfg = ref.watch(appConfigProvider);
     final botUser = cfg.botUsername.trim();
-    final telegramUri = botUser.isNotEmpty ? 'https://t.me/$botUser' : '';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -558,35 +617,7 @@ class _EmptyFilesRequestBlockState extends ConsumerState<_EmptyFilesRequestBlock
           style: const TextStyle(color: AppColors.textMuted),
         ),
         const SizedBox(height: 14),
-        if (telegramUri.isNotEmpty) ...[
-          SizedBox(
-            width: 156,
-            height: 156,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: QrImageView(
-                  data: telegramUri,
-                  version: QrVersions.auto,
-                  gapless: true,
-                  eyeStyle: const QrEyeStyle(
-                    eyeShape: QrEyeShape.square,
-                    color: Color(0xFF000000),
-                  ),
-                  dataModuleStyle: const QrDataModuleStyle(
-                    dataModuleShape: QrDataModuleShape.square,
-                    color: Color(0xFF000000),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
+        const _IndexingBotQrPanel(),
         if (_alreadyRequested) ...[
           const Text(
             _alreadyRequestedBody,
@@ -672,6 +703,80 @@ Widget _chip(String text) {
   );
 }
 
+void _showNotIndexedEpisodeDialog(BuildContext context) {
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppColors.card,
+      title: const Text(
+        'Episode not indexed',
+        style: TextStyle(color: Colors.white),
+      ),
+      content: const SingleChildScrollView(
+        child: _IndexingBotQrPanel(),
+      ),
+      actions: [
+        TVButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
+class _MissingIndexedEpisodeRow extends StatelessWidget {
+  const _MissingIndexedEpisodeRow({
+    required this.season,
+    required this.episode,
+    this.tmdbEpisodeName,
+  });
+
+  final int season;
+  final int episode;
+  final String? tmdbEpisodeName;
+
+  String get _se =>
+      'S${season.toString().padLeft(2, '0')}E${episode.toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (tmdbEpisodeName ?? '').trim();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border.withValues(alpha: 0.65)),
+        color: AppColors.card.withValues(alpha: 0.4),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Text(
+              name.isNotEmpty ? '$_se — $name' : _se,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+            ),
+          ),
+          const SizedBox(width: 10),
+          TVButton(
+            onPressed: () => _showNotIndexedEpisodeDialog(context),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            borderRadius: 8,
+            child: const Text(
+              'Incomplete',
+              style: TextStyle(fontSize: 12, color: Colors.amberAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MovieVariantsSection extends ConsumerWidget {
   const _MovieVariantsSection({required this.aggregate});
 
@@ -708,62 +813,227 @@ class _MovieVariantsSection extends ConsumerWidget {
   }
 }
 
-class _SeriesVariantsSection extends ConsumerWidget {
+class _SeriesVariantsSection extends ConsumerStatefulWidget {
   const _SeriesVariantsSection({required this.aggregate});
 
   final AppMediaAggregate aggregate;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (aggregate.files.isEmpty) {
-      return _EmptyFilesRequestBlock(aggregate: aggregate);
-    }
+  ConsumerState<_SeriesVariantsSection> createState() =>
+      _SeriesVariantsSectionState();
+}
 
+class _SeriesVariantsSectionState extends ConsumerState<_SeriesVariantsSection> {
+  TvEpisodeGuide? _guide;
+  bool _guideLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => unawaited(_loadTvGuide()));
+  }
+
+  @override
+  void didUpdateWidget(covariant _SeriesVariantsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.aggregate.media.id != widget.aggregate.media.id) {
+      _guide = null;
+      unawaited(_loadTvGuide());
+    }
+  }
+
+  bool get _hasTvTmdb {
+    final t = (widget.aggregate.media.tmdbId ?? '').trim().toLowerCase();
+    return t.startsWith('tv:');
+  }
+
+  Future<void> _loadTvGuide() async {
+    if (!_hasTvTmdb) return;
+    final auth = ref.read(authNotifierProvider);
+    final token = auth.apiAccessToken;
+    if (token == null || token.isEmpty) return;
+    if (!mounted) return;
+    setState(() => _guideLoading = true);
+    try {
+      final api = ref.read(tvAppApiServiceProvider);
+      final cfg = ref.read(appConfigProvider);
+      final g = await api.fetchTvEpisodeGuide(
+        config: cfg,
+        accessToken: token,
+        mediaId: widget.aggregate.media.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _guide = g;
+        _guideLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _guide = null;
+        _guideLoading = false;
+      });
+    }
+  }
+
+  Map<int, Map<int, List<AppMediaFile>>> _filesGrouped() {
     final grouped = <int, Map<int, List<AppMediaFile>>>{};
-    for (final file in aggregate.files) {
+    for (final file in widget.aggregate.files) {
       final season = file.season ?? 1;
       final episode = file.episode ?? 0;
       grouped.putIfAbsent(season, () => <int, List<AppMediaFile>>{});
       grouped[season]!.putIfAbsent(episode, () => <AppMediaFile>[]);
       grouped[season]![episode]!.add(file);
     }
-    final seasons = grouped.keys.toList()..sort();
+    return grouped;
+  }
+
+  String? _tmdbEpisodeName(TvEpisodeGuide? guide, int season, int ep) {
+    if (guide == null) return null;
+    for (final gs in guide.seasons) {
+      if (gs.seasonNumber != season) continue;
+      for (final ge in gs.episodes) {
+        if (ge.episodeNumber == ep) {
+          final n = (ge.name ?? '').trim();
+          return n.isEmpty ? null : n;
+        }
+      }
+    }
+    return null;
+  }
+
+  List<int> _episodeNumbersForSeason(
+    int season,
+    Map<int, Map<int, List<AppMediaFile>>> grouped,
+    bool useGuide,
+  ) {
+    final eps = <int>{};
+    if (useGuide) {
+      for (final gs in _guide!.seasons) {
+        if (gs.seasonNumber != season) continue;
+        for (final ge in gs.episodes) {
+          eps.add(ge.episodeNumber);
+        }
+      }
+    }
+    eps.addAll(grouped[season]?.keys ?? const <int>[]);
+    final list = eps.toList()..sort();
+    return list;
+  }
+
+  Widget _episodeExpandable({
+    required int season,
+    required int ep,
+    required Map<int, Map<int, List<AppMediaFile>>> grouped,
+    required bool useGuide,
+  }) {
+    final tmdbName = useGuide ? _tmdbEpisodeName(_guide, season, ep) : null;
+    final files = grouped[season]?[ep] ?? <AppMediaFile>[];
+
+    if (files.isEmpty && useGuide) {
+      return _MissingIndexedEpisodeRow(
+        season: season,
+        episode: ep,
+        tmdbEpisodeName: tmdbName,
+      );
+    }
+
+    if (files.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final epLabel = ep <= 0 ? '?' : '$ep';
+    final header = (tmdbName != null && tmdbName.isNotEmpty)
+        ? 'Episode $epLabel — $tmdbName'
+        : 'Episode $epLabel';
+
+    return TvExpandableSection(
+      title: header,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final file in files)
+            _VariantRow(
+              media: widget.aggregate.media,
+              file: file,
+              inSeriesSection: true,
+              episodeTitle: tmdbName,
+              downloadTitle:
+                  '${widget.aggregate.media.title} - S${season.toString().padLeft(2, '0')}E${(ep <= 0 ? 0 : ep).toString().padLeft(2, '0')}',
+              downloadGlobalId: file.id,
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final grouped = _filesGrouped();
+    final useGuide = _guide != null && _guide!.seasons.isNotEmpty;
+
+    if (widget.aggregate.files.isEmpty && !_hasTvTmdb) {
+      return _EmptyFilesRequestBlock(aggregate: widget.aggregate);
+    }
+
+    if (widget.aggregate.files.isEmpty && _hasTvTmdb) {
+      if (_guideLoading) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      if (!useGuide) {
+        return _EmptyFilesRequestBlock(aggregate: widget.aggregate);
+      }
+    }
+
+    final seasons = <int>{};
+    if (useGuide) {
+      for (final s in _guide!.seasons) {
+        seasons.add(s.seasonNumber);
+      }
+    }
+    seasons.addAll(grouped.keys);
+    final seasonList = seasons.toList()..sort();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Seasons',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
-          ),
+        Row(
+          children: [
+            const Text(
+              'Seasons',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+            if (_guideLoading && useGuide) ...[
+              const SizedBox(width: 12),
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ],
+          ],
         ),
         const SizedBox(height: 8),
-        for (final season in seasons)
+        for (final season in seasonList)
           TvExpandableSection(
             title: 'Season $season',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final ep in (grouped[season]!.keys.toList()..sort()))
-                  TvExpandableSection(
-                    title: 'Episode ${ep <= 0 ? '?' : ep}',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        for (final file in grouped[season]![ep]!)
-                          _VariantRow(
-                            media: aggregate.media,
-                            file: file,
-                            inSeriesSection: true,
-                            downloadTitle:
-                                '${aggregate.media.title} - S${season.toString().padLeft(2, '0')}E${(ep <= 0 ? 0 : ep).toString().padLeft(2, '0')}',
-                            downloadGlobalId: file.id,
-                          ),
-                      ],
-                    ),
+                for (final ep in _episodeNumbersForSeason(season, grouped, useGuide))
+                  _episodeExpandable(
+                    season: season,
+                    ep: ep,
+                    grouped: grouped,
+                    useGuide: useGuide,
                   ),
               ],
             ),
@@ -828,6 +1098,7 @@ class _VariantRow extends ConsumerStatefulWidget {
     required this.inSeriesSection,
     required this.downloadTitle,
     required this.downloadGlobalId,
+    this.episodeTitle,
   });
 
   final AppMedia media;
@@ -837,6 +1108,8 @@ class _VariantRow extends ConsumerStatefulWidget {
   final bool inSeriesSection;
   final String downloadTitle;
   final String downloadGlobalId;
+  /// TMDB episode name when available (series only).
+  final String? episodeTitle;
 
   @override
   ConsumerState<_VariantRow> createState() => _VariantRowState();
@@ -844,6 +1117,16 @@ class _VariantRow extends ConsumerStatefulWidget {
 
 class _VariantRowState extends ConsumerState<_VariantRow> {
   final GlobalKey _cardKey = GlobalKey();
+  bool _episodeTitleExpanded = false;
+
+  @override
+  void didUpdateWidget(covariant _VariantRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.episodeTitle != widget.episodeTitle ||
+        oldWidget.file.id != widget.file.id) {
+      _episodeTitleExpanded = false;
+    }
+  }
 
   void _scrollCardIntoView() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -856,6 +1139,12 @@ class _VariantRowState extends ConsumerState<_VariantRow> {
         alignment: 0.42,
       );
     });
+  }
+
+  void _onTitleFocus(bool focused) {
+    if (focused) {
+      _scrollCardIntoView();
+    }
   }
 
   @override
@@ -877,6 +1166,56 @@ class _VariantRowState extends ConsumerState<_VariantRow> {
       if (subLabel != null) subLabel,
     ];
     final captionPreview = _captionPreview(w.file.captionText);
+    final epTitle = (w.episodeTitle ?? '').trim();
+    final hasEpTitle = epTitle.isNotEmpty;
+
+    final action = dm == null
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : _VariantAction(
+            dm: dm,
+            state: state,
+            media: w.media,
+            file: w.file,
+            isSeriesMedia: isSeriesMedia,
+            downloadTitle: w.downloadTitle,
+            downloadGlobalId: w.downloadGlobalId,
+            onRowButtonFocused: _scrollCardIntoView,
+          );
+
+    final Widget titleRowLeading = hasEpTitle
+        ? TVButton(
+            plainWhenUnfocused: true,
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            borderRadius: 6,
+            onPressed: () =>
+                setState(() => _episodeTitleExpanded = !_episodeTitleExpanded),
+            onFocusChanged: _onTitleFocus,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                epTitle,
+                maxLines: _episodeTitleExpanded ? null : 1,
+                overflow: _episodeTitleExpanded
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _episodeTitleExpanded
+                      ? Colors.white
+                      : AppColors.textMuted,
+                  fontSize: _episodeTitleExpanded ? 14 : 13,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          )
+        : Text(
+            infoParts.join('  •  '),
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          );
 
     return RepaintBoundary(
       key: _cardKey,
@@ -892,29 +1231,31 @@ class _VariantRowState extends ConsumerState<_VariantRow> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Text(
-                    infoParts.join('  •  '),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      titleRowLeading,
+                      if (hasEpTitle) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          infoParts.join('  •  '),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                if (dm == null)
-                  const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                else
-                  _VariantAction(
-                    dm: dm,
-                    state: state,
-                    media: w.media,
-                    file: w.file,
-                    isSeriesMedia: isSeriesMedia,
-                    downloadTitle: w.downloadTitle,
-                    downloadGlobalId: w.downloadGlobalId,
-                    onRowButtonFocused: _scrollCardIntoView,
-                  ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8, top: 2),
+                  child: action,
+                ),
               ],
             ),
             if (captionPreview != null) ...[

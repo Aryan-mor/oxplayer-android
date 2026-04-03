@@ -21,6 +21,8 @@ class TVButton extends StatefulWidget {
     this.onFocusChanged,
     /// When true, shows a persistent highlight border (e.g. active filter) even without focus.
     this.selected = false,
+    /// When true, no border/background until focused (e.g. episode title in download rows).
+    this.plainWhenUnfocused = false,
   });
 
   final VoidCallback? onPressed;
@@ -31,6 +33,7 @@ class TVButton extends StatefulWidget {
   final EdgeInsetsGeometry padding;
   final double borderRadius;
   final bool selected;
+  final bool plainWhenUnfocused;
   final KeyEventResult Function(FocusNode node, KeyEvent event)? onKeyEvent;
   final ValueChanged<bool>? onFocusChanged;
 
@@ -90,6 +93,7 @@ class _TVButtonState extends State<TVButton> {
   @override
   Widget build(BuildContext context) {
     final focusNode = widget.focusNode ?? _internalFocusNode!;
+    final plain = widget.plainWhenUnfocused && !_focused && !widget.selected;
     return Focus(
       autofocus: widget.autofocus,
       focusNode: focusNode,
@@ -107,12 +111,18 @@ class _TVButtonState extends State<TVButton> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(widget.borderRadius),
             border: Border.all(
-              color: _focused
-                  ? AppColors.highlight
-                  : widget.selected
+              color: plain
+                  ? Colors.transparent
+                  : _focused
                       ? AppColors.highlight
-                      : AppColors.border,
-              width: _focused ? 3.0 : (widget.selected ? 2.0 : 1.0),
+                      : widget.selected
+                          ? AppColors.highlight
+                          : AppColors.border,
+              width: plain
+                  ? 0
+                  : _focused
+                      ? 3.0
+                      : (widget.selected ? 2.0 : 1.0),
             ),
             boxShadow: _focused
                 ? [
@@ -123,11 +133,13 @@ class _TVButtonState extends State<TVButton> {
                     ),
                   ]
                 : null,
-            color: _focused
-                ? AppColors.highlight.withValues(alpha: 0.15)
-                : widget.selected
-                    ? AppColors.highlight.withValues(alpha: 0.12)
-                    : AppColors.card,
+            color: plain
+                ? Colors.transparent
+                : _focused
+                    ? AppColors.highlight.withValues(alpha: 0.15)
+                    : widget.selected
+                        ? AppColors.highlight.withValues(alpha: 0.12)
+                        : AppColors.card,
           ),
           child: Material(
             color: Colors.transparent,
