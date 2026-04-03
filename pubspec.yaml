@@ -23,7 +23,6 @@ dependencies:
   dio: ^5.7.0
   tmdb_api: ^2.2.0
   cached_network_image: ^3.4.1
-  url_launcher: ^6.3.1
   device_info_plus: ^11.2.0
 
   shelf: ^1.4.2

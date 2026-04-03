@@ -38,6 +38,34 @@ class ExternalPlayer {
   }
 
   /// Launches external player for an HTTP/HTTPS stream URL.
+  /// Whether [packageId] is installed (Android host only; returns `false` on error).
+  static Future<bool> isPackageInstalled(String packageId) async {
+    try {
+      final r = await _channel.invokeMethod<bool>('isPackageInstalled', {
+        'packageId': packageId,
+      });
+      return r ?? false;
+    } on PlatformException catch (e) {
+      AppDebugLog.instance.log('ExternalPlayer: isPackageInstalled error: $e');
+      return false;
+    }
+  }
+
+  /// Opens Google Play (or browser fallback) for the given app id.
+  static Future<bool> openPlayStoreListing(String packageId) async {
+    try {
+      final r = await _channel.invokeMethod<bool>('openPlayStoreListing', {
+        'packageId': packageId,
+      });
+      return r ?? false;
+    } on PlatformException catch (e) {
+      AppDebugLog.instance.log(
+        'ExternalPlayer: openPlayStoreListing error: $e',
+      );
+      return false;
+    }
+  }
+
   static Future<bool> launchStreamUrl({
     required String url,
     required String title,

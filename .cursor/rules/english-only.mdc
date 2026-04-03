@@ -1,0 +1,9 @@
+---
+description: Use English only in tv-app code — no other human languages in strings or comments
+globs: "**/*"
+alwaysApply: true
+---
+
+# English only in code
+
+Use **English** throughout the codebase: user-visible strings, error messages, comments, and doc comments. Do **not** use any other natural language (e.g. Persian, Arabic, French) in source files. If you add localization later, use a proper i18n layer (e.g. ARB / `gen-l10n`) instead of mixing languages in Dart.

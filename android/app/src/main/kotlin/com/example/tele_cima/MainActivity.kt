@@ -21,6 +21,7 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL_MEDIA = "telecima/media_utils"
         private const val CHANNEL_APP = "telecima/app_info"
         private const val CHANNEL_STORAGE = "telecima/storage_space"
+        private const val CHANNEL_APK = "telecima/apk_install"
 
         init {
             // Load TDLib JSON client from jniLibs/<abi>/libtdjson.so (x86, x86_64, arm*, …)
@@ -88,10 +89,98 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // ── APK update: system package installer (FileProvider) ─────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_APK)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "installApk" -> {
+                        val path = call.argument<String>("path")
+                        if (path.isNullOrBlank()) {
+                            result.error("INVALID", "path is null or blank", null)
+                            return@setMethodCallHandler
+                        }
+                        val file = File(path)
+                        if (!file.exists()) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val uri = FileProvider.getUriForFile(
+                                this,
+                                "${packageName}.fileprovider",
+                                file,
+                            )
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/vnd.android.package-archive")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (_: ActivityNotFoundException) {
+                            result.success(false)
+                        } catch (e: Exception) {
+                            result.error("INSTALL", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         // ── Channel 1: Launch external video player ───────────────────────────
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_PLAYER)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "isPackageInstalled" -> {
+                        val packageId = call.argument<String>("packageId") ?: ""
+                        if (packageId.isBlank()) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        val installed = try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                packageManager.getPackageInfo(
+                                    packageId,
+                                    PackageManager.PackageInfoFlags.of(0),
+                                )
+                            } else {
+                                @Suppress("DEPRECATION")
+                                packageManager.getPackageInfo(packageId, 0)
+                            }
+                            true
+                        } catch (_: PackageManager.NameNotFoundException) {
+                            false
+                        }
+                        result.success(installed)
+                    }
+                    "openPlayStoreListing" -> {
+                        val packageId = call.argument<String>("packageId") ?: ""
+                        if (packageId.isBlank()) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val market = Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("market://details?id=$packageId"),
+                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                            startActivity(market)
+                            result.success(true)
+                        } catch (_: ActivityNotFoundException) {
+                            try {
+                                val web = Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse(
+                                        "https://play.google.com/store/apps/details?id=$packageId",
+                                    ),
+                                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                                startActivity(web)
+                                result.success(true)
+                            } catch (_: Exception) {
+                                result.success(false)
+                            }
+                        }
+                    }
                     "launchVideo" -> {
                         @Suppress("UNCHECKED_CAST")
                         val args = call.arguments as? Map<String, Any?>

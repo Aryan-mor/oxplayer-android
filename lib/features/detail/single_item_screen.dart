@@ -19,6 +19,7 @@ import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../player/external_player.dart';
 import '../../player/telegram_range_playback.dart';
+import '../../player/vlc_install_prompt.dart';
 import '../../providers.dart';
 
 void _itemLog(String m) =>
@@ -1096,6 +1097,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
   }
 
   Future<void> _play(BuildContext context, String path) async {
+    final proceed = await ensureVlcOrProceedToExternalPlayer(context);
+    if (!proceed || !context.mounted) return;
     await ExternalPlayer.injectMetadata(
       path: path,
       title: downloadTitle,
@@ -1173,6 +1176,9 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       }
       return;
     }
+    if (!context.mounted) return;
+    final streamOk = await ensureVlcOrProceedToExternalPlayer(context);
+    if (!streamOk || !context.mounted) return;
     final launched = await ExternalPlayer.launchStreamUrl(
       url: url.toString(),
       title: downloadTitle,

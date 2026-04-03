@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'android_package_info.dart';
+import 'apk_update_cache.dart';
 import 'app_update_config.dart';
 import 'github_release_service.dart';
 import 'semver_utils.dart';
@@ -23,6 +24,7 @@ class AppUpdatePrompt {
     required this.releaseTag,
     required this.downloadUrl,
     required this.fallbackUrl,
+    required this.cachedApkPath,
   });
 
   final bool mandatory;
@@ -30,6 +32,9 @@ class AppUpdatePrompt {
   final String releaseTag;
   final String? downloadUrl;
   final String fallbackUrl;
+
+  /// Non-null when an APK for [releaseTag] is already on disk (install-only flow).
+  final String? cachedApkPath;
 }
 
 class AppUpdateNotifier extends Notifier<AppUpdatePrompt?> {
@@ -67,6 +72,10 @@ class AppUpdateNotifier extends Notifier<AppUpdatePrompt?> {
     }
 
     if (info == null) {
+      final versionName = await readAndroidPackageVersionName();
+      final localOnly =
+          versionName != null ? tryParsePackageVersionName(versionName) : null;
+      await reconcileApkCache(installed: localOnly, latestRemote: null);
       _releaseGate();
       return;
     }
@@ -75,6 +84,9 @@ class AppUpdateNotifier extends Notifier<AppUpdatePrompt?> {
     final local =
         versionName != null ? tryParsePackageVersionName(versionName) : null;
     final remote = tryParseSemVer(info.tagName);
+
+    await reconcileApkCache(installed: local, latestRemote: remote);
+
     if (local == null || remote == null) {
       _releaseGate();
       return;
@@ -97,19 +109,22 @@ class AppUpdateNotifier extends Notifier<AppUpdatePrompt?> {
       patchOptional: kPatchOnlyUpdatesAreOptional,
     );
 
+    final cachedPath = await cachedApkPathForRelease(info.tagName);
+
     state = AppUpdatePrompt(
       mandatory: mandatory,
       currentVersion: versionName ?? 'unknown',
       releaseTag: info.tagName,
       downloadUrl: info.downloadUrl,
       fallbackUrl: info.fallbackReleasesUrl,
+      cachedApkPath: cachedPath,
     );
     if (!mandatory) {
       return;
     }
   }
 
-  /// After optional flow: user tapped Download and the browser was opened.
+  /// After optional flow: user started in-app install (system installer).
   void clearOptionalAfterDownload() {
     state = null;
     _releaseGate();
