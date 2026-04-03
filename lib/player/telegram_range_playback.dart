@@ -15,6 +15,8 @@ void _streamLog(String m) =>
 const int _kServeWindowBytes = 2 * 1024 * 1024;
 const int _kPrefetchBytes = 2 * 1024 * 1024;
 const int _kMaxTdlibDownloadLimit = 4 * 1024 * 1024;
+const Duration _kRangeWaitTimeout = Duration(seconds: 75);
+const Duration _kRangeWaitRepoke = Duration(seconds: 3);
 
 class TelegramRangePlayback {
   TelegramRangePlayback._();
@@ -84,9 +86,11 @@ class TelegramRangePlayback {
 
     _activeFileId = tdFile.id;
     _activeLocalPath = tdFile.local.path.trim().isEmpty ? null : tdFile.local.path.trim();
-    _activeTotalBytes =
-        (fileSize != null && fileSize > 0) ? fileSize : (tdFile.expectedSize > 0 ? tdFile.expectedSize : tdFile.size);
-    if (_activeTotalBytes <= 0) _activeTotalBytes = fileSize ?? 0;
+    var best = 0;
+    if (fileSize != null && fileSize > best) best = fileSize;
+    if (tdFile.expectedSize > best) best = tdFile.expectedSize;
+    if (tdFile.size > best) best = tdFile.size;
+    _activeTotalBytes = best;
 
     await _requestRangeDownload(
       offset: 0,
@@ -170,7 +174,7 @@ class TelegramRangePlayback {
     final ok = await _waitUntilAvailable(
       requiredStart: start,
       requiredEnd: end,
-      timeout: const Duration(seconds: 25),
+      timeout: _kRangeWaitTimeout,
     );
     if (!ok) {
       final available = await _currentAvailability();
@@ -229,15 +233,23 @@ class TelegramRangePlayback {
     required int requiredEnd,
     required Duration timeout,
   }) async {
-    await _requestRangeDownload(
-      offset: requiredStart,
-      bytesToFetch: (requiredEnd - requiredStart + 1) + _kPrefetchBytes,
-      synchronous: true,
-    );
+    Future<void> poke() => _requestRangeDownload(
+          offset: requiredStart,
+          bytesToFetch: (requiredEnd - requiredStart + 1) + _kPrefetchBytes,
+          synchronous: true,
+        );
+
+    await poke();
     final deadline = DateTime.now().add(timeout);
+    var nextRepoke = DateTime.now().add(_kRangeWaitRepoke);
     while (DateTime.now().isBefore(deadline)) {
       final avail = await _currentAvailability();
       if (requiredStart >= avail.$1 && requiredEnd <= avail.$2) return true;
+      final now = DateTime.now();
+      if (now.isAfter(nextRepoke)) {
+        nextRepoke = now.add(_kRangeWaitRepoke);
+        await poke();
+      }
       await Future<void>.delayed(const Duration(milliseconds: 180));
     }
     return false;

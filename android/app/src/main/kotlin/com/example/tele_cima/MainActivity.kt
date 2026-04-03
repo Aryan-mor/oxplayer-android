@@ -1,11 +1,13 @@
 package com.example.tele_cima
 
 import android.content.ClipData
+import android.content.Context
 import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.storage.StorageManager
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -18,6 +20,7 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL_PLAYER = "telecima/external_player"
         private const val CHANNEL_MEDIA = "telecima/media_utils"
         private const val CHANNEL_APP = "telecima/app_info"
+        private const val CHANNEL_STORAGE = "telecima/storage_space"
 
         init {
             // Load TDLib JSON client from jniLibs/<abi>/libtdjson.so (x86, x86_64, arm*, …)
@@ -63,6 +66,22 @@ class MainActivity : FlutterActivity() {
                             )
                         } catch (e: Exception) {
                             result.error("PACKAGE_INFO", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // ── Writable free space (sum per distinct volume UUID) ─────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_STORAGE)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getWritableVolumesFreeBytes" -> {
+                        try {
+                            val total = sumDistinctVolumeFreeBytes(this)
+                            result.success(mapOf("totalFreeBytes" to total))
+                        } catch (e: Exception) {
+                            result.error("STORAGE", e.message, null)
                         }
                     }
                     else -> result.notImplemented()
@@ -172,5 +191,58 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun usableSpaceBytes(path: File): Long = try {
+        if (!path.exists()) 0L else path.usableSpace
+    } catch (_: Exception) {
+        0L
+    }
+
+    /**
+     * Sums [File.getUsableSpace] once per physical storage volume the app can write to
+     * (internal files dir, cache, and each [getExternalFilesDirs] entry), deduplicated
+     * via [StorageManager.getUuidForPath] on API 24+.
+     */
+    private fun sumDistinctVolumeFreeBytes(context: Context): Long {
+        val candidates = ArrayList<File>(6)
+        context.filesDir?.let { candidates.add(it) }
+        context.cacheDir?.let { candidates.add(it) }
+        context.getExternalFilesDirs(null)?.filterNotNull()?.forEach { candidates.add(it) }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val sm = context.getSystemService(Context.STORAGE_SERVICE) as StorageManager
+            val seen = HashSet<String>()
+            var sum = 0L
+            for (raw in candidates) {
+                try {
+                    val f = raw.canonicalFile
+                    if (!f.exists()) continue
+                    val key = try {
+                        sm.getUuidForPath(f).toString()
+                    } catch (_: Exception) {
+                        f.absolutePath
+                    }
+                    if (seen.add(key)) {
+                        sum += usableSpaceBytes(f)
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            return sum
+        }
+
+        // API < 24: avoid double-counting the same volume (files vs cache).
+        var best = 0L
+        for (raw in candidates) {
+            try {
+                val f = raw.canonicalFile
+                if (!f.exists()) continue
+                val u = usableSpaceBytes(f)
+                if (u > best) best = u
+            } catch (_: Exception) {
+            }
+        }
+        return best
     }
 }

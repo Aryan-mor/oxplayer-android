@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/debug/app_debug_log.dart';
+import '../../core/storage/storage_headroom.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tv_button.dart';
 import '../../core/tv/tv_expandable_section.dart';
@@ -659,7 +660,7 @@ Future<void> _confirmAndDeleteDownload(
   }
 }
 
-class _VariantRow extends ConsumerWidget {
+class _VariantRow extends ConsumerStatefulWidget {
   const _VariantRow({
     required this.media,
     required this.file,
@@ -677,74 +678,99 @@ class _VariantRow extends ConsumerWidget {
   final String downloadGlobalId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isSeriesMedia = _effectiveIsSeriesMedia(media, file, inSeriesSection);
+  ConsumerState<_VariantRow> createState() => _VariantRowState();
+}
+
+class _VariantRowState extends ConsumerState<_VariantRow> {
+  final GlobalKey _cardKey = GlobalKey();
+
+  void _scrollCardIntoView() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _cardKey.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+        alignment: 0.42,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final w = widget;
+    final isSeriesMedia = _effectiveIsSeriesMedia(w.media, w.file, w.inSeriesSection);
     final dm = ref.watch(downloadManagerProvider).value;
-    final state = dm?.stateFor(downloadGlobalId) ?? const DownloadIdle();
-    final quality = (file.quality ?? '').trim().isEmpty
+    final state = dm?.stateFor(w.downloadGlobalId) ?? const DownloadIdle();
+    final quality = (w.file.quality ?? '').trim().isEmpty
         ? 'Unknown quality'
-        : file.quality!.trim();
-    final lang = (file.videoLanguage ?? file.language ?? '').trim();
-    final size = _formatBytes(file.size);
-    final subLabel = _subtitleLabel(file);
+        : w.file.quality!.trim();
+    final lang = (w.file.videoLanguage ?? w.file.language ?? '').trim();
+    final size = _formatBytes(w.file.size);
+    final subLabel = _subtitleLabel(w.file);
     final infoParts = <String>[
       quality,
       lang.isEmpty ? 'Unknown lang' : lang.toUpperCase(),
       size ?? '?',
       if (subLabel != null) subLabel,
     ];
-    final captionPreview = _captionPreview(file.captionText);
+    final captionPreview = _captionPreview(w.file.captionText);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.border),
-        color: AppColors.card,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  infoParts.join('  •  '),
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
+    return RepaintBoundary(
+      key: _cardKey,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.border),
+          color: AppColors.card,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    infoParts.join('  •  '),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
                 ),
-              ),
-              if (dm == null)
-                const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-              else
-                _VariantAction(
-                  dm: dm,
-                  state: state,
-                  media: media,
-                  file: file,
-                  isSeriesMedia: isSeriesMedia,
-                  downloadTitle: downloadTitle,
-                  downloadGlobalId: downloadGlobalId,
-                ),
-            ],
-          ),
-          if (captionPreview != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              captionPreview,
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 12,
-                height: 1.35,
-              ),
+                if (dm == null)
+                  const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                else
+                  _VariantAction(
+                    dm: dm,
+                    state: state,
+                    media: w.media,
+                    file: w.file,
+                    isSeriesMedia: isSeriesMedia,
+                    downloadTitle: w.downloadTitle,
+                    downloadGlobalId: w.downloadGlobalId,
+                    onRowButtonFocused: _scrollCardIntoView,
+                  ),
+              ],
             ),
+            if (captionPreview != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                captionPreview,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -759,6 +785,7 @@ class _VariantAction extends ConsumerStatefulWidget {
     required this.isSeriesMedia,
     required this.downloadTitle,
     required this.downloadGlobalId,
+    this.onRowButtonFocused,
   });
 
   final DownloadManager dm;
@@ -768,6 +795,10 @@ class _VariantAction extends ConsumerStatefulWidget {
   final bool isSeriesMedia;
   final String downloadTitle;
   final String downloadGlobalId;
+
+  /// Called when any action button in this row receives focus (D-pad), so the
+  /// parent can scroll the full variant card (incl. caption) into view.
+  final VoidCallback? onRowButtonFocused;
 
   @override
   ConsumerState<_VariantAction> createState() => _VariantActionState();
@@ -784,8 +815,29 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
   String get downloadTitle => widget.downloadTitle;
   String get downloadGlobalId => widget.downloadGlobalId;
 
-  Widget _serverInfoButton(BuildContext context) {
+  void _notifyRowButtonFocused(bool focused) {
+    if (focused) widget.onRowButtonFocused?.call();
+  }
+
+  Widget _rowTVButton({
+    required VoidCallback? onPressed,
+    required Widget child,
+    bool enabled = true,
+    KeyEventResult Function(FocusNode node, KeyEvent event)? onKeyEvent,
+  }) {
     return TVButton(
+      enabled: enabled,
+      onPressed: onPressed,
+      onKeyEvent: onKeyEvent,
+      onFocusChanged: widget.onRowButtonFocused == null
+          ? null
+          : _notifyRowButtonFocused,
+      child: child,
+    );
+  }
+
+  Widget _serverInfoButton(BuildContext context) {
+    return _rowTVButton(
       onPressed: () => _showServerFileInfoDialog(
         context,
         media: media,
@@ -815,7 +867,7 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       const SizedBox(width: 6),
       _serverInfoButton(context),
       const SizedBox(width: 6),
-      TVButton(
+      _rowTVButton(
         onPressed: () => _showDownloadDebugDialog(
           context,
           dm: dm,
@@ -844,21 +896,24 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
   }
 
   Widget _streamButton(BuildContext context, WidgetRef ref) {
-    return TVButton(
+    return _rowTVButton(
       enabled: !_isStartingStream,
       onPressed: _isStartingStream
           ? null
           : () => unawaited(_onStreamPressed(context, ref)),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: SizedBox(
-        width: 20,
-        height: 20,
+        width: 24,
+        height: 24,
         child: _isStartingStream
             ? const CircularProgressIndicator(
                 strokeWidth: 2,
                 color: AppColors.highlight,
               )
-            : const Icon(Icons.wifi_tethering, color: AppColors.highlight),
+            : const Icon(
+                Icons.wifi_tethering,
+                color: AppColors.highlight,
+                size: 24,
+              ),
       ),
     );
   }
@@ -872,8 +927,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
           children: [
             if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
-            TVButton(
-              onPressed: () => _startDownload(context),
+            _rowTVButton(
+              onPressed: () => unawaited(_startDownload(context)),
               child: const Icon(Icons.download, color: Colors.white),
             ),
             ..._debugInfoSuffix(context),
@@ -914,7 +969,7 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       DownloadUnavailable() => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TVButton(
+            _rowTVButton(
               onPressed: () =>
                   unawaited(_showDownloadUnavailableHelp(context, r)),
               child: const Text(
@@ -933,7 +988,7 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
             const SizedBox(width: 8),
             if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
-            TVButton(
+            _rowTVButton(
               onPressed: () => dm.pauseDownload(downloadGlobalId),
               child: const Icon(Icons.pause, color: Colors.white),
             ),
@@ -948,12 +1003,12 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
             const SizedBox(width: 8),
             if (file.canStream) _streamButton(context, r),
             if (file.canStream) const SizedBox(width: 6),
-            TVButton(
+            _rowTVButton(
               onPressed: () => dm.resumeDownload(downloadGlobalId),
               child: const Icon(Icons.play_arrow, color: Colors.white),
             ),
             const SizedBox(width: 6),
-            TVButton(
+            _rowTVButton(
               onPressed: () => unawaited(
                 _confirmAndDeleteDownload(
                   context,
@@ -969,13 +1024,13 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       DownloadCompleted(:final localFilePath) => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TVButton(
+            _rowTVButton(
               onPressed: () => _play(context, localFilePath),
               child: const Icon(Icons.play_arrow, color: Colors.white),
             ),
             ..._debugCompletedInfoAndBugSuffix(context, localFilePath),
             const SizedBox(width: 6),
-            TVButton(
+            _rowTVButton(
               onPressed: () => unawaited(
                 _confirmAndDeleteDownload(
                   context,
@@ -990,8 +1045,8 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       DownloadError() => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TVButton(
-              onPressed: () => _startDownload(context),
+            _rowTVButton(
+              onPressed: () => unawaited(_startDownload(context)),
               child: const Icon(Icons.refresh, color: Colors.redAccent),
             ),
             ..._debugInfoSuffix(context),
@@ -1000,7 +1055,7 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
     };
   }
 
-  void _startDownload(BuildContext context) {
+  Future<void> _startDownload(BuildContext context) async {
     if (!_fileMayBeDownloadable(file)) {
       _itemLog(
         'SingleItemScreen: startDownload blocked for file=${file.id}',
@@ -1010,6 +1065,12 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       );
       return;
     }
+    final proceed = await ensureStorageHeadroom(
+      context: context,
+      purpose: StorageHeadroomPurpose.download,
+      catalogFileSizeBytes: file.size,
+    );
+    if (!proceed || !context.mounted) return;
     unawaited(
       dm.startDownload(
         globalId: downloadGlobalId,
@@ -1061,6 +1122,13 @@ class _VariantActionState extends ConsumerState<_VariantAction> {
       );
       return;
     }
+    final proceed = await ensureStorageHeadroom(
+      context: context,
+      purpose: StorageHeadroomPurpose.stream,
+      catalogFileSizeBytes: file.size,
+    );
+    if (!proceed || !context.mounted) return;
+
     final tdlib = ref.read(tdlibFacadeProvider);
     final cfg = ref.read(appConfigProvider);
     final auth = ref.read(authNotifierProvider);

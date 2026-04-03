@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show max;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +17,15 @@ void _dmglog(String m) =>
 const _kDownloadPriority = 1;
 const _kDownloadLimit = 0; // 0 => unlimited/chunking handled by TDLib
 const _kPrefsKey = 'telecima_downloads';
+/// Large TV downloads: avoid hammering TDLib; stall detection uses tick count × interval.
+const _kCompletionPollInterval = Duration(seconds: 4);
+/// Inactive + not complete + byte count unchanged for this many polls → treat as stalled (TV / OOM).
+const _kStallPollTicks = 15;
+
+class _PollStallTracker {
+  int lastDownloaded = -1;
+  int stagnantPolls = 0;
+}
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -228,7 +238,13 @@ class DownloadManager extends ChangeNotifier {
         _reloadLocatorAfterRecovery = reloadLocatorAfterRecovery,
         _indexTagForFileSearch = indexTagForFileSearch,
         _providerBotUsernameForDownloads = providerBotUsernameForDownloads {
-    _updateSub = tdlib.updates().listen(_onTdlibUpdate);
+    _updateSub = tdlib.updates().listen(
+      _onTdlibUpdate,
+      onError: (Object e, StackTrace st) {
+        _dmglog('DownloadManager: TDLib updates stream error: $e');
+        debugPrint('DownloadManager: updates stream error: $e\n$st');
+      },
+    );
   }
 
   final TdlibFacade _tdlib;
@@ -243,6 +259,10 @@ class DownloadManager extends ChangeNotifier {
   final Map<String, DownloadState> _states = {};
   final Map<int, String> _fileIdToGlobalId = {};
   final Set<String> _unavailableGlobalIds = {};
+  final Map<int, Timer> _completionPollers = {};
+  final Map<int, _PollStallTracker> _pollStallTrackers = {};
+  final Set<String> _finalizingCompletion = {};
+  final Map<int, int> _lastProgressLogBytes = {};
 
   List<MediaDownloadRecord> _records = [];
 
@@ -463,11 +483,20 @@ class DownloadManager extends ChangeNotifier {
         }
       }
 
+      final tdTotal =
+          tdFile.expectedSize > 0 ? tdFile.expectedSize : (tdFile.size > 0 ? tdFile.size : null);
+      var row = _getRecordForGlobalId(globalId);
+      final initialTotalBytes = _mergeDownloadTotals(
+        tdExpected: tdTotal,
+        persistedTotal: row?.totalBytes ?? fileSize,
+        downloaded: tdFile.local.downloadedSize,
+      );
+
       _setState(
         globalId,
         Downloading(
           bytesDownloaded: tdFile.local.downloadedSize,
-          totalBytes: fileSize ?? (tdFile.expectedSize > 0 ? tdFile.expectedSize : null),
+          totalBytes: initialTotalBytes,
         ),
       );
 
@@ -486,13 +515,11 @@ class DownloadManager extends ChangeNotifier {
 
       final downloadId = '$globalId:$variantId';
       final now = DateTime.now().millisecondsSinceEpoch;
-      
-      var row = _getRecordForGlobalId(globalId);
       final initialLocalPath = tdFile.local.path.trim();
       if (row != null) {
         row.status = 'downloading';
         row.bytesDownloaded = tdFile.local.downloadedSize;
-        row.totalBytes = fileSize ?? (tdFile.expectedSize > 0 ? tdFile.expectedSize : null);
+        row.totalBytes = initialTotalBytes;
         row.updatedAt = now;
         row.tdlibFileId = tdFile.id;
         row.standardizedName = standardizedName;
@@ -515,7 +542,7 @@ class DownloadManager extends ChangeNotifier {
           fileName: standardizedName,
           status: 'downloading',
           bytesDownloaded: tdFile.local.downloadedSize,
-          totalBytes: fileSize ?? (tdFile.expectedSize > 0 ? tdFile.expectedSize : null),
+          totalBytes: initialTotalBytes,
           updatedAt: now,
           mimeType: mimeType,
           standardizedName: standardizedName,
@@ -542,6 +569,7 @@ class DownloadManager extends ChangeNotifier {
         limit: _kDownloadLimit,
         synchronous: false,
       ));
+      _beginCompletionPolling(globalId, tdFile.id);
     } catch (e, st) {
       _dmglog('DownloadManager: startDownload error: $e');
       debugPrint('DownloadManager: startDownload: $e\n$st');
@@ -640,6 +668,7 @@ class DownloadManager extends ChangeNotifier {
     if (row == null || row.tdlibFileId == null || row.status != 'downloading') return;
 
     try {
+      _stopCompletionPolling(row.tdlibFileId!);
       await _tdlib.send(td.CancelDownloadFile(fileId: row.tdlibFileId!, onlyIfPending: false));
       row.status = 'paused';
       row.updatedAt = DateTime.now().millisecondsSinceEpoch;
@@ -675,6 +704,7 @@ class DownloadManager extends ChangeNotifier {
         limit: _kDownloadLimit,
         synchronous: false,
       ));
+      _beginCompletionPolling(globalId, row.tdlibFileId!);
 
       row.status = 'downloading';
       row.updatedAt = DateTime.now().millisecondsSinceEpoch;
@@ -705,6 +735,8 @@ class DownloadManager extends ChangeNotifier {
         } catch (_) {}
       }
       if (row.tdlibFileId != null) {
+        _stopCompletionPolling(row.tdlibFileId!);
+        _lastProgressLogBytes.remove(row.tdlibFileId!);
         _fileIdToGlobalId.remove(row.tdlibFileId);
         try {
           await _tdlib.send(td.CancelDownloadFile(
@@ -722,42 +754,285 @@ class DownloadManager extends ChangeNotifier {
   }
 
   void _onTdlibUpdate(Map<String, dynamic> update) {
+    try {
+      _onTdlibUpdateImpl(update);
+    } catch (e, st) {
+      _dmglog('DownloadManager: _onTdlibUpdate error: $e');
+      debugPrint('DownloadManager: _onTdlibUpdate: $e\n$st');
+    }
+  }
+
+  void _onTdlibUpdateImpl(Map<String, dynamic> update) {
     final type = update['@type'] as String?;
-    if (type != 'updateFile') return;
+    if (type != 'updateFile' && type != 'update_file') return;
 
-    final fileMap = update['file'] as Map<String, dynamic>?;
-    if (fileMap == null) return;
+    final rawFile = update['file'];
+    if (rawFile is! Map) return;
+    final fileMap = Map<String, dynamic>.from(rawFile);
 
-    final fileId = fileMap['id'] as int?;
+    final fileId = _parseTdlibFileId(fileMap['id']);
     if (fileId == null) return;
 
     final globalId = _fileIdToGlobalId[fileId];
     if (globalId == null) return;
 
-    final local = fileMap['local'] as Map<String, dynamic>?;
-    if (local == null) return;
+    final rawLocal = fileMap['local'];
+    if (rawLocal is! Map) return;
+    final local = Map<String, dynamic>.from(rawLocal);
 
     final downloadedSize =
         _readInt(local, snake: 'downloaded_size', camel: 'downloadedSize') ?? 0;
-    final isCompleted = _readBool(
-          local,
-          snake: 'is_downloading_completed',
-          camel: 'isDownloadingCompleted',
-        ) ??
-        false;
-    final downloadedPath = _readString(local, key: 'path') ?? '';
+    final isCompleted = _readBoolLoose(
+      local,
+      snake: 'is_downloading_completed',
+      camel: 'isDownloadingCompleted',
+    );
 
-    if (isCompleted) {
+    final downloadedPath = _readString(local, key: 'path') ?? '';
+    final row = _getRecordForGlobalId(globalId);
+    final adjustedDownloaded =
+        _monotonicDownloadedBytes(globalId, downloadedSize, row);
+    final inferredComplete = _inferTdlibDownloadComplete(
+      fileMap: fileMap,
+      local: local,
+      downloadedSize: adjustedDownloaded,
+      path: downloadedPath,
+    );
+
+    final activeDl = _readBoolLoose(
+      local,
+      snake: 'is_downloading_active',
+      camel: 'isDownloadingActive',
+    );
+    final lastLog = _lastProgressLogBytes[fileId];
+    final logThis = isCompleted ||
+        inferredComplete ||
+        lastLog == null ||
+        (adjustedDownloaded - lastLog).abs() >= 512 * 1024;
+    if (logThis) {
+      _lastProgressLogBytes[fileId] = adjustedDownloaded;
+      _dmglog(
+        'DownloadManager: updateFile fileId=$fileId globalId=$globalId '
+        'rawDl=$downloadedSize uiDl=$adjustedDownloaded completed=$isCompleted '
+        'inferred=$inferredComplete active=$activeDl pathLen=${downloadedPath.length}',
+      );
+    }
+
+    if (isCompleted || inferredComplete) {
+      _lastProgressLogBytes.remove(fileId);
+      // Drop mapping immediately so a stale non-complete [updateFile] cannot
+      // overwrite [DownloadCompleted] with [Downloading(0%)] (async gap before
+      // [_onDownloadCompleted] ran).
+      _stopCompletionPolling(fileId);
+      _fileIdToGlobalId.remove(fileId);
       unawaited(_onDownloadCompleted(globalId, fileId, downloadedPath));
+      return;
     } else {
-      final expectedSize =
+      final tdExpected =
           _readInt(fileMap, snake: 'expected_size', camel: 'expectedSize');
+      final persisted = row?.totalBytes;
+      final totalForUi = _mergeDownloadTotals(
+        tdExpected: tdExpected,
+        persistedTotal: persisted,
+        downloaded: adjustedDownloaded,
+      );
       _setState(
         globalId,
-        Downloading(bytesDownloaded: downloadedSize, totalBytes: expectedSize),
+        Downloading(
+          bytesDownloaded: adjustedDownloaded,
+          totalBytes: totalForUi,
+        ),
       );
-      _updateDbProgress(globalId, downloadedSize, expectedSize, downloadedPath);
+      _updateDbProgress(
+        globalId,
+        adjustedDownloaded,
+        totalForUi ?? tdExpected ?? persisted,
+        downloadedPath,
+      );
     }
+  }
+
+  /// When TDLib omits [is_downloading_completed] but download is idle and size matches.
+  ///
+  /// Uses only TDLib [expected_size] (not catalog [row.totalBytes]) so a too-small
+  /// persisted total cannot mark a mid-download file as finished.
+  static bool _inferTdlibDownloadComplete({
+    required Map<String, dynamic> fileMap,
+    required Map<String, dynamic> local,
+    required int downloadedSize,
+    required String path,
+  }) {
+    if (path.trim().isEmpty) return false;
+    if (_readBoolLoose(
+      local,
+      snake: 'is_downloading_active',
+      camel: 'isDownloadingActive',
+    )) {
+      return false;
+    }
+    final tdExp =
+        _readInt(fileMap, snake: 'expected_size', camel: 'expectedSize');
+    if (tdExp == null || tdExp <= 0) return false;
+    return downloadedSize >= tdExp;
+  }
+
+  /// TDLib sometimes omits or zeroes [expected_size] on intermediate [updateFile]
+  /// payloads; using that raw value clears [Downloading.totalBytes] and the UI
+  /// jumps from ~100% back to 0%. Prefer the max of TDLib, persisted catalog, and
+  /// downloaded bytes until [is_downloading_completed].
+  static int? _mergeDownloadTotals({
+    required int? tdExpected,
+    required int? persistedTotal,
+    required int downloaded,
+  }) {
+    var best = 0;
+    if (tdExpected != null && tdExpected > 0) best = tdExpected;
+    if (persistedTotal != null && persistedTotal > best) best = persistedTotal;
+    if (downloaded > best) best = downloaded;
+    return best > 0 ? best : null;
+  }
+
+  void _beginCompletionPolling(String globalId, int fileId) {
+    _stopCompletionPolling(fileId);
+    _completionPollers[fileId] = Timer.periodic(_kCompletionPollInterval, (_) {
+      unawaited(_pollDownloadCompletion(globalId, fileId));
+    });
+    _dmglog(
+      'DownloadManager: completion poll started fileId=$fileId globalId=$globalId',
+    );
+  }
+
+  void _stopCompletionPolling(int fileId) {
+    final t = _completionPollers.remove(fileId);
+    t?.cancel();
+    _pollStallTrackers.remove(fileId);
+  }
+
+  int _monotonicDownloadedBytes(
+    String globalId,
+    int reported,
+    MediaDownloadRecord? row,
+  ) {
+    var best = reported;
+    final persisted = row?.bytesDownloaded ?? 0;
+    if (persisted > best) best = persisted;
+    final st = _states[globalId];
+    if (st is Downloading && st.bytesDownloaded > best) {
+      best = st.bytesDownloaded;
+    } else if (st is DownloadPaused && st.bytesDownloaded > best) {
+      best = st.bytesDownloaded;
+    }
+    if (best > reported) {
+      _dmglog(
+        'DownloadManager: monotonic clamp reported=$reported -> $best '
+        'globalId=$globalId (TV/regressive updateFile)',
+      );
+    }
+    return best;
+  }
+
+  Future<void> _handleStalledDownload({
+    required String globalId,
+    required int fileId,
+    required td.File file,
+  }) async {
+    final got = file.local.downloadedSize;
+    _dmglog(
+      'DownloadManager: stalled inactive+incomplete fileId=$fileId '
+      'globalId=$globalId tdDownloaded=$got — pausing for resume',
+    );
+    _stopCompletionPolling(fileId);
+    _lastProgressLogBytes.remove(fileId);
+    try {
+      await _tdlib.send(
+        td.CancelDownloadFile(fileId: fileId, onlyIfPending: false),
+      );
+    } catch (e) {
+      _dmglog('DownloadManager: CancelDownloadFile on stall: $e');
+    }
+    _fileIdToGlobalId.remove(fileId);
+
+    final row = _getRecordForGlobalId(globalId);
+    if (row == null) return;
+
+    final d = max(row.bytesDownloaded, got);
+    row.status = 'paused';
+    row.bytesDownloaded = d;
+    row.updatedAt = DateTime.now().millisecondsSinceEpoch;
+    try {
+      await _saveRecords();
+    } catch (e) {
+      _dmglog('DownloadManager: _saveRecords on stall: $e');
+    }
+
+    _setState(
+      globalId,
+      DownloadPaused(
+        bytesDownloaded: d,
+        totalBytes: row.totalBytes,
+      ),
+    );
+  }
+
+  Future<void> _pollDownloadCompletion(String globalId, int fileId) async {
+    if (_fileIdToGlobalId[fileId] != globalId) {
+      _stopCompletionPolling(fileId);
+      return;
+    }
+    if (_states[globalId] is DownloadCompleted) {
+      _stopCompletionPolling(fileId);
+      return;
+    }
+    try {
+      final obj = await _tdlib.send(td.GetFile(fileId: fileId));
+      if (obj is! td.File) return;
+
+      if (obj.local.isDownloadingCompleted) {
+        _stopCompletionPolling(fileId);
+        if (_fileIdToGlobalId[fileId] != globalId) return;
+        _fileIdToGlobalId.remove(fileId);
+        _dmglog(
+          'DownloadManager: completion via GetFile poll fileId=$fileId globalId=$globalId',
+        );
+        await _onDownloadCompleted(globalId, fileId, obj.local.path);
+        return;
+      }
+
+      final active = obj.local.isDownloadingActive;
+      final d = obj.local.downloadedSize;
+      final tr = _pollStallTrackers.putIfAbsent(fileId, _PollStallTracker.new);
+
+      if (active) {
+        tr.stagnantPolls = 0;
+        tr.lastDownloaded = d;
+        return;
+      }
+
+      if (d != tr.lastDownloaded) {
+        tr.stagnantPolls = 0;
+        tr.lastDownloaded = d;
+        return;
+      }
+
+      tr.stagnantPolls++;
+      if (tr.stagnantPolls >= _kStallPollTicks) {
+        await _handleStalledDownload(
+          globalId: globalId,
+          fileId: fileId,
+          file: obj,
+        );
+      }
+    } catch (e, st) {
+      _dmglog('DownloadManager: completion poll failed fileId=$fileId: $e');
+      debugPrint('DownloadManager: completion poll: $e\n$st');
+    }
+  }
+
+  static int? _parseTdlibFileId(Object? raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw);
+    return null;
   }
 
   Future<void> _onDownloadCompleted(
@@ -765,39 +1040,74 @@ class DownloadManager extends ChangeNotifier {
     int fileId,
     String tdlibPath,
   ) async {
-    _dmglog(
-      'DownloadManager: download completed globalId=$globalId path=$tdlibPath',
-    );
-
+    if (_states[globalId] is DownloadCompleted) {
+      _dmglog(
+        'DownloadManager: _onDownloadCompleted skip (already done) globalId=$globalId',
+      );
+      return;
+    }
+    if (!_finalizingCompletion.add(globalId)) {
+      _dmglog(
+        'DownloadManager: _onDownloadCompleted ignored (in progress) globalId=$globalId',
+      );
+      return;
+    }
     try {
-      final row = _getRecordForGlobalId(globalId);
-      if (row == null) return;
-      if (tdlibPath.trim().isEmpty) {
-        _setState(
-          globalId,
-          const DownloadError(message: 'Download finished but file path was empty.'),
-        );
-        return;
-      }
-
-      row.status = 'completed';
-      row.localFilePath = tdlibPath;
-      row.bytesDownloaded = row.totalBytes ?? row.bytesDownloaded;
-      row.updatedAt = DateTime.now().millisecondsSinceEpoch;
-
-      _fileIdToGlobalId.remove(fileId);
-      _unavailableGlobalIds.remove(globalId);
-      _setState(globalId, DownloadCompleted(localFilePath: tdlibPath));
+      _dmglog(
+        'DownloadManager: download completed globalId=$globalId path=$tdlibPath',
+      );
 
       try {
-        await _saveRecords();
-      } catch (e) {
-        _dmglog('DownloadManager: _saveRecords after complete: $e');
+        var path = tdlibPath.trim();
+        if (path.isEmpty) {
+          try {
+            final obj = await _tdlib.send(td.GetFile(fileId: fileId));
+            if (obj is td.File) {
+              path = obj.local.path.trim();
+            }
+          } catch (e) {
+            _dmglog('DownloadManager: GetFile after complete (empty path): $e');
+          }
+        }
+
+        final row = _getRecordForGlobalId(globalId);
+        if (row == null) {
+          _dmglog(
+            'DownloadManager: _onDownloadCompleted no row globalId=$globalId',
+          );
+          return;
+        }
+        if (path.isEmpty) {
+          _setState(
+            globalId,
+            const DownloadError(
+              message: 'Download finished but file path was empty.',
+            ),
+          );
+          return;
+        }
+
+        row.status = 'completed';
+        row.localFilePath = path;
+        row.bytesDownloaded = row.totalBytes ?? row.bytesDownloaded;
+        row.updatedAt = DateTime.now().millisecondsSinceEpoch;
+
+        _fileIdToGlobalId.remove(fileId);
+        _unavailableGlobalIds.remove(globalId);
+        _setState(globalId, DownloadCompleted(localFilePath: path));
+
+        try {
+          await _saveRecords();
+        } catch (e) {
+          _dmglog('DownloadManager: _saveRecords after complete: $e');
+        }
+      } catch (e, st) {
+        _dmglog('DownloadManager: _onDownloadCompleted error: $e');
+        debugPrint('DownloadManager: _onDownloadCompleted: $e\n$st');
+        _setState(globalId, DownloadError(message: e.toString()));
       }
-    } catch (e, st) {
-      _dmglog('DownloadManager: _onDownloadCompleted error: $e');
-      debugPrint('DownloadManager: _onDownloadCompleted: $e\n$st');
-      _setState(globalId, DownloadError(message: e.toString()));
+    } finally {
+      _finalizingCompletion.remove(globalId);
     }
   }
 
@@ -917,13 +1227,21 @@ class DownloadManager extends ChangeNotifier {
     return (value as num?)?.toInt();
   }
 
-  static bool? _readBool(
+  /// TDLib JSON occasionally uses non-bool truthy values; strict [as bool] would skip updates.
+  static bool _readBoolLoose(
     Map<String, dynamic> map, {
     required String snake,
     required String camel,
   }) {
     final value = map[snake] ?? map[camel];
-    return value as bool?;
+    if (value == null) return false;
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final s = value.toLowerCase().trim();
+      return s == 'true' || s == '1';
+    }
+    return false;
   }
 
   static String? _readString(
@@ -936,6 +1254,11 @@ class DownloadManager extends ChangeNotifier {
 
   @override
   void dispose() {
+    for (final t in _completionPollers.values) {
+      t.cancel();
+    }
+    _completionPollers.clear();
+    _pollStallTrackers.clear();
     _updateSub?.cancel();
     super.dispose();
   }
