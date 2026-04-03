@@ -69,7 +69,7 @@ dart run build_runner build --delete-conflicting-outputs
 
 From the monorepo root, `package.json` already lists `tv-app` as an npm workspace for convenience scripts (`yarn get -w tv-app`, etc.).
 
-## Why `flutter pub outdated` still lists newer packages
+## Why `flutter pub outdated` still lists newer packages?
 
 - **`flutter_riverpod` 3.x** — Riverpod 3 pulls `test` constraints that conflict with **`isar_generator`** + **`flutter_test`** from the SDK. Stay on **Riverpod 2.x** until Isar ships a generator compatible with that graph (or you replace Isar).
 - **`build_runner` ≥ 2.9** — requires **`package:build` ^4.x**, while **`isar_generator` 3.1.x** requires **`build` ^2.x**. Keep **`build_runner` &lt; 2.9** (see `pubspec.yaml`).
