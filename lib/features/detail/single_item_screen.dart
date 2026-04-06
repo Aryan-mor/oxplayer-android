@@ -259,6 +259,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
     final isSeries = _isSeriesMediaType(item);
     final auth = ref.watch(authNotifierProvider);
     final exploreGenreLinks = auth.canAccessExplore;
+    final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
 
     return Scaffold(
       appBar: AppBar(
@@ -278,7 +279,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
         child: SingleChildScrollView(
           controller: _pageScrollController,
           primary: false,
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          padding: EdgeInsets.fromLTRB(20, 16, 20, 56 + bottomSafeInset),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final wide = constraints.maxWidth >= 720;
