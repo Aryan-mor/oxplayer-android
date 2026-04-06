@@ -768,7 +768,7 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
                   child: ListView.separated(
                     controller: _scrollController,
                     scrollDirection: Axis.horizontal,
-                    physics: const NeverScrollableScrollPhysics(),
+                    physics: const ClampingScrollPhysics(),
                     itemCount: n,
                     separatorBuilder: (_, __) => SizedBox(width: widget.gap),
                     itemBuilder: (context, index) {
