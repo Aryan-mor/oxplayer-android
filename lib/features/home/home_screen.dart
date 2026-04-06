@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +15,7 @@ import '../../data/models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
+import '../../widgets/library_media_poster.dart';
 
 const _kBackExitWindow = Duration(seconds: 3);
 
@@ -51,16 +51,6 @@ String _debugErrorSummary(Object error) {
     td.TdError() => 'TDLib ${error.code}: ${error.message}',
     _ => '$error',
   };
-}
-
-String? _libraryPosterUrl(AppMedia media) {
-  final value = (media.posterPath ?? '').trim();
-  if (value.isEmpty) return null;
-  if (value.startsWith('http://') || value.startsWith('https://')) {
-    return value;
-  }
-  if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
-  return value;
 }
 
 String _libraryTypeLabel(String type) {
@@ -1231,7 +1221,7 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
   }
 }
 
-class _CarouselMediaCard extends StatelessWidget {
+class _CarouselMediaCard extends ConsumerWidget {
   const _CarouselMediaCard({
     required this.posterHeight,
     required this.item,
@@ -1245,9 +1235,8 @@ class _CarouselMediaCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final m = item.media;
-    final url = _libraryPosterUrl(m);
     final type = _libraryTypeLabel(m.type);
     final summary = (m.summary ?? '').trim();
     final scoreText =
@@ -1282,28 +1271,11 @@ class _CarouselMediaCard extends StatelessWidget {
                 child: SizedBox(
                   width: double.infinity,
                   height: posterHeight,
-                  child: url == null
-                      ? Container(
-                          color: Colors.black26,
-                          alignment: Alignment.center,
-                          child: const Icon(Icons.movie, size: 40),
-                        )
-                      : CachedNetworkImage(
-                          imageUrl: url,
-                          fit: BoxFit.cover,
-                          placeholder: (_, __) => const Center(
-                            child: SizedBox(
-                              width: 28,
-                              height: 28,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          ),
-                          errorWidget: (_, __, ___) => Container(
-                            color: Colors.black26,
-                            alignment: Alignment.center,
-                            child: const Icon(Icons.broken_image, size: 32),
-                          ),
-                        ),
+                  child: LibraryMediaPoster(
+                    media: m,
+                    files: item.files,
+                    placeholderIconSize: 40,
+                  ),
                 ),
               ),
             ),
@@ -1641,7 +1613,6 @@ class _SourcesTabContentState extends ConsumerState<_SourcesTabContent> {
               itemBuilder: (context, index) {
                 final item = items[index];
                 final m = item.media;
-                final url = _libraryPosterUrl(m);
                 final selected = _focusedIndex == index;
                 return Focus(
                   focusNode: _focusNodes[index],
@@ -1678,31 +1649,12 @@ class _SourcesTabContentState extends ConsumerState<_SourcesTabContent> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Expanded(
-                            child: url == null
-                                ? Container(
-                                    color: Colors.black26,
-                                    alignment: Alignment.center,
-                                    child: const Icon(Icons.movie, size: 32),
-                                  )
-                                : CachedNetworkImage(
-                                    imageUrl: url,
-                                    fit: BoxFit.cover,
-                                    placeholder: (_, __) => const Center(
-                                      child: SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                    ),
-                                    errorWidget: (_, __, ___) => Container(
-                                      color: Colors.black26,
-                                      alignment: Alignment.center,
-                                      child: const Icon(Icons.broken_image,
-                                          size: 28),
-                                    ),
-                                  ),
+                            child: LibraryMediaPoster(
+                              media: m,
+                              files: item.files,
+                              placeholderIconSize: 32,
+                              progressStrokeWidth: 2,
+                            ),
                           ),
                           Padding(
                             padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),

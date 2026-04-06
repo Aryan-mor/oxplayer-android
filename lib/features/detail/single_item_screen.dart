@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io' show File;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,6 +20,7 @@ import '../../download/download_manager.dart';
 import '../../player/internal_player.dart';
 import '../../player/telegram_range_playback.dart';
 import '../../providers.dart';
+import '../../widgets/library_media_poster.dart';
 
 void _itemLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
@@ -49,16 +49,6 @@ bool _isSeriesMediaType(AppMedia m) {
 }
 
 bool _hasTmdbId(AppMedia m) => (m.tmdbId ?? '').trim().isNotEmpty;
-
-String? _resolveDetailPosterUrl(String? posterPath) {
-  final value = (posterPath ?? '').trim();
-  if (value.isEmpty) return null;
-  if (value.startsWith('http://') || value.startsWith('https://')) {
-    return value;
-  }
-  if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
-  return value;
-}
 
 /// Section title for playback blocks (movie / other / series).
 const TextStyle _kPlaybackSectionTitleStyle = TextStyle(
@@ -428,6 +418,7 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
                             final wide = constraints.maxWidth >= 720;
                             final hero = _DetailMetaBody(
                               item: item,
+                              files: agg.files,
                               wide: wide,
                               hasTmdb: _hasTmdbId(item),
                               exploreGenreLinksEnabled: exploreGenreLinks,
@@ -476,44 +467,6 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Poster only (hero row); title and metadata sit beside or below it.
-class _DetailHeroPoster extends StatelessWidget {
-  const _DetailHeroPoster({required this.media});
-
-  final AppMedia media;
-
-  @override
-  Widget build(BuildContext context) {
-    final poster = _resolveDetailPosterUrl(media.posterPath) ?? '';
-    return SizedBox(
-      width: 280,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: AspectRatio(
-          aspectRatio: 2 / 3,
-          child: poster.isNotEmpty
-              ? CachedNetworkImage(
-                  imageUrl: poster,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) =>
-                      const Center(child: CircularProgressIndicator()),
-                  errorWidget: (_, __, ___) => Container(
-                    color: AppColors.card,
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.movie, size: 56),
-                  ),
-                )
-              : Container(
-                  color: AppColors.card,
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.movie, size: 56),
-                ),
-        ),
       ),
     );
   }
@@ -710,6 +663,7 @@ class _SubtleFocusLaneState extends State<_SubtleFocusLane> {
 class _DetailMetaBody extends StatelessWidget {
   const _DetailMetaBody({
     required this.item,
+    required this.files,
     required this.wide,
     required this.hasTmdb,
     required this.exploreGenreLinksEnabled,
@@ -717,6 +671,7 @@ class _DetailMetaBody extends StatelessWidget {
   });
 
   final AppMedia item;
+  final List<AppMediaFile> files;
   final bool wide;
   final bool hasTmdb;
   final bool exploreGenreLinksEnabled;
@@ -729,11 +684,29 @@ class _DetailMetaBody extends StatelessWidget {
       hasTmdb: hasTmdb,
       exploreGenreLinksEnabled: exploreGenreLinksEnabled,
     );
+    final heroPoster = SizedBox(
+      width: 280,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: AspectRatio(
+          aspectRatio: 2 / 3,
+          child: ColoredBox(
+            color: AppColors.card,
+            child: LibraryMediaPoster(
+              media: item,
+              files: files,
+              placeholderIcon: Icons.movie,
+              placeholderIconSize: 56,
+            ),
+          ),
+        ),
+      ),
+    );
     final heroStrip = wide
         ? Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _DetailHeroPoster(media: item),
+              heroPoster,
               const SizedBox(width: 24),
               Expanded(
                 child: _DetailPanelCard(child: panel),
@@ -743,7 +716,7 @@ class _DetailMetaBody extends StatelessWidget {
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(child: _DetailHeroPoster(media: item)),
+              Center(child: heroPoster),
               const SizedBox(height: 20),
               _DetailPanelCard(child: panel),
             ],
