@@ -76,4 +76,4 @@ Release workflow builds `assets/env/default.env` from repository variables `OXPL
 - **`build_runner` ≥ 2.9** — requires **`package:build` ^4.x**, while **`isar_generator` 3.1.x** requires **`build` ^2.x**. Keep **`build_runner` &lt; 2.9** (see `pubspec.yaml`).
 - **Isar queries** — any file that calls `where()` / `filter()` / `findAll()` must `import 'package:isar/isar.dart';` (entity imports alone are not enough for extension methods).
 
-Transitive “discontinued” warnings (`js`, `build_resolvers`, etc.) come from the **build_runner / isar_generator** stack; they are upstream until those tools move.
+Transitive “discontinued” warnings (`js`, `build_resolvers`, etc.) come from the **build_runner / isar_generator** stack; they are upstream until those tools move
