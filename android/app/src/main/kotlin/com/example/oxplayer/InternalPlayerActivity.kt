@@ -18,6 +18,10 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -67,6 +71,7 @@ class InternalPlayerActivity : AppCompatActivity() {
 
     /** After a successful PATCH for an initially empty server pref, skip further PATCHes this session. */
     private var preferredSubtitlePersistedThisSession: Boolean = false
+    private var lastBackPressedAtMs: Long = 0L
 
     private val trialBarBaseBottomMarginPx: Int by lazy {
         resources.getDimensionPixelSize(R.dimen.internal_player_trial_bar_margin_bottom)
@@ -76,10 +81,24 @@ class InternalPlayerActivity : AppCompatActivity() {
         resources.getDimensionPixelSize(R.dimen.internal_player_trial_bar_lift_when_scrubber)
     }
 
+    private val tvFocusableControlIds = intArrayOf(
+        R.id.oxplayer_subtitle_menu,
+        R.id.oxplayer_overflow_menu,
+        MediaUiR.id.exo_play_pause,
+        MediaUiR.id.exo_prev,
+        MediaUiR.id.exo_next,
+        MediaUiR.id.exo_rew,
+        MediaUiR.id.exo_ffwd,
+    )
+
+    private val backPressExitWindowMs = 3000L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        supportActionBar?.hide()
+        enableImmersiveFullscreen()
 
         args = readPlaybackArgsFromIntent()
         title = args.displayTitle
@@ -121,6 +140,8 @@ class InternalPlayerActivity : AppCompatActivity() {
         trialBtnConfirm = findViewById(R.id.trial_btn_confirm)
         trialBtnNext = findViewById(R.id.trial_btn_next)
         trialLoading = findViewById(R.id.trial_loading)
+        consumeSystemInsets()
+        installTvFocusIndicators()
 
         applyRtlFriendlySubtitles()
 
@@ -179,13 +200,7 @@ class InternalPlayerActivity : AppCompatActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (trialActive) {
-                        exitTrialRestoreBaseline()
-                    } else {
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
-                        isEnabled = true
-                    }
+                    handleBackPressedFromPlayer()
                 }
             },
         )
@@ -193,15 +208,44 @@ class InternalPlayerActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        enableImmersiveFullscreen()
         MainActivity.flushUserPreferenceHandoffsIfPossible()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            enableImmersiveFullscreen()
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && trialActive) {
-            exitTrialRestoreBaseline()
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            handleBackPressedFromPlayer()
             return true
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    private fun handleBackPressedFromPlayer() {
+        if (trialActive) {
+            exitTrialRestoreBaseline()
+            return
+        }
+
+        if (playerView.isControllerVisible) {
+            playerView.hideController()
+            lastBackPressedAtMs = 0L
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastBackPressedAtMs <= backPressExitWindowMs) {
+            finish()
+            return
+        }
+        lastBackPressedAtMs = now
+        Toast.makeText(this, "Press back again to exit", Toast.LENGTH_SHORT).show()
     }
 
     private fun applyRtlFriendlySubtitles() {
@@ -319,6 +363,48 @@ class InternalPlayerActivity : AppCompatActivity() {
         if (!hasExtra(key)) return null
         val v = getIntExtra(key, Int.MIN_VALUE)
         return if (v == Int.MIN_VALUE) null else v
+    }
+
+    private fun enableImmersiveFullscreen() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(
+            WindowInsetsCompat.Type.statusBars() or
+                WindowInsetsCompat.Type.navigationBars(),
+        )
+    }
+
+    private fun consumeSystemInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, _ ->
+            WindowInsetsCompat.CONSUMED
+        }
+    }
+
+    private fun installTvFocusIndicators() {
+        playerView.post {
+            for (id in tvFocusableControlIds) {
+                attachTvFocusIndicator(playerView.findViewById(id))
+            }
+            attachTvFocusIndicator(trialBtnPrevious)
+            attachTvFocusIndicator(trialBtnConfirm)
+            attachTvFocusIndicator(trialBtnNext)
+        }
+    }
+
+    private fun attachTvFocusIndicator(view: View?) {
+        view ?: return
+        view.setOnFocusChangeListener { focusedView, hasFocus ->
+            val scale = if (hasFocus) 1.12f else 1.0f
+            focusedView.animate()
+                .scaleX(scale)
+                .scaleY(scale)
+                .setDuration(120L)
+                .start()
+            focusedView.alpha = if (hasFocus) 1.0f else 0.9f
+            focusedView.elevation = if (hasFocus) 14f else 0f
+        }
     }
 
     private fun showMainSubtitleMenu() {
