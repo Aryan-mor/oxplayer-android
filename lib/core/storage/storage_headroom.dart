@@ -65,18 +65,22 @@ Future<StorageCleanupDecision> queryStorageCleanupDecision() async {
 
 enum StorageHeadroomPurpose { download, stream }
 
+/// Extra writable space beyond the downloaded file (cache / TDLib / overhead).
+const int kDownloadHeadroomMarginBytes = 50 * 1024 * 1024;
+
 int requiredBytesForPurpose(
   StorageHeadroomPurpose purpose,
   int? catalogFileSizeBytes,
 ) {
   const mb = 1024 * 1024;
-  const gb = 1024 * mb;
   switch (purpose) {
     case StorageHeadroomPurpose.download:
-      const margin = 200 * mb;
       final s = catalogFileSizeBytes;
-      if (s == null || s <= 0) return 4 * gb;
-      return s + margin;
+      if (s == null || s <= 0) {
+        // No catalog size: do not invent a multi-GB bar; see [ensureStorageHeadroom].
+        return 0;
+      }
+      return s + kDownloadHeadroomMarginBytes;
     case StorageHeadroomPurpose.stream:
       // Range streaming writes a bounded TDLib slice (~150 MiB trim target in
       // telegram_range_playback.dart), not the full file. Do not scale required
@@ -110,6 +114,9 @@ Future<bool> ensureStorageHeadroom({
       requiredBytesForPurpose(purpose, catalogFileSizeBytes);
   final free = await queryWritableVolumesFreeBytes();
   if (free == null) return true;
+  if (purpose == StorageHeadroomPurpose.download && requiredBytes == 0) {
+    return true;
+  }
   if (free >= requiredBytes) return true;
   if (!context.mounted) return false;
 
@@ -121,15 +128,29 @@ Future<bool> ensureStorageHeadroom({
       ? ' You do not need free space equal to the full video — only a buffer on disk.'
       : '';
 
+  final downloadDetail = purpose == StorageHeadroomPurpose.download
+      ? (() {
+          final s = catalogFileSizeBytes;
+          if (s != null && s > 0) {
+            return 'This file is about ${formatStorageHuman(s)} plus about '
+                '${formatStorageHuman(kDownloadHeadroomMarginBytes)} for '
+                'Telegram cache and overhead '
+                '(about ${formatStorageHuman(requiredBytes)} free recommended).';
+          }
+          return '';
+        })()
+      : '';
+
   final proceed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Low storage'),
           content: Text(
             'Free space on storage volumes this app can use is about '
-            '${formatStorageHuman(free)}. We recommend about '
-            '${formatStorageHuman(requiredBytes)} free for $verb '
-            '(Telegram cache, temp data, and system overhead).$streamClarifier\n\n'
+            '${formatStorageHuman(free)}. '
+            '${downloadDetail.isNotEmpty ? '$downloadDetail ' : ''}'
+            '${downloadDetail.isEmpty ? 'We recommend about ${formatStorageHuman(requiredBytes)} free for $verb (Telegram cache, temp data, and system overhead).' : ''}'
+            '$streamClarifier\n\n'
             'You can free space first, or continue anyway — the operation may fail '
             'if the device runs out of space.',
           ),
