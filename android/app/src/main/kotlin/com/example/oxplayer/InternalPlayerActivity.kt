@@ -1,4 +1,4 @@
-package com.example.oxplayer
+package de.aryanmo.oxplayer
 
 import android.app.AlertDialog
 import android.content.Intent

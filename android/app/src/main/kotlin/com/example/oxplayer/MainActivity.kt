@@ -1,4 +1,4 @@
-package com.example.oxplayer
+package de.aryanmo.oxplayer
 
 import android.content.ClipData
 import android.content.Context

@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.oxplayer">
+    package="de.aryanmo.oxplayer">
 
     <!-- Android TV: show in Leanback launcher; allow installs on devices without touch. -->
     <uses-feature

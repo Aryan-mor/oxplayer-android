@@ -1,4 +1,4 @@
-package com.example.oxplayer
+package de.aryanmo.oxplayer
 
 import androidx.media3.common.MimeTypes
 import java.io.File

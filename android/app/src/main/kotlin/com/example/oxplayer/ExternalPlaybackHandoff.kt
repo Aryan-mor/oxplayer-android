@@ -1,4 +1,4 @@
-package com.example.oxplayer
+package de.aryanmo.oxplayer
 
 /**
  * Queued by [InternalPlayerActivity] when the user chooses external playback.

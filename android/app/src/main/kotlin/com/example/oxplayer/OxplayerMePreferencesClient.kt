@@ -1,4 +1,4 @@
-package com.example.oxplayer
+package de.aryanmo.oxplayer
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
