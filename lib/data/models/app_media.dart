@@ -227,7 +227,14 @@ class AppMediaFile {
       videoLanguage: json['videoLanguage']?.toString() ??
           json['video_language']?.toString(),
       quality: json['quality']?.toString(),
-      size: json['size'] as int?,
+      size: _parseNullableInt(
+        json['size'] ??
+            json['fileSize'] ??
+            json['file_size'] ??
+            json['bytes'] ??
+            json['fileBytes'] ??
+            json['file_bytes'],
+      ),
       versionTag:
           json['versionTag']?.toString() ?? json['version_tag']?.toString(),
       language: json['language']?.toString(),
