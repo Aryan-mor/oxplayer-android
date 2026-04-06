@@ -73,7 +73,7 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
 
     final router = ref.watch(goRouterProvider);
     return MaterialApp.router(
-      title: 'Oxplayer',
+      title: 'OXPlayer',
       theme: buildOxplayerTheme(),
       routerConfig: router,
       builder: (context, child) {

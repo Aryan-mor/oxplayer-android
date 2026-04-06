@@ -7,6 +7,6 @@ void main() {
   testWidgets('app builds', (WidgetTester tester) async {
     await tester.pumpWidget(const ProviderScope(child: OxplayerApp()));
     await tester.pump();
-    expect(find.text('Oxplayer'), findsWidgets);
+    expect(find.text('OXPlayer'), findsWidgets);
   });
 }

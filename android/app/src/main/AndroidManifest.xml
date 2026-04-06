@@ -20,7 +20,7 @@
         android:maxSdkVersion="32" />
 
     <application
-        android:label="Oxplayer"
+        android:label="OXPlayer"
         android:name="${applicationName}"
         android:banner="@drawable/oxplayer_banner"
         android:icon="@mipmap/ic_launcher"

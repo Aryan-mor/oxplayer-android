@@ -456,7 +456,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                     ),
                     const SizedBox(height: 16),
                     const Text(
-                      'Oxplayer',
+                      'OXPlayer',
                       style:
                           TextStyle(fontSize: 40, fontWeight: FontWeight.bold),
                     ),

@@ -228,7 +228,7 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
                         try {
-                            val effectiveTitle = title ?: "Oxplayer stream"
+                            val effectiveTitle = title ?: "OXPlayer stream"
                             val contentUri: Uri = if (streamUriRaw != null) {
                                 Uri.parse(streamUriRaw)
                             } else {
@@ -251,7 +251,7 @@ class MainActivity : FlutterActivity() {
                             }
 
                             android.util.Log.d(
-                                "Oxplayer",
+                                "OXPlayer",
                                 "launchVideo uri=$contentUri path=$path title=$resolvedTitle mime=$mimeType"
                             )
                             val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -297,7 +297,7 @@ class MainActivity : FlutterActivity() {
                             )
                             result.success(true)
                         } catch (e: Exception) {
-                            android.util.Log.e("Oxplayer", "playHttpUrl", e)
+                            android.util.Log.e("OXPlayer", "playHttpUrl", e)
                             result.success(false)
                         }
                     }
@@ -323,7 +323,7 @@ class MainActivity : FlutterActivity() {
                             )
                             result.success(true)
                         } catch (e: Exception) {
-                            android.util.Log.e("Oxplayer", "playLocalFile", e)
+                            android.util.Log.e("OXPlayer", "playLocalFile", e)
                             result.success(false)
                         }
                     }
@@ -352,7 +352,7 @@ class MainActivity : FlutterActivity() {
                         }
 
                         android.util.Log.d(
-                            "Oxplayer",
+                            "OXPlayer",
                             "injectMetadata: path=$path title='$title' year='$year' " +
                                 "mediaTitle='$mediaTitle' displayTitle='$displayTitle' " +
                                 "subtitle='$subtitle' isSeries=$isSeries",

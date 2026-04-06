@@ -25,9 +25,9 @@ Future<PlaybackSurface?> showPlaybackSurfacePicker(
   };
   final blurb = switch (kind) {
     PlaybackSurfaceKind.stream =>
-      'External opens VLC or another app. Internal plays inside Oxplayer.',
+      'External opens VLC or another app. Internal plays inside OXPlayer.',
     PlaybackSurfaceKind.localFile =>
-      'External opens VLC or another app. Internal plays inside Oxplayer. '
+      'External opens VLC or another app. Internal plays inside OXPlayer. '
           'This choice applies to local files only, not streams.',
   };
   return showDialog<PlaybackSurface>(

@@ -86,7 +86,7 @@ class RequestMediaFileResult {
 }
 
 const _kApiDeviceIdPrefsKey = 'OXPLAYER_API_DEVICE_ID';
-const _kDefaultDeviceName = 'Oxplayer Flutter';
+const _kDefaultDeviceName = 'OXPlayer Flutter';
 
 /// Row from GET [/me/explore/media] (full catalog, not scoped to user library).
 class ExploreCatalogItem {
@@ -964,20 +964,57 @@ class OxplayerApiService {
     final uri = Uri.tryParse(webAppUrl);
     if (uri == null) return null;
 
-    final fromQuery = uri.queryParameters['tgWebAppData'];
+    // Read the raw query token to avoid `Uri.queryParameters` canonicalization.
+    // In particular, `+` can be converted to space in form-style decoding, which
+    // breaks Telegram HMAC validation for some initData payloads.
+    final fromQuery = _extractQueryParamRaw(
+      query: uri.query,
+      key: 'tgWebAppData',
+    );
     if (fromQuery != null && fromQuery.isNotEmpty) {
-      return Uri.decodeComponent(fromQuery);
+      return fromQuery;
     }
 
     final fragment = uri.fragment;
     if (fragment.isNotEmpty) {
-      final fragmentUri = Uri.parse('https://local/?$fragment');
-      final fromFragment = fragmentUri.queryParameters['tgWebAppData'];
+      final queryFromFragment = fragment.contains('?')
+          ? fragment.substring(fragment.indexOf('?') + 1)
+          : fragment;
+      final fromFragment = _extractQueryParamRaw(
+        query: queryFromFragment,
+        key: 'tgWebAppData',
+      );
       if (fromFragment != null && fromFragment.isNotEmpty) {
-        return Uri.decodeComponent(fromFragment);
+        return fromFragment;
       }
     }
     return null;
+  }
+
+  String? _extractQueryParamRaw({
+    required String query,
+    required String key,
+  }) {
+    if (query.isEmpty) return null;
+    for (final pair in query.split('&')) {
+      if (pair.isEmpty) continue;
+      final eq = pair.indexOf('=');
+      final rawKey = eq >= 0 ? pair.substring(0, eq) : pair;
+      final decodedKey = _decodeComponentSafe(rawKey);
+      if (decodedKey != key) continue;
+      final rawValue = eq >= 0 ? pair.substring(eq + 1) : '';
+      return _decodeComponentSafe(rawValue);
+    }
+    return null;
+  }
+
+  String _decodeComponentSafe(String input) {
+    if (input.isEmpty) return input;
+    try {
+      return Uri.decodeComponent(input);
+    } catch (_) {
+      return input;
+    }
   }
 
   String _summarizeHeaders(Map<String, dynamic> headers) {

@@ -380,7 +380,7 @@ class _NetflixTopBar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           const Text(
-            'Oxplayer',
+            'OXPlayer',
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w800,
@@ -1291,7 +1291,7 @@ class _StorageManageDialogState extends State<_StorageManageDialog> {
                       children: [
                         const Text(
                           'This screen shows video files saved on this device '
-                          'through Oxplayer (finished downloads) and temporary data '
+                          'through OXPlayer (finished downloads) and temporary data '
                           'Telegram keeps while you stream or pause a download. '
                           'Clear cache frees that temporary data only. Clear all '
                           'removes saved files and download history on this device.',

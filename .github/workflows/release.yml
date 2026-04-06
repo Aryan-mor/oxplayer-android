@@ -36,7 +36,8 @@ jobs:
         run: flutter pub get
 
       # Option A: one secret ENV_FILE_CONTENT = full contents of default.env
-      # Option B: repository or environment Variables + Secrets below (TELEGRAM_API_HASH should be a Secret, not a Variable)
+      # Option B: TELEGRAM_* + OXPLAYER_* from repository/environment Secrets and/or Variables
+      #   (OXPLAYER_* are read from secrets first, then vars — same pattern as TELEGRAM_API_ID)
       - name: Prepare environment variables
         env:
           ENV_FILE_CONTENT: ${{ secrets.ENV_FILE_CONTENT }}
@@ -47,9 +48,9 @@ jobs:
           CAPTIONER_BOT_USERNAME: ${{ vars.CAPTIONER_BOT_USERNAME }}
           PROVIDER_BOT_USERNAME: ${{ vars.PROVIDER_BOT_USERNAME }}
           REQUIRED_CHANNEL_USERNAME: ${{ vars.REQUIRED_CHANNEL_USERNAME }}
-          OXPLAYER_API_BASE_URL: ${{ vars.OXPLAYER_API_BASE_URL }}
-          OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
-          OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_URL }}
+          OXPLAYER_API_BASE_URL: ${{ secrets.OXPLAYER_API_BASE_URL || vars.OXPLAYER_API_BASE_URL }}
+          OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ secrets.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME || vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
+          OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ secrets.OXPLAYER_TELEGRAM_WEBAPP_URL || vars.OXPLAYER_TELEGRAM_WEBAPP_URL }}
         run: |
           if [ -n "$ENV_FILE_CONTENT" ]; then
             echo "Using ENV_FILE_CONTENT secret for assets/env/default.env"

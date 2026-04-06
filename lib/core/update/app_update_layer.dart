@@ -296,7 +296,7 @@ class _AppUpdateLayerState extends ConsumerState<AppUpdateLayer>
         const SizedBox(height: 16),
         Text(
           prompt.mandatory
-              ? 'This version of Oxplayer is no longer supported. '
+              ? 'This version of OXPlayer is no longer supported. '
                   'The service or app protocol has changed, so you '
                   'must download and install the new build for your '
                   'device before you can continue.'

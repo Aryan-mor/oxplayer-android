@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <application
-        android:label="Oxplayer Debug"
+        android:label="OXPlayer Debug"
         tools:replace="android:label" />
 </manifest>
