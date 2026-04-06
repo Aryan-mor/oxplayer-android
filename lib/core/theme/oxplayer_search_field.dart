@@ -131,8 +131,10 @@ class _OxplayerSearchFieldState extends State<OxplayerSearchField> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(widget.borderRadius),
             border: Border.all(
-              color: _shellFocused ? AppColors.highlight : AppColors.border,
-              width: _shellFocused ? 3.0 : 1.0,
+              color: _shellFocused
+                  ? AppColors.highlight
+                  : Colors.transparent,
+              width: 3.0,
             ),
             boxShadow: _shellFocused
                 ? [

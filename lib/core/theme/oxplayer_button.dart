@@ -3,7 +3,10 @@ import 'package:flutter/services.dart';
 
 import 'app_theme.dart';
 
-/// D-pad navigable button with scale + glow + focus border animations.
+/// D-pad navigable button with scale + glow + focus ring animations.
+///
+/// The focus ring uses a fixed border width (transparent when unfocused) so
+/// layout size does not change when focus moves.
 ///
 /// Wrap any child in this to get the established Oxplayer remote / focus treatment.
 /// The [autofocus] flag should be set to `true` on the primary action (Play).
@@ -42,6 +45,9 @@ class OxplayerButton extends StatefulWidget {
 }
 
 class _OxplayerButtonState extends State<OxplayerButton> {
+  /// Outer ring width is constant so focus/unfocus does not change layout size.
+  static const double _kFocusRingWidth = 3.0;
+
   FocusNode? _internalFocusNode;
   bool _focused = false;
 
@@ -116,13 +122,9 @@ class _OxplayerButtonState extends State<OxplayerButton> {
                   : _focused
                       ? AppColors.highlight
                       : widget.selected
-                          ? AppColors.highlight
-                          : AppColors.border,
-              width: plain
-                  ? 0
-                  : _focused
-                      ? 3.0
-                      : (widget.selected ? 2.0 : 1.0),
+                          ? AppColors.highlight.withValues(alpha: 0.55)
+                          : Colors.transparent,
+              width: _kFocusRingWidth,
             ),
             boxShadow: _focused
                 ? [
