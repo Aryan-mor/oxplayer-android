@@ -39,6 +39,14 @@ class MainActivity : FlutterActivity() {
             UserPreferenceHandoff.flushPendingToFlutter(main.flutterEngine)
         }
 
+        /**
+         * Delivers [PlaybackDebugHandoff] entries to Flutter when available.
+         */
+        fun flushPlaybackDebugHandoffsIfPossible() {
+            val main = handoffMainActivityRef.get() ?: return
+            PlaybackDebugHandoff.flushPendingToFlutter(main.flutterEngine)
+        }
+
         private const val CHANNEL_PLAYER = "oxplayer/external_player"
         private const val CHANNEL_INTERNAL_PLAYER = "oxplayer/internal_player"
         private const val CHANNEL_PLAYBACK_HANDOFF = "oxplayer/playback_handoff"
@@ -375,6 +383,7 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         flushPlaybackHandoffToFlutter()
+        flushPlaybackDebugHandoffToFlutter()
         flushUserPreferenceHandoffToFlutter()
     }
 
@@ -401,6 +410,10 @@ class MainActivity : FlutterActivity() {
 
     private fun flushUserPreferenceHandoffToFlutter() {
         UserPreferenceHandoff.flushPendingToFlutter(flutterEngine)
+    }
+
+    private fun flushPlaybackDebugHandoffToFlutter() {
+        PlaybackDebugHandoff.flushPendingToFlutter(flutterEngine)
     }
 
     private fun usableSpaceBytes(path: File): Long = try {

@@ -6,7 +6,7 @@ import '../core/debug/app_debug_log.dart';
 import 'tdlib_facade.dart';
 
 void _locatorLog(String m) =>
-    AppDebugLog.instance.log(m, category: AppDebugLogCategory.currentDebug);
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.locator);
 
 const Duration _kResolveSendTimeout = Duration(seconds: 8);
 const Duration _kResolveOverallTimeout = Duration(seconds: 35);
@@ -308,7 +308,8 @@ Future<_ExtractedFromMessage?> _resolveFileByMessage({
     );
     return null;
   } catch (e) {
-    _locatorLog('Locator: GetMessage failed chat=$chatId msg=$messageId err=$e');
+    _locatorLog(
+        'Locator: GetMessage failed chat=$chatId msg=$messageId err=$e');
     return null;
   }
 }

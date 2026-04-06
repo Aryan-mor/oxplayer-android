@@ -13,6 +13,7 @@ import 'core/oxplayer/oxplayer_screen_wrapper.dart';
 import 'core/update/app_update_layer.dart';
 import 'core/update/app_update_notifier.dart';
 import 'providers.dart';
+import 'player/playback_debug_handoff.dart';
 import 'player/external_playback_handoff.dart';
 import 'player/user_preference_handoff.dart';
 import 'router.dart';
@@ -33,6 +34,7 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
     super.initState();
     if (!kIsWeb && Platform.isAndroid) {
       ExternalPlaybackHandoff.register();
+      PlaybackDebugHandoff.register();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         UserPreferenceHandoff.register(ref.read(authNotifierProvider));
       });
