@@ -1,0 +1,131 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master # In case the main branch is named master
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  build_and_release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    # Optional: to use Settings → Environments → [name] variables, add:
+    #   environment: your-env-name
+    # (or set repo variable and use environment: ${{ vars.OXPLAYER_GITHUB_ENVIRONMENT }} if non-empty)
+    permissions:
+      contents: write # Required for creating releases
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Option A: one secret ENV_FILE_CONTENT = full contents of default.env
+      # Option B: repository or environment Variables + Secrets below (TELEGRAM_API_HASH should be a Secret, not a Variable)
+      - name: Prepare environment variables
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE_CONTENT }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || vars.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || vars.TELEGRAM_API_HASH }}
+          INDEX_TAG: ${{ vars.INDEX_TAG }}
+          BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+          CAPTIONER_BOT_USERNAME: ${{ vars.CAPTIONER_BOT_USERNAME }}
+          PROVIDER_BOT_USERNAME: ${{ vars.PROVIDER_BOT_USERNAME }}
+          REQUIRED_CHANNEL_USERNAME: ${{ vars.REQUIRED_CHANNEL_USERNAME }}
+          OXPLAYER_API_BASE_URL: ${{ vars.OXPLAYER_API_BASE_URL }}
+          OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
+          OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_URL }}
+        run: |
+          if [ -n "$ENV_FILE_CONTENT" ]; then
+            echo "Using ENV_FILE_CONTENT secret for assets/env/default.env"
+            echo "$ENV_FILE_CONTENT" > assets/env/default.env
+          elif [ -n "$TELEGRAM_API_ID" ] && [ -n "$TELEGRAM_API_HASH" ]; then
+            echo "Building assets/env/default.env from TELEGRAM_* and Actions vars"
+            INDEX_VAL="${INDEX_TAG:-"#seeOnTV"}"
+            {
+              printf 'TELEGRAM_API_ID=%s\n' "$TELEGRAM_API_ID"
+              printf 'TELEGRAM_API_HASH=%s\n' "$TELEGRAM_API_HASH"
+              printf 'INDEX_TAG="%s"\n' "$INDEX_VAL"
+              printf 'BOT_USERNAME=%s\n' "$BOT_USERNAME"
+              if [ -n "$CAPTIONER_BOT_USERNAME" ]; then
+                printf 'CAPTIONER_BOT_USERNAME=%s\n' "$CAPTIONER_BOT_USERNAME"
+              fi
+              printf 'PROVIDER_BOT_USERNAME=%s\n' "$PROVIDER_BOT_USERNAME"
+              printf 'REQUIRED_CHANNEL_USERNAME=%s\n' "$REQUIRED_CHANNEL_USERNAME"
+              printf 'OXPLAYER_API_BASE_URL=%s\n' "$OXPLAYER_API_BASE_URL"
+              printf 'OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME=%s\n' "$OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME"
+              printf 'OXPLAYER_TELEGRAM_WEBAPP_URL=%s\n' "$OXPLAYER_TELEGRAM_WEBAPP_URL"
+            } > assets/env/default.env
+          else
+            echo "::error::No app env for CI. Set secret ENV_FILE_CONTENT (full default.env), or set TELEGRAM_API_ID and TELEGRAM_API_HASH (repository/environment Secrets or Variables). See workflow comments."
+            cp assets/env/default.example.env assets/env/default.env
+            exit 1
+          fi
+
+      - name: Run Build Runner (Isar Generation)
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      # Secrets: ANDROID_KEYSTORE_BASE64 (base64 of .jks/.keystore), ANDROID_KEYSTORE_PASSWORD,
+      # ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD — release is signed with this key (distinct from local debug).
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::Set GitHub secret ANDROID_KEYSTORE_BASE64 (base64-encoded upload keystore)."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/ci-release.keystore
+
+      # Must match tag_name below (v1.0.N) so PackageManager.versionName / in-app update check see the real build.
+      - name: Build APK
+        env:
+          OXPLAYER_RELEASE_STORE_FILE: ${{ github.workspace }}/android/app/ci-release.keystore
+          OXPLAYER_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          OXPLAYER_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          OXPLAYER_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          flutter build apk --release --split-per-abi \
+            --build-name="1.0.${{ github.run_number }}" \
+            --build-number="${{ github.run_number }}"
+
+      - name: Build AppBundle
+        env:
+          OXPLAYER_RELEASE_STORE_FILE: ${{ github.workspace }}/android/app/ci-release.keystore
+          OXPLAYER_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          OXPLAYER_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          OXPLAYER_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          flutter build appbundle --release \
+            --build-name="1.0.${{ github.run_number }}" \
+            --build-number="${{ github.run_number }}"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use the run number for unique versions alongside the commit SHA
+          tag_name: "v1.0.${{ github.run_number }}"
+          name: "Release v1.0.${{ github.run_number }}"
+          body: "Automated Release triggered by push to ${{ github.ref_name }}. \nCommit: ${{ github.sha }}"
+          files: |
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-x86_64-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

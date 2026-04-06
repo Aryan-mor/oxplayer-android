@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="internal_player_trial_bar_margin_bottom">24dp</dimen>
+    <!-- Lift trial buttons when Media3 time bar is visible (~ progress strip + margin above bottom). -->
+    <dimen name="internal_player_trial_bar_lift_when_scrubber">96dp</dimen>
+</resources>

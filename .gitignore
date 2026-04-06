@@ -1,0 +1,55 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+.cursor/
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+.pub-cache/
+build/
+*.lock.hint
+
+# Generated
+*.g.dart
+lib/generated_plugin_registrant.dart
+app.*.symbols
+app.*.map.json
+
+# Android / Gradle
+.gradle/
+android/.kotlin/
+**/local.properties
+**/key.properties
+*.jks
+android/app/.ci-keystore-secrets-temp.txt
+
+# Apple platforms
+**/Pods/
+**/.symlinks/
+**/Flutter/ephemeral/
+**/Flutter/Generated.xcconfig
+**/Flutter/flutter_export_environment.sh
+**/Flutter/Flutter.podspec
+
+# Env (keep examples)
+.env
+.env.*
+!.env.example
+assets/env/*.env
+!assets/env/*.example.env
+
+# Logs and OS junk
+*.log
+.DS_Store
+Thumbs.db

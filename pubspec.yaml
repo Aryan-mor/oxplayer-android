@@ -1,0 +1,52 @@
+name: oxplayer
+description: Oxplayer Android client — Flutter (TDLib + media_kit + Isar).
+publish_to: "none"
+# Local/dev default. GitHub Actions release sets --build-name/--build-number to 1.0.<run_number> (see release.yml).
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Stay on v2 until Isar migrates: Riverpod 3 + isar_generator + flutter_test conflict on pub.
+  flutter_riverpod: ^2.6.1
+  go_router: ^17.1.0
+
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  shared_preferences: ^2.3.3
+  flutter_dotenv: ^6.0.0
+
+  dio: ^5.7.0
+  tmdb_api: ^2.2.0
+  cached_network_image: ^3.4.1
+  device_info_plus: ^11.2.0
+
+  shelf: ^1.4.2
+
+  intl: ^0.20.1
+  collection: ^1.19.0
+  # Native libtdjson.so in android/app/src/main/jniLibs must match this package (see jniLibs/README.txt). "Wrong version 54" = replace .so.
+  tdlib: ^1.6.0
+  qr_flutter: ^4.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  # isar_generator 3.1.x requires build ^2.x; build_runner 2.9+ pulls build ^4 (incompatible).
+  build_runner: ">=2.4.13 <2.9.0"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/env/default.env
+    - assets/icon.png
+
+flutter_launcher_icons:
+  android: true
+  image_path: assets/icon.png

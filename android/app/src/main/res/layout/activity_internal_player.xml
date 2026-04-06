@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/internal_player_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layoutDirection="locale">
+
+  <androidx.media3.ui.PlayerView
+      android:id="@+id/player_view"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      app:controller_layout_id="@layout/oxplayer_exo_player_control_view"
+      app:show_buffering="when_playing" />
+
+  <LinearLayout
+      android:id="@+id/trial_subtitle_bar"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_gravity="bottom|start"
+      android:layout_marginStart="24dp"
+      android:layout_marginBottom="@dimen/internal_player_trial_bar_margin_bottom"
+      android:background="#CC000000"
+      android:gravity="center_vertical"
+      android:orientation="horizontal"
+      android:padding="8dp"
+      android:visibility="gone">
+
+    <Button
+        android:id="@+id/trial_btn_previous"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:focusable="true"
+        android:text="@string/internal_player_previous" />
+
+    <Button
+        android:id="@+id/trial_btn_confirm"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:focusable="true"
+        android:text="@string/internal_player_confirm" />
+
+    <Button
+        android:id="@+id/trial_btn_next"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:focusable="true"
+        android:text="@string/internal_player_next" />
+  </LinearLayout>
+
+  <ProgressBar
+      android:id="@+id/trial_loading"
+      style="?android:attr/progressBarStyleLarge"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_gravity="center"
+      android:visibility="gone" />
+
+</FrameLayout>
