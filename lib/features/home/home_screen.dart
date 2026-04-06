@@ -594,7 +594,7 @@ class _HomeKindRow extends ConsumerStatefulWidget {
 class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
   final ScrollController _scrollController = ScrollController();
   final List<FocusNode> _focusNodes = <FocusNode>[];
-  int _focusedIndex = 0;
+  int? _focusedIndex;
 
   @override
   void initState() {
@@ -605,7 +605,7 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
   void didUpdateWidget(covariant _HomeKindRow oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.apiKind != widget.apiKind) {
-      _focusedIndex = 0;
+      _focusedIndex = null;
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(0);
       }
@@ -649,9 +649,11 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
   }
 
   void _ensureFocusedVisible(int itemCount) {
+    final focusedIndex = _focusedIndex;
+    if (focusedIndex == null) return;
     if (!_scrollController.hasClients || itemCount <= 0) return;
     final focusedW = widget.cardWidth * _kFocusedWidthFactor;
-    final left = _scrollOffsetForStart(_focusedIndex);
+    final left = _scrollOffsetForStart(focusedIndex);
     final right = left + focusedW;
     final viewLeft = _scrollController.offset;
     final viewRight = viewLeft + _scrollController.position.viewportDimension;
@@ -673,8 +675,10 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
 
   void _moveFocus(int delta, int itemCount) {
     if (itemCount <= 0) return;
-    final next = (_focusedIndex + delta).clamp(0, itemCount - 1);
-    if (next == _focusedIndex) return;
+    final current = _focusedIndex;
+    if (current == null) return;
+    final next = (current + delta).clamp(0, itemCount - 1);
+    if (next == current) return;
     setState(() => _focusedIndex = next);
     if (next < _focusNodes.length) {
       _focusNodes[next].requestFocus();
@@ -686,11 +690,14 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
   }
 
   void _activateCurrent(List<AppMediaAggregate> slice, int itemCount) {
-    if (_focusedIndex < 0 || _focusedIndex >= itemCount) return;
-    if (_focusedIndex >= slice.length) {
+    final focusedIndex = _focusedIndex;
+    if (focusedIndex == null || focusedIndex < 0 || focusedIndex >= itemCount) {
+      return;
+    }
+    if (focusedIndex >= slice.length) {
       context.push('/library/${Uri.encodeComponent(widget.apiKind)}');
     } else {
-      widget.onOpenItem(slice[_focusedIndex]);
+      widget.onOpenItem(slice[focusedIndex]);
     }
   }
 
@@ -752,13 +759,10 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
                 final slice = items.take(10).toList();
                 final n = slice.length + 1;
                 _syncFocusNodes(n);
-                if (_focusedIndex >= n) {
+                if (_focusedIndex != null && _focusedIndex! >= n) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (!mounted) return;
-                    setState(() => _focusedIndex = 0);
-                    if (_focusNodes.isNotEmpty) {
-                      _focusNodes.first.requestFocus();
-                    }
+                    setState(() => _focusedIndex = null);
                   });
                 }
                 return Padding(
@@ -780,12 +784,20 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
                       return Focus(
                         focusNode: _focusNodes[index],
                         onFocusChange: (hasFocus) {
-                          if (!hasFocus || _focusedIndex == index) return;
-                          setState(() => _focusedIndex = index);
+                          if (hasFocus) {
+                            if (_focusedIndex == index) return;
+                            setState(() => _focusedIndex = index);
+                            _ensureFocusedVisible(n);
+                            return;
+                          }
+                          if (_focusedIndex != index) return;
+                          setState(() => _focusedIndex = null);
                           _ensureFocusedVisible(n);
                         },
                         onKeyEvent: (_, e) => _onItemKey(index, e, slice, n),
-                        child: SizedBox(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOutCubic,
                           width: width,
                           child: index == slice.length
                               ? _CarouselShowMoreCard(
