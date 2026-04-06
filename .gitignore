@@ -32,6 +32,7 @@ android/.kotlin/
 **/local.properties
 **/key.properties
 *.jks
+*.p12
 android/app/.ci-keystore-secrets-temp.txt
 
 # Apple platforms

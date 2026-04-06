@@ -52,6 +52,7 @@ android {
             val storePath = requireNotNull(oxplayerReleaseStorePath)
             create("ciRelease") {
                 storeFile = file(storePath)
+                storeType = "PKCS12"
                 storePassword = System.getenv("OXPLAYER_RELEASE_STORE_PASSWORD").orEmpty()
                 keyAlias = System.getenv("OXPLAYER_RELEASE_KEY_ALIAS").orEmpty()
                 keyPassword = System.getenv("OXPLAYER_RELEASE_KEY_PASSWORD").orEmpty()
