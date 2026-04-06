@@ -78,18 +78,11 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
       authNotifierProvider.select(
         (a) => (
           isAdmin: a.isAdmin,
-          hasServerUserProfile: a.hasServerUserProfile,
         ),
       ),
     );
-    final canShowDebugInRelease = kReleaseMode &&
-        debugProductionEnabled &&
-        (
-          authDebugGate.isAdmin ||
-          // Bootstrap fallback: when server profile is unavailable (e.g. API down),
-          // keep debug visible so connectivity/auth issues can be diagnosed.
-          !authDebugGate.hasServerUserProfile
-        );
+    final canShowDebugInRelease =
+        kReleaseMode && debugProductionEnabled && authDebugGate.isAdmin;
     final canShowDebugPanel = kDebugMode || canShowDebugInRelease;
     AppDebugLog.instance.setReleaseLoggingEnabled(canShowDebugInRelease);
 
