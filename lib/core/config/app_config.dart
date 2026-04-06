@@ -14,6 +14,7 @@ class AppConfig {
     required this.telegramWebAppShortName,
     required this.telegramWebAppUrl,
     required this.subdlApiKey,
+    required this.debugProductionEnabled,
   });
 
   final String telegramApiId;
@@ -30,9 +31,16 @@ class AppConfig {
   final String telegramWebAppUrl;
   /// SubDL API key for in-app subtitle search (internal player). Empty = disabled.
   final String subdlApiKey;
+  /// Enables debug panel/logs in production for eligible users.
+  final bool debugProductionEnabled;
 
   static AppConfig fromEnv() {
     String v(String key) => dotenv.env[key]?.trim() ?? '';
+    bool vb(String key, {required bool defaultValue}) {
+      final value = v(key).toLowerCase();
+      if (value.isEmpty) return defaultValue;
+      return value == '1' || value == 'true' || value == 'yes' || value == 'on';
+    }
     String vOrLegacy(String key, String legacyKey) {
       final primary = v(key);
       if (primary.isNotEmpty) return primary;
@@ -60,6 +68,10 @@ class AppConfig {
         'TV_APP_WEBAPP_URL',
       ),
       subdlApiKey: v('SUBDL_API_KEY'),
+      debugProductionEnabled: vb(
+        'OXPLAYER_DEBUG_PRODUCTION',
+        defaultValue: true,
+      ),
     );
   }
 

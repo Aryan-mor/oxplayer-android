@@ -54,13 +54,22 @@ class AppDebugLog extends ChangeNotifier {
   ];
 
   final List<_LogEntry> _entries = <_LogEntry>[];
+  bool _releaseLoggingEnabled = false;
+
+  bool get isEnabled => kDebugMode || _releaseLoggingEnabled;
+
+  void setReleaseLoggingEnabled(bool enabled) {
+    if (_releaseLoggingEnabled == enabled) return;
+    _releaseLoggingEnabled = enabled;
+    notifyListeners();
+  }
 
   /// Append a line (no-op in release builds).
   void log(
     String message, {
     AppDebugLogCategory category = AppDebugLogCategory.general,
   }) {
-    if (!kDebugMode) return;
+    if (!isEnabled) return;
     final line = message;
     _entries.add(_LogEntry(line, category));
     debugPrint('[${category.name}] $line');
@@ -84,7 +93,7 @@ class AppDebugLog extends ChangeNotifier {
   int get totalCount => _entries.length;
 
   void clear() {
-    if (!kDebugMode) return;
+    if (!isEnabled) return;
     _entries.clear();
     notifyListeners();
   }
