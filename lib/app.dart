@@ -71,6 +71,15 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
       if (released) _tryInitTdlib();
     });
 
+    final debugProductionEnabled = ref.watch(
+      appConfigProvider.select((c) => c.debugProductionEnabled),
+    );
+    final isAdminUser = ref.watch(authNotifierProvider.select((a) => a.isAdmin));
+    final canShowDebugInRelease =
+        kReleaseMode && debugProductionEnabled && isAdminUser;
+    final canShowDebugPanel = kDebugMode || canShowDebugInRelease;
+    AppDebugLog.instance.setReleaseLoggingEnabled(canShowDebugInRelease);
+
     final router = ref.watch(goRouterProvider);
     return MaterialApp.router(
       title: 'OXPlayer',
@@ -100,7 +109,7 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
         final wrapped = OxplayerScreenWrapper(
           child: SizedBox.expand(child: routerChild),
         );
-        final stack = kDebugMode
+        final stack = canShowDebugPanel
             ? Stack(
                 fit: StackFit.expand,
                 clipBehavior: Clip.none,

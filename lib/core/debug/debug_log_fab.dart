@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -12,7 +11,7 @@ class DebugLogFab extends StatelessWidget {
   const DebugLogFab({super.key});
 
   static Future<void> openModal(BuildContext fallbackContext) async {
-    if (!kDebugMode) return;
+    if (!AppDebugLog.instance.isEnabled) return;
 
     void showWith(BuildContext dialogContext) {
       showDialog<void>(
@@ -43,7 +42,7 @@ class DebugLogFab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!kDebugMode) return const SizedBox.shrink();
+    if (!AppDebugLog.instance.isEnabled) return const SizedBox.shrink();
 
     return SafeArea(
       child: Material(

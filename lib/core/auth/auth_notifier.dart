@@ -41,6 +41,7 @@ class AuthNotifier extends ChangeNotifier {
     final t = (_userType ?? '').toUpperCase();
     return t == 'ADMIN' || t == 'VIP';
   }
+  bool get isAdmin => (_userType ?? '').toUpperCase() == 'ADMIN';
 
   bool get hasServerUserProfile =>
       _userId != null && _userId!.trim().isNotEmpty;
