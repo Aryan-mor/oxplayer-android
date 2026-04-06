@@ -26,7 +26,6 @@ const _kApiKindOther = 'general_video';
 /// Number of visible slots in home carousel rows.
 const _kCarouselVisibleSlots = 5;
 const _kCarouselGap = 10.0;
-const _kCarouselSidePad = 24.0;
 
 /// Focused tile gets wider (layout-based, not transform-based).
 const _kFocusedWidthFactor = 1.5;
@@ -34,12 +33,13 @@ const _kFocusedWidthFactor = 1.5;
 ({double cardWidth, double sectionHorizontalPad}) _homeCarouselLayout(
   double screenW,
 ) {
+  final sidePad = AppLayout.tvHorizontalInset;
   final bleed = (_kFocusedWidthFactor - 1) / 2;
   final cardW = (screenW -
-          2 * _kCarouselSidePad -
+          2 * sidePad -
           (_kCarouselVisibleSlots - 1) * _kCarouselGap) /
       _kCarouselVisibleSlots;
-  final sectionPad = _kCarouselSidePad + cardW * bleed;
+  final sectionPad = sidePad + cardW * bleed;
   return (cardWidth: cardW, sectionHorizontalPad: sectionPad);
 }
 
@@ -87,6 +87,26 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _mainTab = 0;
+  final GlobalKey<_HomeTabContentState> _homeTabKey =
+      GlobalKey<_HomeTabContentState>();
+  final GlobalKey<_SourcesTabContentState> _sourcesTabKey =
+      GlobalKey<_SourcesTabContentState>();
+
+  late final FocusNode _homeNavFocus =
+      FocusNode(debugLabel: 'home-nav-home');
+  late final FocusNode _sourcesNavFocus =
+      FocusNode(debugLabel: 'home-nav-sources');
+  late final FocusNode _myOxNavFocus =
+      FocusNode(debugLabel: 'home-nav-myox');
+  late final FocusNode _exploreFocus =
+      FocusNode(debugLabel: 'home-nav-explore');
+  late final FocusNode _refreshFocus =
+      FocusNode(debugLabel: 'home-action-refresh');
+  late final FocusNode _storageFocus =
+      FocusNode(debugLabel: 'home-action-storage');
+  late final FocusNode _logoutFocus =
+      FocusNode(debugLabel: 'home-action-logout');
+
   bool _isRefreshingLibrary = false;
   DateTime? _lastLibraryRefreshTime;
   DateTime? _lastBackPress;
@@ -98,7 +118,81 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _homeLog('HomeScreen: initState');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshLibraryOnOpen();
+      _applyResumeOrDefaultFocus();
     });
+  }
+
+  @override
+  void dispose() {
+    _homeNavFocus.dispose();
+    _sourcesNavFocus.dispose();
+    _myOxNavFocus.dispose();
+    _exploreFocus.dispose();
+    _refreshFocus.dispose();
+    _storageFocus.dispose();
+    _logoutFocus.dispose();
+    super.dispose();
+  }
+
+  void _applyResumeOrDefaultFocus() {
+    if (!mounted) return;
+    final snap = ref.read(homeBrowseFocusProvider);
+    if (!snap.expectResumeAfterDetail) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _homeNavFocus.requestFocus();
+      });
+      return;
+    }
+
+    ref.read(homeBrowseFocusProvider.notifier).clearResumeExpectation();
+
+    final tab = snap.lastMainTab;
+    if (tab != _mainTab) {
+      setState(() => _mainTab = tab);
+    }
+
+    void tryResume({int attempt = 0}) {
+      if (!mounted) return;
+      if (tab == 0) {
+        final kind = snap.lastCarouselApiKind;
+        final idx = snap.lastCarouselItemIndex;
+        final row = switch (kind) {
+          _kApiKindMovie => 0,
+          _kApiKindSeries => 1,
+          _kApiKindOther => 2,
+          _ => -1,
+        };
+        if (row >= 0) {
+          final ok =
+              _homeTabKey.currentState?.focusCarouselRow(row, idx) ?? false;
+          if (ok) return;
+          if (attempt < 12) {
+            WidgetsBinding.instance
+                .addPostFrameCallback((_) => tryResume(attempt: attempt + 1));
+            return;
+          }
+        }
+      } else if (tab == 1) {
+        final ok = _sourcesTabKey.currentState
+                ?.focusGridIndex(snap.lastSourcesGridIndex) ??
+            false;
+        if (ok) return;
+        if (attempt < 12) {
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => tryResume(attempt: attempt + 1));
+          return;
+        }
+      }
+      if (tab == 0) {
+        _homeNavFocus.requestFocus();
+      } else if (tab == 1) {
+        _sourcesNavFocus.requestFocus();
+      } else {
+        _myOxNavFocus.requestFocus();
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => tryResume());
   }
 
   Future<void> _refreshLibraryOnOpen() async {
@@ -279,6 +373,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _openItem(BuildContext context, AppMediaAggregate item) {
     final id = item.media.id.trim();
     if (id.isEmpty) return;
+    ref.read(homeBrowseFocusProvider.notifier).markOpeningDetail();
     context.push('/item/${Uri.encodeComponent(id)}');
   }
 
@@ -326,7 +421,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             children: [
               _NetflixTopBar(
                 selectedTab: _mainTab,
-                onSelectTab: (i) => setState(() => _mainTab = i),
+                homeNavFocus: _homeNavFocus,
+                sourcesNavFocus: _sourcesNavFocus,
+                myOxNavFocus: _myOxNavFocus,
+                exploreFocus: _exploreFocus,
+                refreshFocus: _refreshFocus,
+                storageFocus: _storageFocus,
+                logoutFocus: _logoutFocus,
+                onSelectTab: (i) {
+                  setState(() => _mainTab = i);
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted) return;
+                    switch (i) {
+                      case 0:
+                        _homeNavFocus.requestFocus();
+                        break;
+                      case 1:
+                        _sourcesNavFocus.requestFocus();
+                        break;
+                      default:
+                        _myOxNavFocus.requestFocus();
+                    }
+                  });
+                },
+                onNavArrowDown: (navIndex) {
+                  if (navIndex == 0 && _mainTab == 0) {
+                    _homeTabKey.currentState?.focusFirstCarouselTile();
+                  } else if (navIndex == 1 && _mainTab == 1) {
+                    _sourcesTabKey.currentState?.focusFirstGridTile();
+                  }
+                },
+                onHeaderFocusedWhileHomeTab: () {
+                  _homeTabKey.currentState?.clearActiveSection();
+                },
                 isRefreshing: _isRefreshingLibrary,
                 lastRefreshLabel: _formatLastLibraryRefresh(),
                 canExplore: canExplore,
@@ -348,9 +475,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   index: _mainTab,
                   children: [
                     _HomeTabContent(
+                      key: _homeTabKey,
+                      headerHomeNavFocus: _homeNavFocus,
                       onOpenItem: (item) => _openItem(context, item),
                     ),
                     _SourcesTabContent(
+                      key: _sourcesTabKey,
+                      sourcesNavFocus: _sourcesNavFocus,
                       onOpenItem: (item) => _openItem(context, item),
                     ),
                     const _MyOxTabContent(),
@@ -369,6 +500,15 @@ class _NetflixTopBar extends StatelessWidget {
   const _NetflixTopBar({
     required this.selectedTab,
     required this.onSelectTab,
+    required this.homeNavFocus,
+    required this.sourcesNavFocus,
+    required this.myOxNavFocus,
+    required this.exploreFocus,
+    required this.refreshFocus,
+    required this.storageFocus,
+    required this.logoutFocus,
+    required this.onNavArrowDown,
+    required this.onHeaderFocusedWhileHomeTab,
     required this.isRefreshing,
     required this.lastRefreshLabel,
     required this.canExplore,
@@ -381,6 +521,15 @@ class _NetflixTopBar extends StatelessWidget {
 
   final int selectedTab;
   final ValueChanged<int> onSelectTab;
+  final FocusNode homeNavFocus;
+  final FocusNode sourcesNavFocus;
+  final FocusNode myOxNavFocus;
+  final FocusNode exploreFocus;
+  final FocusNode refreshFocus;
+  final FocusNode storageFocus;
+  final FocusNode logoutFocus;
+  final void Function(int navIndex) onNavArrowDown;
+  final VoidCallback onHeaderFocusedWhileHomeTab;
   final bool isRefreshing;
   final String lastRefreshLabel;
   final bool canExplore;
@@ -390,134 +539,251 @@ class _NetflixTopBar extends StatelessWidget {
   final VoidCallback onStorage;
   final VoidCallback onLogout;
 
+  KeyEventResult _navDownKey(int navIndex, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      onNavArrowDown(navIndex);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          const Text(
-            'OXPlayer',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(width: 28),
-          _TopNavLabel(
-            label: 'Home',
-            selected: selectedTab == 0,
-            onTap: () => onSelectTab(0),
-          ),
-          const SizedBox(width: 18),
-          _TopNavLabel(
-            label: 'Sources',
-            selected: selectedTab == 1,
-            onTap: () => onSelectTab(1),
-          ),
-          const SizedBox(width: 18),
-          _TopNavLabel(
-            label: 'My OX',
-            selected: selectedTab == 2,
-            onTap: () => onSelectTab(2),
-          ),
-          const Spacer(),
-          Text(
-            'Synced $lastRefreshLabel',
-            style: TextStyle(
-              color: AppColors.textMuted.withValues(alpha: 0.9),
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (canExplore)
-            TextButton(
-              onPressed: onExplore,
-              child: const Text('Explore'),
-            ),
-          IconButton(
-            tooltip: 'Refresh library',
-            onPressed: isRefreshing ? null : onRefresh,
-            icon: isRefreshing
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded),
-          ),
-          if (showStorageButton)
-            IconButton(
-              tooltip: 'Storage & cache',
-              onPressed: onStorage,
-              icon: const Icon(Icons.delete_sweep_rounded),
-            ),
-          IconButton(
-            tooltip: 'Log out',
-            onPressed: onLogout,
-            icon: const Icon(Icons.logout_rounded),
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(
+        AppLayout.tvTopBarHorizontalPad,
+        10,
+        AppLayout.tvTopBarHorizontalPad,
+        14,
       ),
-    );
-  }
-}
-
-class _TopNavLabel extends StatelessWidget {
-  const _TopNavLabel({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      child: FocusTraversalGroup(
+        policy: OrderedTraversalPolicy(),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              label,
+            const Text(
+              'OXPlayer',
               style: TextStyle(
-                fontSize: 16,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                color: selected ? Colors.white : AppColors.textMuted,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.5,
               ),
             ),
-            const SizedBox(height: 4),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              height: 2,
-              width: selected ? 28 : 0,
-              decoration: BoxDecoration(
-                color: AppColors.highlight,
-                borderRadius: BorderRadius.circular(2),
+            const SizedBox(width: 24),
+            OxplayerButton(
+              focusNode: homeNavFocus,
+              selected: selectedTab == 0,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              borderRadius: 8,
+              onPressed: () => onSelectTab(0),
+              onFocusChanged: (f) {
+                if (f) onHeaderFocusedWhileHomeTab();
+              },
+              onKeyEvent: (_, e) => _navDownKey(0, e),
+              child: _topNavLabelChild('Home', selectedTab == 0),
+            ),
+            const SizedBox(width: 10),
+            OxplayerButton(
+              focusNode: sourcesNavFocus,
+              selected: selectedTab == 1,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              borderRadius: 8,
+              onPressed: () => onSelectTab(1),
+              onKeyEvent: (_, e) => _navDownKey(1, e),
+              child: _topNavLabelChild('Sources', selectedTab == 1),
+            ),
+            const SizedBox(width: 10),
+            OxplayerButton(
+              focusNode: myOxNavFocus,
+              selected: selectedTab == 2,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              borderRadius: 8,
+              onPressed: () => onSelectTab(2),
+              onKeyEvent: (_, e) => _navDownKey(2, e),
+              child: _topNavLabelChild('My OX', selectedTab == 2),
+            ),
+            const Spacer(),
+            Text(
+              'Synced $lastRefreshLabel',
+              style: TextStyle(
+                color: AppColors.textMuted.withValues(alpha: 0.9),
+                fontSize: 12,
               ),
+            ),
+            const SizedBox(width: 12),
+            if (canExplore) ...[
+              OxplayerButton(
+                focusNode: exploreFocus,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                borderRadius: 8,
+                onPressed: onExplore,
+                child: const Text(
+                  'Explore',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            OxplayerButton(
+              focusNode: refreshFocus,
+              enabled: !isRefreshing,
+              padding: const EdgeInsets.all(12),
+              borderRadius: 10,
+              onPressed: onRefresh,
+              child: isRefreshing
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded, size: 24),
+            ),
+            if (showStorageButton) ...[
+              const SizedBox(width: 4),
+              OxplayerButton(
+                focusNode: storageFocus,
+                padding: const EdgeInsets.all(12),
+                borderRadius: 10,
+                onPressed: onStorage,
+                child: const Icon(Icons.delete_sweep_rounded, size: 24),
+              ),
+            ],
+            const SizedBox(width: 4),
+            OxplayerButton(
+              focusNode: logoutFocus,
+              padding: const EdgeInsets.all(12),
+              borderRadius: 10,
+              onPressed: onLogout,
+              child: const Icon(Icons.logout_rounded, size: 24),
             ),
           ],
         ),
       ),
     );
   }
+
+  Widget _topNavLabelChild(String label, bool selected) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+            color: selected ? Colors.white : AppColors.textMuted,
+          ),
+        ),
+        const SizedBox(height: 4),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          height: 2,
+          width: selected ? 28 : 0,
+          decoration: BoxDecoration(
+            color: AppColors.highlight,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
-class _HomeTabContent extends ConsumerWidget {
-  const _HomeTabContent({required this.onOpenItem});
+class _HomeTabContent extends ConsumerStatefulWidget {
+  const _HomeTabContent({
+    super.key,
+    required this.headerHomeNavFocus,
+    required this.onOpenItem,
+  });
 
+  final FocusNode headerHomeNavFocus;
   final void Function(AppMediaAggregate item) onOpenItem;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_HomeTabContent> createState() => _HomeTabContentState();
+}
+
+class _HomeTabContentState extends ConsumerState<_HomeTabContent> {
+  final GlobalKey<_HomeKindRowState> _movieRowKey = GlobalKey();
+  final GlobalKey<_HomeKindRowState> _showRowKey = GlobalKey();
+  final GlobalKey<_HomeKindRowState> _otherRowKey = GlobalKey();
+
+  final ScrollController _homeVerticalScroll = ScrollController();
+  final GlobalKey _rowViewportKey0 = GlobalKey();
+  final GlobalKey _rowViewportKey1 = GlobalKey();
+  final GlobalKey _rowViewportKey2 = GlobalKey();
+
+  int? _activeSectionIndex;
+
+  @override
+  void dispose() {
+    _homeVerticalScroll.dispose();
+    super.dispose();
+  }
+
+  void _ensureSectionVisible(int sectionIndex) {
+    final key = switch (sectionIndex) {
+      0 => _rowViewportKey0,
+      1 => _rowViewportKey1,
+      2 => _rowViewportKey2,
+      _ => null,
+    };
+    if (key == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctx = key.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+        alignment: 0.08,
+      );
+    });
+  }
+
+  void clearActiveSection() {
+    if (_activeSectionIndex != null) {
+      setState(() => _activeSectionIndex = null);
+    }
+  }
+
+  void _onSectionFocused(int sectionIndex) {
+    if (_activeSectionIndex != sectionIndex) {
+      setState(() => _activeSectionIndex = sectionIndex);
+    }
+    _ensureSectionVisible(sectionIndex);
+  }
+
+  bool focusCarouselRow(int rowIndex, int itemIndex) {
+    final key = switch (rowIndex) {
+      0 => _movieRowKey,
+      1 => _showRowKey,
+      2 => _otherRowKey,
+      _ => null,
+    };
+    final ok = key?.currentState?.focusItem(itemIndex) ?? false;
+    if (ok) {
+      _ensureSectionVisible(rowIndex);
+    }
+    return ok;
+  }
+
+  void focusFirstCarouselTile() {
+    void attempt(int n) {
+      if (!mounted) return;
+      if (_movieRowKey.currentState?.focusItem(0) ?? false) return;
+      if (n < 15) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(n + 1));
+      }
+    }
+
+    attempt(0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final w = MediaQuery.sizeOf(context).width;
     final layout = _homeCarouselLayout(w);
     final cardW = layout.cardWidth;
@@ -526,48 +792,104 @@ class _HomeTabContent extends ConsumerWidget {
     const textBlockH = 120.0;
     final rowH = posterH + textBlockH;
 
+    double dimFor(int section) {
+      if (_activeSectionIndex == null) return 1;
+      return _activeSectionIndex == section ? 1 : 0.45;
+    }
+
     return ListView(
-      padding: const EdgeInsets.only(bottom: 32),
+      controller: _homeVerticalScroll,
+      padding: const EdgeInsets.only(
+        bottom: AppLayout.screenBottomInset + AppLayout.tvSectionVerticalGap,
+      ),
       children: [
-        _HomeKindRow(
-          title: 'Movies',
-          apiKind: _kApiKindMovie,
-          cardWidth: cardW,
-          posterHeight: posterH,
-          rowHeight: rowH,
-          gap: _kCarouselGap,
-          sectionHorizontalPad: sectionHPad,
-          onOpenItem: onOpenItem,
+        AnimatedOpacity(
+          key: _rowViewportKey0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          opacity: dimFor(0),
+          child: _HomeKindRow(
+            key: _movieRowKey,
+            sectionIndex: 0,
+            title: 'Movies',
+            apiKind: _kApiKindMovie,
+            cardWidth: cardW,
+            posterHeight: posterH,
+            rowHeight: rowH,
+            gap: _kCarouselGap,
+            sectionHorizontalPad: sectionHPad,
+            titleEmphasized: _activeSectionIndex == 0,
+            onSectionFocused: _onSectionFocused,
+            onArrowUpFrom: (_) => widget.headerHomeNavFocus.requestFocus(),
+            onArrowDownFrom: (i) =>
+                _showRowKey.currentState?.focusItem(_clampToRow(_showRowKey, i)),
+            onOpenItem: widget.onOpenItem,
+          ),
         ),
-        const SizedBox(height: 8),
-        _HomeKindRow(
-          title: 'Shows',
-          apiKind: _kApiKindSeries,
-          cardWidth: cardW,
-          posterHeight: posterH,
-          rowHeight: rowH,
-          gap: _kCarouselGap,
-          sectionHorizontalPad: sectionHPad,
-          onOpenItem: onOpenItem,
+        const SizedBox(height: AppLayout.tvSectionVerticalGap),
+        AnimatedOpacity(
+          key: _rowViewportKey1,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          opacity: dimFor(1),
+          child: _HomeKindRow(
+            key: _showRowKey,
+            sectionIndex: 1,
+            title: 'Shows',
+            apiKind: _kApiKindSeries,
+            cardWidth: cardW,
+            posterHeight: posterH,
+            rowHeight: rowH,
+            gap: _kCarouselGap,
+            sectionHorizontalPad: sectionHPad,
+            titleEmphasized: _activeSectionIndex == 1,
+            onSectionFocused: _onSectionFocused,
+            onArrowUpFrom: (i) =>
+                _movieRowKey.currentState?.focusItem(_clampToRow(_movieRowKey, i)),
+            onArrowDownFrom: (i) =>
+                _otherRowKey.currentState?.focusItem(_clampToRow(_otherRowKey, i)),
+            onOpenItem: widget.onOpenItem,
+          ),
         ),
-        const SizedBox(height: 8),
-        _HomeKindRow(
-          title: 'Other',
-          apiKind: _kApiKindOther,
-          cardWidth: cardW,
-          posterHeight: posterH,
-          rowHeight: rowH,
-          gap: _kCarouselGap,
-          sectionHorizontalPad: sectionHPad,
-          onOpenItem: onOpenItem,
+        const SizedBox(height: AppLayout.tvSectionVerticalGap),
+        AnimatedOpacity(
+          key: _rowViewportKey2,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          opacity: dimFor(2),
+          child: _HomeKindRow(
+            key: _otherRowKey,
+            sectionIndex: 2,
+            title: 'Other',
+            apiKind: _kApiKindOther,
+            cardWidth: cardW,
+            posterHeight: posterH,
+            rowHeight: rowH,
+            gap: _kCarouselGap,
+            sectionHorizontalPad: sectionHPad,
+            titleEmphasized: _activeSectionIndex == 2,
+            onSectionFocused: _onSectionFocused,
+            onArrowUpFrom: (i) =>
+                _showRowKey.currentState?.focusItem(_clampToRow(_showRowKey, i)),
+            onArrowDownFrom: (_) {},
+            onOpenItem: widget.onOpenItem,
+          ),
         ),
       ],
     );
+  }
+
+  int _clampToRow(GlobalKey<_HomeKindRowState> rowKey, int index) {
+    final n = rowKey.currentState?.lastBuiltItemCount;
+    if (n == null || n <= 0) return 0;
+    return index.clamp(0, n - 1);
   }
 }
 
 class _HomeKindRow extends ConsumerStatefulWidget {
   const _HomeKindRow({
+    super.key,
+    required this.sectionIndex,
     required this.title,
     required this.apiKind,
     required this.cardWidth,
@@ -575,9 +897,14 @@ class _HomeKindRow extends ConsumerStatefulWidget {
     required this.rowHeight,
     required this.gap,
     required this.sectionHorizontalPad,
+    required this.titleEmphasized,
+    required this.onSectionFocused,
+    required this.onArrowUpFrom,
+    required this.onArrowDownFrom,
     required this.onOpenItem,
   });
 
+  final int sectionIndex;
   final String title;
   final String apiKind;
   final double cardWidth;
@@ -585,6 +912,10 @@ class _HomeKindRow extends ConsumerStatefulWidget {
   final double rowHeight;
   final double gap;
   final double sectionHorizontalPad;
+  final bool titleEmphasized;
+  final ValueChanged<int> onSectionFocused;
+  final void Function(int itemIndex) onArrowUpFrom;
+  final void Function(int itemIndex) onArrowDownFrom;
   final void Function(AppMediaAggregate item) onOpenItem;
 
   @override
@@ -595,17 +926,14 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
   final ScrollController _scrollController = ScrollController();
   final List<FocusNode> _focusNodes = <FocusNode>[];
   int? _focusedIndex;
-
-  @override
-  void initState() {
-    super.initState();
-  }
+  int? _lastItemCount;
 
   @override
   void didUpdateWidget(covariant _HomeKindRow oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.apiKind != widget.apiKind) {
       _focusedIndex = null;
+      _lastItemCount = null;
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(0);
       }
@@ -621,6 +949,23 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
     super.dispose();
   }
 
+  int? get lastBuiltItemCount => _lastItemCount;
+
+  bool focusItem(int index) {
+    final n = _lastItemCount;
+    if (n == null || n <= 0 || index < 0 || index >= n) return false;
+    _syncFocusNodes(n);
+    setState(() => _focusedIndex = index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (index < _focusNodes.length) {
+        _focusNodes[index].requestFocus();
+        _ensureFocusedVisible(n);
+      }
+    });
+    return true;
+  }
+
   void _syncFocusNodes(int count) {
     if (_focusNodes.length == count) return;
     if (_focusNodes.length > count) {
@@ -631,7 +976,9 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
       return;
     }
     for (var i = _focusNodes.length; i < count; i++) {
-      _focusNodes.add(FocusNode(debugLabel: 'home-row-item-$i'));
+      _focusNodes.add(
+        FocusNode(debugLabel: 'home-${widget.apiKind}-$i'),
+      );
     }
   }
 
@@ -694,6 +1041,11 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
     if (focusedIndex == null || focusedIndex < 0 || focusedIndex >= itemCount) {
       return;
     }
+    ref.read(homeBrowseFocusProvider.notifier).setCarouselTileFocus(
+          mainTab: 0,
+          apiKind: widget.apiKind,
+          itemIndex: focusedIndex,
+        );
     if (focusedIndex >= slice.length) {
       context.push('/library/${Uri.encodeComponent(widget.apiKind)}');
     } else {
@@ -722,6 +1074,14 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
       _moveFocus(1, itemCount);
       return KeyEventResult.handled;
     }
+    if (k == LogicalKeyboardKey.arrowUp) {
+      widget.onArrowUpFrom(index);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowDown) {
+      widget.onArrowDownFrom(index);
+      return KeyEventResult.handled;
+    }
     if (k == LogicalKeyboardKey.select ||
         k == LogicalKeyboardKey.enter ||
         k == LogicalKeyboardKey.numpadEnter ||
@@ -737,7 +1097,7 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
     final async = ref.watch(libraryMediaByKindProvider(widget.apiKind));
 
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -745,19 +1105,22 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
             padding: EdgeInsets.symmetric(horizontal: widget.sectionHorizontalPad),
             child: Text(
               widget.title,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
+              style: TextStyle(
+                fontSize: widget.titleEmphasized ? 22 : 19,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
+                color: widget.titleEmphasized ? Colors.white : AppColors.textMuted,
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           SizedBox(
             height: widget.rowHeight,
             child: async.when(
               data: (items) {
                 final slice = items.take(10).toList();
                 final n = slice.length + 1;
+                _lastItemCount = n;
                 _syncFocusNodes(n);
                 if (_focusedIndex != null && _focusedIndex! >= n) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -785,7 +1148,18 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
                         focusNode: _focusNodes[index],
                         onFocusChange: (hasFocus) {
                           if (hasFocus) {
-                            if (_focusedIndex == index) return;
+                            ref
+                                .read(homeBrowseFocusProvider.notifier)
+                                .setCarouselTileFocus(
+                                  mainTab: 0,
+                                  apiKind: widget.apiKind,
+                                  itemIndex: index,
+                                );
+                            widget.onSectionFocused(widget.sectionIndex);
+                            if (_focusedIndex == index) {
+                              _ensureFocusedVisible(n);
+                              return;
+                            }
                             setState(() => _focusedIndex = index);
                             _ensureFocusedVisible(n);
                             return;
@@ -803,15 +1177,33 @@ class _HomeKindRowState extends ConsumerState<_HomeKindRow> {
                               ? _CarouselShowMoreCard(
                                   posterHeight: widget.posterHeight,
                                   selected: selected,
-                                  onTap: () => context.push(
-                                    '/library/${Uri.encodeComponent(widget.apiKind)}',
-                                  ),
+                                  onTap: () {
+                                    ref
+                                        .read(homeBrowseFocusProvider.notifier)
+                                        .setCarouselTileFocus(
+                                          mainTab: 0,
+                                          apiKind: widget.apiKind,
+                                          itemIndex: index,
+                                        );
+                                    context.push(
+                                      '/library/${Uri.encodeComponent(widget.apiKind)}',
+                                    );
+                                  },
                                 )
                               : _CarouselMediaCard(
                                   posterHeight: widget.posterHeight,
                                   item: slice[index],
                                   selected: selected,
-                                  onTap: () => widget.onOpenItem(slice[index]),
+                                  onTap: () {
+                                    ref
+                                        .read(homeBrowseFocusProvider.notifier)
+                                        .setCarouselTileFocus(
+                                          mainTab: 0,
+                                          apiKind: widget.apiKind,
+                                          itemIndex: index,
+                                        );
+                                    widget.onOpenItem(slice[index]);
+                                  },
                                 ),
                         ),
                       );
@@ -1068,13 +1460,141 @@ class _CarouselShowMoreCard extends StatelessWidget {
   }
 }
 
-class _SourcesTabContent extends ConsumerWidget {
-  const _SourcesTabContent({required this.onOpenItem});
+class _SourcesTabContent extends ConsumerStatefulWidget {
+  const _SourcesTabContent({
+    super.key,
+    required this.sourcesNavFocus,
+    required this.onOpenItem,
+  });
 
+  final FocusNode sourcesNavFocus;
   final void Function(AppMediaAggregate item) onOpenItem;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SourcesTabContent> createState() => _SourcesTabContentState();
+}
+
+class _SourcesTabContentState extends ConsumerState<_SourcesTabContent> {
+  static const int _cols = 5;
+
+  final List<FocusNode> _focusNodes = <FocusNode>[];
+  int? _focusedIndex;
+  int? _lastItemCount;
+
+  @override
+  void dispose() {
+    for (final n in _focusNodes) {
+      n.dispose();
+    }
+    super.dispose();
+  }
+
+  void _syncFocusNodes(int count) {
+    if (_focusNodes.length == count) return;
+    if (_focusNodes.length > count) {
+      for (var i = count; i < _focusNodes.length; i++) {
+        _focusNodes[i].dispose();
+      }
+      _focusNodes.removeRange(count, _focusNodes.length);
+      return;
+    }
+    for (var i = _focusNodes.length; i < count; i++) {
+      _focusNodes.add(FocusNode(debugLabel: 'sources-grid-$i'));
+    }
+  }
+
+  int? get lastBuiltItemCount => _lastItemCount;
+
+  bool focusGridIndex(int index) {
+    final n = _lastItemCount;
+    if (n == null || n <= 0 || index < 0 || index >= n) return false;
+    _syncFocusNodes(n);
+    setState(() => _focusedIndex = index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (index < _focusNodes.length) {
+        _focusNodes[index].requestFocus();
+      }
+    });
+    return true;
+  }
+
+  void focusFirstGridTile() {
+    void attempt(int n) {
+      if (!mounted) return;
+      if (focusGridIndex(0)) return;
+      if (n < 15) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(n + 1));
+      }
+    }
+
+    attempt(0);
+  }
+
+  void _moveGridFocus(int newIndex, int total) {
+    if (newIndex < 0 || newIndex >= total) return;
+    setState(() => _focusedIndex = newIndex);
+    if (newIndex < _focusNodes.length) {
+      _focusNodes[newIndex].requestFocus();
+    }
+  }
+
+  KeyEventResult _gridKeyHandler(
+    int index,
+    List<AppMediaAggregate> items,
+    KeyEvent event,
+  ) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final total = items.length;
+    final cols = _cols;
+    final row = index ~/ cols;
+    final col = index % cols;
+    final k = event.logicalKey;
+
+    if (_focusedIndex != index) {
+      setState(() => _focusedIndex = index);
+    }
+
+    if (k == LogicalKeyboardKey.arrowLeft) {
+      if (col > 0) _moveGridFocus(index - 1, total);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight) {
+      if (col < cols - 1 && index + 1 < total) {
+        _moveGridFocus(index + 1, total);
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowUp) {
+      if (row > 0) {
+        _moveGridFocus(index - cols, total);
+      } else {
+        widget.sourcesNavFocus.requestFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowDown) {
+      if (index + cols < total) {
+        _moveGridFocus(index + cols, total);
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.select ||
+        k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter ||
+        k == LogicalKeyboardKey.space) {
+      ref.read(homeBrowseFocusProvider.notifier).setSourcesGridFocus(
+            mainTab: 1,
+            gridIndex: index,
+          );
+      widget.onOpenItem(items[index]);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final async = ref.watch(libraryFetchProvider);
 
     return async.when(
@@ -1088,94 +1608,132 @@ class _SourcesTabContent extends ConsumerWidget {
             ),
           );
         }
+        final n = items.length;
+        _lastItemCount = n;
+        _syncFocusNodes(n);
+        if (_focusedIndex != null && _focusedIndex! >= n) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _focusedIndex = null);
+          });
+        }
         return LayoutBuilder(
           builder: (context, c) {
             const gap = 10.0;
-            const pad = 16.0;
+            final pad = AppLayout.tvHorizontalInset;
             final w = c.maxWidth - pad * 2;
-            const cols = 5;
-            final cellW = (w - gap * (cols - 1)) / cols;
+            final cellW = (w - gap * (_cols - 1)) / _cols;
             final posterH = cellW * 1.5;
             final cellH = posterH + 52;
             return GridView.builder(
-              padding: const EdgeInsets.fromLTRB(pad, 8, pad, 28),
+              padding: EdgeInsets.fromLTRB(
+                pad,
+                8,
+                pad,
+                AppLayout.screenBottomInset + AppLayout.tvSectionVerticalGap,
+              ),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: cols,
+                crossAxisCount: _cols,
                 mainAxisSpacing: gap,
                 crossAxisSpacing: gap,
                 childAspectRatio: cellW / cellH,
               ),
-              itemCount: items.length,
+              itemCount: n,
               itemBuilder: (context, index) {
                 final item = items[index];
                 final m = item.media;
                 final url = _libraryPosterUrl(m);
-                return Material(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(10),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () => onOpenItem(item),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: url == null
-                              ? Container(
-                                  color: Colors.black26,
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.movie, size: 32),
-                                )
-                              : CachedNetworkImage(
-                                  imageUrl: url,
-                                  fit: BoxFit.cover,
-                                  placeholder: (_, __) => const Center(
-                                    child: SizedBox(
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                  ),
-                                  errorWidget: (_, __, ___) => Container(
+                final selected = _focusedIndex == index;
+                return Focus(
+                  focusNode: _focusNodes[index],
+                  onFocusChange: (hasFocus) {
+                    if (hasFocus) {
+                      ref.read(homeBrowseFocusProvider.notifier).setSourcesGridFocus(
+                            mainTab: 1,
+                            gridIndex: index,
+                          );
+                      if (_focusedIndex == index) return;
+                      setState(() => _focusedIndex = index);
+                      return;
+                    }
+                    if (_focusedIndex != index) return;
+                    setState(() => _focusedIndex = null);
+                  },
+                  onKeyEvent: (_, e) => _gridKeyHandler(index, items, e),
+                  child: Material(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(10),
+                    clipBehavior: Clip.antiAlias,
+                    elevation: selected ? 6 : 0,
+                    shadowColor: Colors.black,
+                    surfaceTintColor: Colors.transparent,
+                    child: InkWell(
+                      onTap: () {
+                        ref.read(homeBrowseFocusProvider.notifier).setSourcesGridFocus(
+                              mainTab: 1,
+                              gridIndex: index,
+                            );
+                        widget.onOpenItem(item);
+                      },
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: url == null
+                                ? Container(
                                     color: Colors.black26,
                                     alignment: Alignment.center,
-                                    child: const Icon(Icons.broken_image,
-                                        size: 28),
+                                    child: const Icon(Icons.movie, size: 32),
+                                  )
+                                : CachedNetworkImage(
+                                    imageUrl: url,
+                                    fit: BoxFit.cover,
+                                    placeholder: (_, __) => const Center(
+                                      child: SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                    ),
+                                    errorWidget: (_, __, ___) => Container(
+                                      color: Colors.black26,
+                                      alignment: Alignment.center,
+                                      child: const Icon(Icons.broken_image,
+                                          size: 28),
+                                    ),
+                                  ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  m.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: selected ? 13 : 12,
+                                    height: 1.2,
                                   ),
                                 ),
-                        ),
-                        Padding(
-                          padding:
-                              const EdgeInsets.fromLTRB(6, 6, 6, 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                m.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                  height: 1.2,
+                                const SizedBox(height: 2),
+                                Text(
+                                  _libraryTypeLabel(m.type),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: AppColors.textMuted,
+                                    fontSize: 11,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                _libraryTypeLabel(m.type),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: AppColors.textMuted,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 );

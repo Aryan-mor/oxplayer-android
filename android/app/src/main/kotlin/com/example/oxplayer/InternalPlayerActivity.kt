@@ -4,6 +4,8 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -92,6 +94,20 @@ class InternalPlayerActivity : AppCompatActivity() {
     )
 
     private val backPressExitWindowMs = 3000L
+    private val controlsAutoHideDelayMs = 7000L
+    private val controlsAutoHideHandler = Handler(Looper.getMainLooper())
+    private val controlsAutoHideRunnable = Runnable {
+        if (shouldAutoHideControllerNow()) {
+            playerView.hideController()
+        }
+    }
+    private var blockingInteractionDepth: Int = 0
+
+    /**
+     * Mirrors Exo controller overlay visibility. [PlayerView.isControllerVisible] was removed from
+     * Media3; we keep this in sync via [PlayerView.setControllerVisibilityListener].
+     */
+    private var exoControllerOverlayVisible: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -161,6 +177,9 @@ class InternalPlayerActivity : AppCompatActivity() {
             .build()
         player = exo
         playerView.player = exo
+        // Keep controller visible until our own idle timer hides it.
+        playerView.controllerShowTimeoutMs = 0
+        installNormalControllerVisibilityListener()
         exo.setMediaItem(MediaItem.fromUri(mainUri))
         exo.prepare()
         exo.playWhenReady = true
@@ -227,13 +246,20 @@ class InternalPlayerActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) {
+            bumpControllerAutoHideCountdown()
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     private fun handleBackPressedFromPlayer() {
         if (trialActive) {
             exitTrialRestoreBaseline()
             return
         }
 
-        if (playerView.isControllerVisible) {
+        if (exoControllerOverlayVisible) {
             playerView.hideController()
             lastBackPressedAtMs = 0L
             return
@@ -288,8 +314,9 @@ class InternalPlayerActivity : AppCompatActivity() {
     }
 
     private fun showMoreOptionsMenu() {
+        beginBlockingInteraction()
         val options = arrayOf(getString(R.string.internal_player_open_external))
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.internal_player_overflow_menu)
             .setItems(options) { d, which ->
                 if (which == 0) {
@@ -298,7 +325,9 @@ class InternalPlayerActivity : AppCompatActivity() {
                 d.dismiss()
             }
             .setNegativeButton(R.string.internal_player_cancel, null)
-            .show()
+            .create()
+        dialog.setOnDismissListener { endBlockingInteraction() }
+        dialog.show()
     }
 
     private fun handOffToExternalAndFinish() {
@@ -409,6 +438,7 @@ class InternalPlayerActivity : AppCompatActivity() {
 
     private fun showMainSubtitleMenu() {
         val p = player ?: return
+        beginBlockingInteraction()
         val embedded = collectEmbeddedTextTracks(p.currentTracks)
         val items = mutableListOf<String>()
         val actions = mutableListOf<() -> Unit>()
@@ -435,14 +465,16 @@ class InternalPlayerActivity : AppCompatActivity() {
             }
         }
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.internal_player_subtitles)
             .setItems(items.toTypedArray()) { d, which ->
                 actions.getOrNull(which)?.invoke()
                 d.dismiss()
             }
             .setNegativeButton(R.string.internal_player_cancel, null)
-            .show()
+            .create()
+        dialog.setOnDismissListener { endBlockingInteraction() }
+        dialog.show()
     }
 
     private data class EmbeddedTextTrack(
@@ -523,6 +555,7 @@ class InternalPlayerActivity : AppCompatActivity() {
 
     private fun showSubdlSearchDialog() {
         val p = player ?: return
+        beginBlockingInteraction()
         p.pause()
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_subdl_search, null, false)
         val nameEt = view.findViewById<EditText>(R.id.subdl_search_name)
@@ -596,6 +629,7 @@ class InternalPlayerActivity : AppCompatActivity() {
                         languageCodeUsedForLastSearch,
                     )
                     suppressResumeOnSearchDismiss = true
+                    beginBlockingInteraction()
                     dialog.dismiss()
                     val n = outcome.subtitles.size
                     val msg = if (n == 0) {
@@ -603,7 +637,7 @@ class InternalPlayerActivity : AppCompatActivity() {
                     } else {
                         getString(R.string.internal_player_found_n_subtitles, n)
                     }
-                    AlertDialog.Builder(this@InternalPlayerActivity)
+                    val resultDialog = AlertDialog.Builder(this@InternalPlayerActivity)
                         .setMessage(msg)
                         .setPositiveButton(R.string.internal_player_continue) { _, _ ->
                             if (n > 0) {
@@ -615,7 +649,9 @@ class InternalPlayerActivity : AppCompatActivity() {
                         .setNegativeButton(R.string.internal_player_cancel) { _, _ ->
                             p.playWhenReady = true
                         }
-                        .show()
+                        .create()
+                    resultDialog.setOnDismissListener { endBlockingInteraction() }
+                    resultDialog.show()
                 }
             }
         }
@@ -631,6 +667,7 @@ class InternalPlayerActivity : AppCompatActivity() {
             if (!trialActive && !suppressResumeOnSearchDismiss) {
                 p.playWhenReady = true
             }
+            endBlockingInteraction()
         }
 
         dialog.show()
@@ -689,11 +726,13 @@ class InternalPlayerActivity : AppCompatActivity() {
      * Keep the default tap-to-show time bar, but hide all other controller chrome (play, menus, etc.).
      */
     private fun applyTrialModeScrubberOnlyControllerUi() {
+        cancelControllerAutoHideTimer()
         playerView.useController = true
         hideTrialNonScrubberControllerViews()
         playerView.setControllerVisibilityListener(
             object : PlayerView.ControllerVisibilityListener {
                 override fun onVisibilityChanged(visibility: Int) {
+                    exoControllerOverlayVisible = visibility == View.VISIBLE
                     updateTrialBarBottomMarginForScrubber(visibility == View.VISIBLE)
                 }
             },
@@ -737,10 +776,60 @@ class InternalPlayerActivity : AppCompatActivity() {
     }
 
     private fun restoreNormalPlaybackControllerUi() {
-        playerView.setControllerVisibilityListener(null as PlayerView.ControllerVisibilityListener?)
+        installNormalControllerVisibilityListener()
         updateTrialBarBottomMarginForScrubber(false)
         restoreFullControllerChrome()
         playerView.useController = true
+    }
+
+    private fun installNormalControllerVisibilityListener() {
+        playerView.setControllerVisibilityListener(
+            object : PlayerView.ControllerVisibilityListener {
+                override fun onVisibilityChanged(visibility: Int) {
+                    exoControllerOverlayVisible = visibility == View.VISIBLE
+                    if (visibility == View.VISIBLE) {
+                        scheduleControllerAutoHide()
+                    } else {
+                        cancelControllerAutoHideTimer()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun shouldAutoHideControllerNow(): Boolean {
+        if (isFinishing || isDestroyed) return false
+        if (trialActive) return false
+        if (blockingInteractionDepth > 0) return false
+        return exoControllerOverlayVisible
+    }
+
+    private fun scheduleControllerAutoHide() {
+        cancelControllerAutoHideTimer()
+        if (!shouldAutoHideControllerNow()) return
+        controlsAutoHideHandler.postDelayed(controlsAutoHideRunnable, controlsAutoHideDelayMs)
+    }
+
+    private fun cancelControllerAutoHideTimer() {
+        controlsAutoHideHandler.removeCallbacks(controlsAutoHideRunnable)
+    }
+
+    private fun bumpControllerAutoHideCountdown() {
+        if (exoControllerOverlayVisible) {
+            scheduleControllerAutoHide()
+        }
+    }
+
+    private fun beginBlockingInteraction() {
+        blockingInteractionDepth += 1
+        cancelControllerAutoHideTimer()
+    }
+
+    private fun endBlockingInteraction() {
+        if (blockingInteractionDepth > 0) {
+            blockingInteractionDepth -= 1
+        }
+        bumpControllerAutoHideCountdown()
     }
 
     private fun updateTrialNavEnabled() {
@@ -844,10 +933,12 @@ class InternalPlayerActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        cancelControllerAutoHideTimer()
         player?.pause()
     }
 
     override fun onDestroy() {
+        cancelControllerAutoHideTimer()
         playerView.player = null
         player?.release()
         player = null

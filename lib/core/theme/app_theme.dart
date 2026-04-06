@@ -14,6 +14,15 @@ class AppLayout {
   AppLayout._();
 
   static const double screenBottomInset = 28;
+
+  /// Horizontal inset for browse rows and detail body (TV overscan).
+  static const double tvHorizontalInset = 52;
+
+  /// Vertical gap between major sections on browse / detail screens.
+  static const double tvSectionVerticalGap = 28;
+
+  /// Top bar horizontal padding (inside [SafeArea]).
+  static const double tvTopBarHorizontalPad = 20;
 }
 
 ThemeData buildOxplayerTheme() {

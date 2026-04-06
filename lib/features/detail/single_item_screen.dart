@@ -25,6 +25,24 @@ import '../../providers.dart';
 void _itemLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
 
+/// True when the current primary focus context is under [key]'s subtree.
+bool _primaryFocusWithinKey(GlobalKey key) {
+  final primary = FocusManager.instance.primaryFocus?.context;
+  if (primary == null) return false;
+  final scope = key.currentContext;
+  if (scope == null) return false;
+  final target = scope as Element;
+  var found = false;
+  (primary as Element).visitAncestorElements((ancestor) {
+    if (identical(ancestor, target)) {
+      found = true;
+      return false;
+    }
+    return true;
+  });
+  return found;
+}
+
 bool _isSeriesMediaType(AppMedia m) {
   final t = m.type.toUpperCase();
   return t == 'SERIES' || t == '#SERIES';
@@ -146,11 +164,42 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
   AppMediaAggregate? _aggregate;
   bool _loading = true;
   final ScrollController _pageScrollController = ScrollController();
+  final GlobalKey _metaSectionKey = GlobalKey();
+  final GlobalKey _playbackSectionKey = GlobalKey();
+
+  /// -1 = neutral (e.g. Back); 0 = meta/hero lane; 1 = playback lane.
+  int _detailVisualAccent = -1;
+
+  late final FocusNode _backFocus = FocusNode(debugLabel: 'detail-back');
+  late final FocusNode _heroMetaLaneFocus =
+      FocusNode(debugLabel: 'detail-hero-meta-lane');
 
   @override
   void initState() {
     super.initState();
+    FocusManager.instance.addListener(_onDetailFocusHighlight);
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  void _onDetailFocusHighlight() {
+    if (!mounted) return;
+    if (identical(FocusManager.instance.primaryFocus, _backFocus)) {
+      if (_detailVisualAccent != -1) {
+        setState(() => _detailVisualAccent = -1);
+      }
+      return;
+    }
+    final inPlay = _primaryFocusWithinKey(_playbackSectionKey);
+    final inMeta = _primaryFocusWithinKey(_metaSectionKey);
+    var next = -1;
+    if (inPlay) {
+      next = 1;
+    } else if (inMeta) {
+      next = 0;
+    }
+    if (next != _detailVisualAccent) {
+      setState(() => _detailVisualAccent = next);
+    }
   }
 
   Future<void> _load() async {
@@ -235,6 +284,9 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
 
   @override
   void dispose() {
+    FocusManager.instance.removeListener(_onDetailFocusHighlight);
+    _backFocus.dispose();
+    _heroMetaLaneFocus.dispose();
     _pageScrollController.dispose();
     super.dispose();
   }
@@ -261,74 +313,169 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
     final exploreGenreLinks = auth.canAccessExplore;
     final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
 
+    double metaOpacity;
+    double playbackOpacity;
+    switch (_detailVisualAccent) {
+      case 1:
+        metaOpacity = 0.52;
+        playbackOpacity = 1;
+        break;
+      case 0:
+        metaOpacity = 1;
+        playbackOpacity = 0.52;
+        break;
+      default:
+        metaOpacity = 1;
+        playbackOpacity = 1;
+    }
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          item.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: Scrollbar(
-        controller: _pageScrollController,
-        thumbVisibility: true,
-        child: SingleChildScrollView(
-          controller: _pageScrollController,
-          primary: false,
-          padding: EdgeInsets.fromLTRB(20, 16, 20, 56 + bottomSafeInset),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 720;
-              final hero = wide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+      backgroundColor: AppColors.bg,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.center,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.82),
+                    AppColors.bg,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            bottom: false,
+            child: FocusTraversalGroup(
+              policy: OrderedTraversalPolicy(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppLayout.tvHorizontalInset * 0.5,
+                      4,
+                      AppLayout.tvHorizontalInset * 0.5,
+                      10,
+                    ),
+                    child: Row(
                       children: [
-                        _DetailHeroPoster(media: item),
-                        const SizedBox(width: 24),
-                        Expanded(
-                          child: _DetailPanelCard(
-                            child: _DetailMetaColumn(
-                              item: item,
-                              hasTmdb: _hasTmdbId(item),
-                              exploreGenreLinksEnabled: exploreGenreLinks,
+                        FocusTraversalOrder(
+                          order: const NumericFocusOrder(1),
+                          child: OxplayerButton(
+                            autofocus: true,
+                            focusNode: _backFocus,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            borderRadius: 10,
+                            onPressed: () => context.pop(),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.arrow_back_rounded, size: 22),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Back',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Center(child: _DetailHeroPoster(media: item)),
-                        const SizedBox(height: 20),
-                        _DetailPanelCard(
-                          child: _DetailMetaColumn(
-                            item: item,
-                            hasTmdb: _hasTmdbId(item),
-                            exploreGenreLinksEnabled: exploreGenreLinks,
+                        Expanded(
+                          child: Text(
+                            item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.2,
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 100),
                       ],
-                    );
+                    ),
+                  ),
+                  Expanded(
+                    child: Scrollbar(
+                      controller: _pageScrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _pageScrollController,
+                        primary: false,
+                        padding: EdgeInsets.fromLTRB(
+                          AppLayout.tvHorizontalInset,
+                          8,
+                          AppLayout.tvHorizontalInset,
+                          AppLayout.screenBottomInset +
+                              AppLayout.tvSectionVerticalGap +
+                              bottomSafeInset,
+                        ),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final wide = constraints.maxWidth >= 720;
+                            final hero = _DetailMetaBody(
+                              item: item,
+                              wide: wide,
+                              hasTmdb: _hasTmdbId(item),
+                              exploreGenreLinksEnabled: exploreGenreLinks,
+                              heroMetaLaneFocus: _heroMetaLaneFocus,
+                            );
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  hero,
-                  const SizedBox(height: 28),
-                  if (isSeries)
-                    _SeriesVariantsSection(aggregate: agg)
-                  else
-                    _MovieVariantsSection(aggregate: agg),
+                            final playback = isSeries
+                                ? _SeriesVariantsSection(aggregate: agg)
+                                : _MovieVariantsSection(aggregate: agg);
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                AnimatedOpacity(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOutCubic,
+                                  opacity: metaOpacity,
+                                  child: Container(
+                                    key: _metaSectionKey,
+                                    child: hero,
+                                  ),
+                                ),
+                                const SizedBox(
+                                    height: AppLayout.tvSectionVerticalGap),
+                                AnimatedOpacity(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOutCubic,
+                                  opacity: playbackOpacity,
+                                  child: Container(
+                                    key: _playbackSectionKey,
+                                    child: FocusTraversalOrder(
+                                      order: const NumericFocusOrder(30),
+                                      child: playback,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
-              );
-            },
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -344,7 +491,7 @@ class _DetailHeroPoster extends StatelessWidget {
   Widget build(BuildContext context) {
     final poster = _resolveDetailPosterUrl(media.posterPath) ?? '';
     return SizedBox(
-      width: 260,
+      width: 280,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: AspectRatio(
@@ -372,17 +519,15 @@ class _DetailHeroPoster extends StatelessWidget {
   }
 }
 
-/// Title, TMDB score + genres when linked, then overview.
-class _DetailMetaColumn extends StatelessWidget {
-  const _DetailMetaColumn({
+/// Title, year/lang chips, and user score — the panel next to the poster inside the hero focus lane.
+class _DetailTitleCoreColumn extends StatelessWidget {
+  const _DetailTitleCoreColumn({
     required this.item,
     required this.hasTmdb,
-    required this.exploreGenreLinksEnabled,
   });
 
   final AppMedia item;
   final bool hasTmdb;
-  final bool exploreGenreLinksEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -422,7 +567,31 @@ class _DetailMetaColumn extends StatelessWidget {
             ),
           ),
         ],
-        if (hasTmdb && item.genres.isNotEmpty) ...[
+      ],
+    );
+  }
+}
+
+/// Title, score, genres, and overview inside the hero card (below user score).
+class _DetailPanelInnerColumn extends StatelessWidget {
+  const _DetailPanelInnerColumn({
+    required this.item,
+    required this.hasTmdb,
+    required this.exploreGenreLinksEnabled,
+  });
+
+  final AppMedia item;
+  final bool hasTmdb;
+  final bool exploreGenreLinksEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final genres = item.genres;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _DetailTitleCoreColumn(item: item, hasTmdb: hasTmdb),
+        if (hasTmdb && genres.isNotEmpty) ...[
           const SizedBox(height: 12),
           const Text(
             'Genres',
@@ -437,27 +606,30 @@ class _DetailMetaColumn extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final g in item.genres)
-                exploreGenreLinksEnabled
-                    ? OxplayerButton(
-                        onPressed: () {
-                          context.push(
-                            '/explore?genreId=${Uri.encodeComponent(g.id)}',
-                          );
-                        },
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        child: Text(
-                          g.title,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Colors.white,
+              for (var i = 0; i < genres.length; i++)
+                FocusTraversalOrder(
+                  order: NumericFocusOrder(10 + i.toDouble()),
+                  child: exploreGenreLinksEnabled
+                      ? OxplayerButton(
+                          onPressed: () {
+                            context.push(
+                              '/explore?genreId=${Uri.encodeComponent(genres[i].id)}',
+                            );
+                          },
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
                           ),
-                        ),
-                      )
-                    : _chip(g.title),
+                          child: Text(
+                            genres[i].title,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.white,
+                            ),
+                          ),
+                        )
+                      : _chip(genres[i].title),
+                ),
             ],
           ),
         ],
@@ -468,7 +640,126 @@ class _DetailMetaColumn extends StatelessWidget {
   }
 }
 
-/// Always-visible overview; long copy uses a remote-focusable "Read more..." control.
+/// TV D-pad lane with a light border/fill when focused (not a strong button highlight).
+class _SubtleFocusLane extends StatefulWidget {
+  const _SubtleFocusLane({
+    required this.focusNode,
+    required this.numericOrder,
+    required this.child,
+    this.scrollAlignment = 0.1,
+    this.padding = const EdgeInsets.all(4),
+  });
+
+  final FocusNode focusNode;
+  final double numericOrder;
+  final Widget child;
+  final double scrollAlignment;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  State<_SubtleFocusLane> createState() => _SubtleFocusLaneState();
+}
+
+class _SubtleFocusLaneState extends State<_SubtleFocusLane> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return FocusTraversalOrder(
+      order: NumericFocusOrder(widget.numericOrder),
+      child: Focus(
+        focusNode: widget.focusNode,
+        onFocusChange: (f) {
+          setState(() => _focused = f);
+          if (f) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final ctx = widget.focusNode.context;
+              if (ctx != null && ctx.mounted) {
+                Scrollable.ensureVisible(
+                  ctx,
+                  duration: const Duration(milliseconds: 320),
+                  curve: Curves.easeOutCubic,
+                  alignment: widget.scrollAlignment,
+                );
+              }
+            });
+          }
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: widget.padding,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _focused
+                  ? Colors.white.withValues(alpha: 0.28)
+                  : Colors.transparent,
+              width: 1,
+            ),
+            color: _focused
+                ? Colors.white.withValues(alpha: 0.06)
+                : Colors.transparent,
+          ),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailMetaBody extends StatelessWidget {
+  const _DetailMetaBody({
+    required this.item,
+    required this.wide,
+    required this.hasTmdb,
+    required this.exploreGenreLinksEnabled,
+    required this.heroMetaLaneFocus,
+  });
+
+  final AppMedia item;
+  final bool wide;
+  final bool hasTmdb;
+  final bool exploreGenreLinksEnabled;
+  final FocusNode heroMetaLaneFocus;
+
+  @override
+  Widget build(BuildContext context) {
+    final panel = _DetailPanelInnerColumn(
+      item: item,
+      hasTmdb: hasTmdb,
+      exploreGenreLinksEnabled: exploreGenreLinksEnabled,
+    );
+    final heroStrip = wide
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _DetailHeroPoster(media: item),
+              const SizedBox(width: 24),
+              Expanded(
+                child: _DetailPanelCard(child: panel),
+              ),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(child: _DetailHeroPoster(media: item)),
+              const SizedBox(height: 20),
+              _DetailPanelCard(child: panel),
+            ],
+          );
+
+    return _SubtleFocusLane(
+      focusNode: heroMetaLaneFocus,
+      numericOrder: 2,
+      scrollAlignment: 0.08,
+      padding: const EdgeInsets.all(4),
+      child: heroStrip,
+    );
+  }
+}
+
+/// Always-visible overview; long copy uses a focusable "Read more..." control (body is not focused).
 class _OverviewSection extends StatefulWidget {
   const _OverviewSection({required this.summary});
 
@@ -496,41 +787,49 @@ class _OverviewSectionState extends State<_OverviewSection> {
     );
 
     final trimmed = (widget.summary ?? '').trim();
-    final column = Column(
+    final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Overview', style: headingStyle),
         const SizedBox(height: 8),
         if (trimmed.isEmpty)
           const Text('No description available.', style: bodyStyle)
-        else ...[
+        else
           Text(
             _bodyText(trimmed),
             style: bodyStyle,
           ),
-          if (_needsReadMore(trimmed)) ...[
-            const SizedBox(height: 10),
-            OxplayerButton(
-              onPressed: () => setState(() => _expanded = !_expanded),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              borderRadius: 8,
-              child: Text(
-                _expanded ? 'Read less' : 'Read more...',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.highlight,
-                ),
-              ),
-            ),
-          ],
-        ],
       ],
     );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: column,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          body,
+          if (trimmed.isNotEmpty && _needsReadMore(trimmed)) ...[
+            const SizedBox(height: 10),
+            FocusTraversalOrder(
+              order: const NumericFocusOrder(21),
+              child: OxplayerButton(
+                onPressed: () => setState(() => _expanded = !_expanded),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                borderRadius: 8,
+                child: Text(
+                  _expanded ? 'Read less' : 'Read more...',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.highlight,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

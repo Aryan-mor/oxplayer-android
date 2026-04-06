@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+export 'core/navigation/home_browse_focus.dart';
+
 import 'core/auth/auth_notifier.dart';
 import 'core/debug/app_debug_log.dart';
 import 'core/config/app_config.dart';
