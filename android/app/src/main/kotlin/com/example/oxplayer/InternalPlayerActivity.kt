@@ -9,10 +9,12 @@ import android.os.Looper
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.Spinner
@@ -82,16 +84,6 @@ class InternalPlayerActivity : AppCompatActivity() {
     private val trialBarLiftWhenScrubberVisiblePx: Int by lazy {
         resources.getDimensionPixelSize(R.dimen.internal_player_trial_bar_lift_when_scrubber)
     }
-
-    private val tvFocusableControlIds = intArrayOf(
-        R.id.oxplayer_subtitle_menu,
-        R.id.oxplayer_overflow_menu,
-        MediaUiR.id.exo_play_pause,
-        MediaUiR.id.exo_prev,
-        MediaUiR.id.exo_next,
-        MediaUiR.id.exo_rew,
-        MediaUiR.id.exo_ffwd,
-    )
 
     private val backPressExitWindowMs = 3000L
     private val controlsAutoHideDelayMs = 7000L
@@ -413,26 +405,35 @@ class InternalPlayerActivity : AppCompatActivity() {
 
     private fun installTvFocusIndicators() {
         playerView.post {
-            for (id in tvFocusableControlIds) {
-                attachTvFocusIndicator(playerView.findViewById(id))
+            applyOxplayerTvControlChrome(playerView)
+            listOf(trialBtnPrevious, trialBtnConfirm, trialBtnNext).forEach { btn ->
+                btn.setBackgroundResource(R.drawable.oxplayer_player_pill_button_bg)
+                attachTvFocusIndicator(btn)
             }
-            attachTvFocusIndicator(trialBtnPrevious)
-            attachTvFocusIndicator(trialBtnConfirm)
-            attachTvFocusIndicator(trialBtnNext)
+        }
+    }
+
+    /**
+     * Exo [ImageButton]s default to a weak TV focus state. Use circular backgrounds with a cyan
+     * ring + soft glow (brand highlight #38BDF8) and a constant unfocused ring width so layout
+     * does not jump.
+     */
+    private fun applyOxplayerTvControlChrome(root: View) {
+        if (root is ImageButton && root.isFocusable) {
+            root.setBackgroundResource(R.drawable.oxplayer_player_control_button_bg)
+            attachTvFocusIndicator(root)
+        }
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                applyOxplayerTvControlChrome(root.getChildAt(i))
+            }
         }
     }
 
     private fun attachTvFocusIndicator(view: View?) {
         view ?: return
         view.setOnFocusChangeListener { focusedView, hasFocus ->
-            val scale = if (hasFocus) 1.12f else 1.0f
-            focusedView.animate()
-                .scaleX(scale)
-                .scaleY(scale)
-                .setDuration(120L)
-                .start()
-            focusedView.alpha = if (hasFocus) 1.0f else 0.9f
-            focusedView.elevation = if (hasFocus) 14f else 0f
+            focusedView.alpha = if (hasFocus) 1.0f else 0.92f
         }
     }
 

@@ -679,9 +679,9 @@ class _NetflixTopBar extends StatelessWidget {
         AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           height: 2,
-          width: selected ? 28 : 0,
+          width: 28,
           decoration: BoxDecoration(
-            color: AppColors.highlight,
+            color: selected ? AppColors.highlight : Colors.transparent,
             borderRadius: BorderRadius.circular(2),
           ),
         ),
