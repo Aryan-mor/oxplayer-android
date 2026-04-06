@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/app_media.dart';
 import '../../providers.dart';
+import '../../widgets/library_media_poster.dart';
 
 String _titleForApiKind(String kind) {
   return switch (kind) {
@@ -14,14 +14,6 @@ String _titleForApiKind(String kind) {
     'general_video' => 'Other',
     _ => kind,
   };
-}
-
-String? _posterUrl(AppMedia media) {
-  final value = (media.posterPath ?? '').trim();
-  if (value.isEmpty) return null;
-  if (value.startsWith('http://') || value.startsWith('https://')) return value;
-  if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
-  return value;
 }
 
 String _typeLabel(String type) {
@@ -95,11 +87,11 @@ class LibraryCategoryScreen extends ConsumerWidget {
                 itemBuilder: (context, index) {
                   final item = items[index];
                   final m = item.media;
-                  final url = _posterUrl(m);
                   return _CategoryCell(
                     title: m.title,
                     typeLabel: _typeLabel(m.type),
-                    posterUrl: url,
+                    media: m,
+                    files: item.files,
                     onTap: () => context.push(
                       '/item/${Uri.encodeComponent(m.id)}',
                     ),
@@ -129,13 +121,15 @@ class _CategoryCell extends StatelessWidget {
   const _CategoryCell({
     required this.title,
     required this.typeLabel,
-    required this.posterUrl,
+    required this.media,
+    required this.files,
     required this.onTap,
   });
 
   final String title;
   final String typeLabel;
-  final String? posterUrl;
+  final AppMedia media;
+  final List<AppMediaFile> files;
   final VoidCallback onTap;
 
   @override
@@ -150,28 +144,12 @@ class _CategoryCell extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              child: posterUrl == null
-                  ? Container(
-                      color: Colors.black26,
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.movie, size: 32),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: posterUrl!,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => const Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                      errorWidget: (_, __, ___) => Container(
-                        color: Colors.black26,
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.broken_image, size: 28),
-                      ),
-                    ),
+              child: LibraryMediaPoster(
+                media: media,
+                files: files,
+                placeholderIconSize: 32,
+                progressStrokeWidth: 2,
+              ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
