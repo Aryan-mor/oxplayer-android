@@ -1,4 +1,4 @@
-package com.example.oxplayer
+package de.aryanmo.oxplayer
 
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel

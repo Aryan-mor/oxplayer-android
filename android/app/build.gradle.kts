@@ -25,7 +25,7 @@ val localReleaseKeystoreConfigured =
         rootProject.file(keyProperties.getProperty("storeFile")).isFile
 
 android {
-    namespace = "com.example.oxplayer"
+    namespace = "de.aryanmo.oxplayer"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -39,7 +39,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.oxplayer"
+        applicationId = "de.aryanmo.oxplayer"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
