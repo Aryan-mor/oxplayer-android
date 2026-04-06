@@ -60,6 +60,7 @@ class InternalPlayerActivity : AppCompatActivity() {
     private var trialIndex: Int = 0
     private var trialStartPositionMs: Long = 0L
     private var baselineTrackParameters: DefaultTrackSelector.Parameters? = null
+    private var playbackErrorFallbackTriggered: Boolean = false
 
     /** Session default for the language spinner; intent extras stay stale until the next Flutter launch. */
     private var preferredSubtitleLanguageOverride: String? = null
@@ -92,6 +93,8 @@ class InternalPlayerActivity : AppCompatActivity() {
                 val f = File(localPath)
                 if (!f.isFile) {
                     android.util.Log.e("OXPlayer", "InternalPlayer: missing file $localPath")
+                    PlaybackDebugHandoff.enqueue("InternalPlayer: missing local file path=$localPath")
+                    MainActivity.flushPlaybackDebugHandoffsIfPossible()
                     finish()
                     return
                 }
@@ -103,6 +106,8 @@ class InternalPlayerActivity : AppCompatActivity() {
             }
             else -> {
                 android.util.Log.e("OXPlayer", "InternalPlayer: no url or path")
+                PlaybackDebugHandoff.enqueue("InternalPlayer: missing playback source (url/path)")
+                MainActivity.flushPlaybackDebugHandoffsIfPossible()
                 finish()
                 return
             }
@@ -141,8 +146,7 @@ class InternalPlayerActivity : AppCompatActivity() {
         exo.addListener(
             object : Player.Listener {
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    android.util.Log.e("OXPlayer", "InternalPlayer playback error", error)
-                    finish()
+                    handlePlaybackError(error)
                 }
             },
         )
@@ -280,6 +284,35 @@ class InternalPlayerActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             },
         )
+    }
+
+    /**
+     * Some Android TV devices fail codec init for formats that play on phones.
+     * Prefer external player fallback instead of abruptly exiting.
+     */
+    private fun handlePlaybackError(error: androidx.media3.common.PlaybackException) {
+        val codeName = error.errorCodeName
+        android.util.Log.e(
+            "OXPlayer",
+            "InternalPlayer playback error code=$codeName message=${error.message}",
+            error,
+        )
+        PlaybackDebugHandoff.enqueue(
+            "InternalPlayer error code=$codeName message=${error.message ?: "(null)"} " +
+                "uri=$mainUri fallbackTriggered=$playbackErrorFallbackTriggered",
+        )
+        MainActivity.flushPlaybackDebugHandoffsIfPossible()
+        if (playbackErrorFallbackTriggered) {
+            finish()
+            return
+        }
+        playbackErrorFallbackTriggered = true
+        Toast.makeText(
+            this,
+            R.string.internal_player_open_external,
+            Toast.LENGTH_SHORT,
+        ).show()
+        handOffToExternalAndFinish()
     }
 
     private fun Intent.optionalIntExtra(key: String): Int? {

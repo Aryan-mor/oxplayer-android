@@ -7,8 +7,9 @@ enum AppDebugLogCategory {
   api,
   download,
   sync,
-  currentDebug,
+  locator,
   app,
+  playback,
   stream,
   general,
 }
@@ -20,8 +21,9 @@ extension AppDebugLogCategoryLabel on AppDebugLogCategory {
         AppDebugLogCategory.api => 'API',
         AppDebugLogCategory.download => 'Download',
         AppDebugLogCategory.sync => 'Sync',
-        AppDebugLogCategory.currentDebug => 'CURRENT DEBUG',
+        AppDebugLogCategory.locator => 'Locator',
         AppDebugLogCategory.app => 'App',
+        AppDebugLogCategory.playback => 'Playback',
         AppDebugLogCategory.stream => 'Stream',
         AppDebugLogCategory.general => 'Other',
       };
@@ -47,8 +49,9 @@ class AppDebugLog extends ChangeNotifier {
     AppDebugLogCategory.api,
     AppDebugLogCategory.download,
     AppDebugLogCategory.sync,
-    AppDebugLogCategory.currentDebug,
+    AppDebugLogCategory.locator,
     AppDebugLogCategory.app,
+    AppDebugLogCategory.playback,
     AppDebugLogCategory.stream,
     AppDebugLogCategory.general,
   ];

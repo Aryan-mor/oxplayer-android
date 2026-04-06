@@ -16,8 +16,8 @@ void _streamLog(String m) =>
 void _keyLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.stream);
 
-void _currentDebugLog(String m) =>
-    AppDebugLog.instance.log(m, category: AppDebugLogCategory.currentDebug);
+void _locatorLog(String m) =>
+    AppDebugLog.instance.log(m, category: AppDebugLogCategory.locator);
 
 // ── Tuning constants ─────────────────────────────────────────────────────────
 
@@ -125,7 +125,8 @@ class TelegramRangePlayback {
     String? quality,
     String? mimeType,
     int? fileSize,
-    Future<void> Function(ResolvedTelegramMediaFile resolved)? onLocatorResolved,
+    Future<void> Function(ResolvedTelegramMediaFile resolved)?
+        onLocatorResolved,
     void Function(String message)? onStatus,
   }) async {
     _lastOpenFailureReason = null;
@@ -177,7 +178,7 @@ class TelegramRangePlayback {
       'locatorChatId=${resolved.locatorChatId} locatorMessageId=${resolved.locatorMessageId} '
       'resolvedFileId=${resolved.file.id}',
     );
-    _currentDebugLog(
+    _locatorLog(
       'OPEN RESOLVED locatorType=${resolved.locatorType} '
       'locatorChatId=${resolved.locatorChatId} locatorMessageId=${resolved.locatorMessageId} '
       'resolvedFileId=${resolved.file.id} reason=${resolved.resolutionReason}',
