@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:tdlib/td_api.dart' as td;
 
 import '../../core/debug/app_debug_log.dart';
 import '../../core/storage/storage_headroom.dart';
@@ -44,6 +45,13 @@ const _kFocusedWidthFactor = 1.5;
 
 void _homeLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.app);
+
+String _debugErrorSummary(Object error) {
+  return switch (error) {
+    td.TdError() => 'TDLib ${error.code}: ${error.message}',
+    _ => '$error',
+  };
+}
 
 String? _libraryPosterUrl(AppMedia media) {
   final value = (media.posterPath ?? '').trim();
@@ -204,8 +212,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         setState(() => _lastLibraryRefreshTime = DateTime.now());
       }
       _homeLog('HomeScreen: library refresh completed');
-    } catch (e) {
-      _homeLog('HomeScreen: library refresh failed: $e');
+    } catch (e, st) {
+      _homeLog('HomeScreen: library refresh failed: ${_debugErrorSummary(e)}');
+      _homeLog(
+        'HomeScreen: failure stack (head): '
+        '${st.toString().split('\n').take(8).join(' | ')}',
+      );
       if (e is DioException) {
         _homeLog(
           'HomeScreen: DioException details '
@@ -214,11 +226,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           'response=${e.response?.data}',
         );
       }
+      if (e is td.TdError) {
+        _homeLog(
+          'HomeScreen: TdError details code=${e.code} message=${e.message}',
+        );
+      }
       if (mounted && notifyUserOnFailure) {
         final message = switch (e) {
           TdlibInteractiveLoginRequired _ => e.toString(),
           DioException _ =>
             'Could not load library: HTTP ${e.response?.statusCode ?? '-'} ${e.requestOptions.path}\n${e.message}',
+          td.TdError _ => 'Could not load library: TDLib ${e.code}: ${e.message}',
           _ => 'Could not load library: $e',
         };
         ScaffoldMessenger.of(context).showSnackBar(
