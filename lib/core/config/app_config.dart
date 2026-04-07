@@ -81,3 +81,4 @@ class AppConfig {
       apiBaseUrl.isNotEmpty &&
       (telegramWebAppShortName.isNotEmpty || telegramWebAppUrl.isNotEmpty);
 }
+

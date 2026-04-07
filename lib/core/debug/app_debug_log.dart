@@ -101,3 +101,4 @@ class AppDebugLog extends ChangeNotifier {
     notifyListeners();
   }
 }
+

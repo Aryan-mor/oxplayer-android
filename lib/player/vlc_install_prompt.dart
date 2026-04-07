@@ -119,3 +119,4 @@ Future<bool> ensureVlcOrProceedToExternalPlayer(BuildContext context) async {
   );
   return result == _VlcDialogResult.dismissForVersion;
 }
+

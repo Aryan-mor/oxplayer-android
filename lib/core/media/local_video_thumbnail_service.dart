@@ -270,3 +270,4 @@ class LocalVideoThumbnailService {
     return null;
   }
 }
+

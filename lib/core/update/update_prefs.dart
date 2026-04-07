@@ -16,3 +16,4 @@ Future<void> clearSkippedReleaseTag() async {
   final p = await SharedPreferences.getInstance();
   await p.remove(_kSkippedReleaseTag);
 }
+

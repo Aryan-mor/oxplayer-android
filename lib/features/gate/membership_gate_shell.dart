@@ -156,3 +156,4 @@ class _MembershipGateShellState extends ConsumerState<MembershipGateShell> {
     );
   }
 }
+

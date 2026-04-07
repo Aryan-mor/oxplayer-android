@@ -146,3 +146,4 @@ final appUpdateNotifierProvider =
     NotifierProvider<AppUpdateNotifier, AppUpdatePrompt?>(
   AppUpdateNotifier.new,
 );
+

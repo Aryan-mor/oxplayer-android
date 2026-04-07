@@ -118,3 +118,4 @@ class SourceChatMediaPage {
     return SourceChatMediaPage(items: list, total: total);
   }
 }
+

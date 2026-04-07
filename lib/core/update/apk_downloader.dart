@@ -64,3 +64,4 @@ Future<void> downloadReleaseApk({
   }
   await done.rename(target.path);
 }
+

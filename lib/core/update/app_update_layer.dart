@@ -494,3 +494,4 @@ class _AppUpdateLayerState extends ConsumerState<AppUpdateLayer>
     );
   }
 }
+

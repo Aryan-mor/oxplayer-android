@@ -59,3 +59,4 @@ bool isMandatorySemverBump({
   if (patchOptional) return false;
   return remote.patch > local.patch;
 }
+

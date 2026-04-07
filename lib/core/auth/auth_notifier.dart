@@ -225,3 +225,4 @@ class AuthNotifier extends ChangeNotifier {
     notifyListeners();
   }
 }
+

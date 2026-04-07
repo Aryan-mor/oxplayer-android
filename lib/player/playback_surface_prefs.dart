@@ -48,3 +48,4 @@ class PlaybackSurfacePrefs {
     await p.remove(_keyLocalFile);
   }
 }
+

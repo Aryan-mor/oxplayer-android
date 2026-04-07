@@ -262,3 +262,4 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
     );
   }
 }
+

@@ -16,3 +16,4 @@ Future<bool> installDownloadedApk(String absolutePath) async {
     return false;
   }
 }
+

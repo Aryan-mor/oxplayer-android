@@ -43,3 +43,4 @@ AppMediaAggregate sourceChatRowToAggregate({
   );
   return AppMediaAggregate(media: media, files: [file]);
 }
+

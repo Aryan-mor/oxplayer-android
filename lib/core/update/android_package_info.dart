@@ -24,3 +24,4 @@ Future<String?> readAndroidPackageVersionLabel() async {
   } catch (_) {}
   return null;
 }
+

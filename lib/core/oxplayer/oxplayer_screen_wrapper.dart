@@ -88,3 +88,4 @@ class _OxplayerScreenWrapperState extends State<OxplayerScreenWrapper> {
     );
   }
 }
+

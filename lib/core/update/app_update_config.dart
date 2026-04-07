@@ -9,3 +9,4 @@ const String kUpdateGithubRepo = 'oxplayer-android';
 /// CI in this repo tags `v1.0.<run>` (patch-only). Set to `false` if every release
 /// must block the app until the user installs (per “Y or Z change is required”).
 const bool kPatchOnlyUpdatesAreOptional = true;
+

@@ -13,3 +13,4 @@ Future<void> bootstrap() async {
     await TelegramTdlibFacade.initTdlibPlugin();
   }
 }
+

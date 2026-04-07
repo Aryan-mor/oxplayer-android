@@ -73,3 +73,4 @@ final homeBrowseFocusProvider =
     StateNotifierProvider<HomeBrowseFocusNotifier, HomeBrowseFocusState>((ref) {
   return HomeBrowseFocusNotifier();
 });
+

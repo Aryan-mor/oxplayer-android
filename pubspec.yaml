@@ -33,6 +33,38 @@ dependencies:
   tdlib: ^1.6.0
   qr_flutter: ^4.1.0
   video_thumbnail: ^0.5.6
+  material_symbols_icons: ^4.2928.1
+  window_manager: ^0.5.1
+  provider: ^6.1.5+1
+  url_launcher: ^6.3.2
+  mobile_scanner: ^7.2.0
+  flex_color_picker: ^3.8.0
+  flutter_svg: ^2.2.4
+  file_picker: 8.1.4
+  os_media_controls:
+    git: https://github.com/edde746/os-media-controls
+  sentry_flutter: ^9.16.1
+  auto_updater: ^1.0.0
+  logger: ^2.7.0
+  uuid: ^4.5.3
+  web_socket_channel: ^3.0.3
+  dio_http2_adapter: ^2.7.0
+  package_info_plus: ^9.0.1
+  rate_limiter: ^1.0.0
+  universal_gamepad: ^1.5.4
+  in_app_review: ^2.0.11
+  dart_discord_presence: ^1.2.0
+  background_downloader: ^9.5.4
+  connectivity_plus: ^7.1.0
+  drift: ^2.32.1
+  crypto: ^3.0.7
+  saf_util: ^2.0.0
+  saf_stream: ^2.0.0
+  flutter_cache_manager: ^3.4.1
+  duration: ^4.0.3
+  slang: ^4.14.0
+  wakelock_plus: ^1.5.1
+  slang_flutter: ^4.14.0
 
 dev_dependencies:
   flutter_test:

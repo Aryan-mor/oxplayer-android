@@ -227,3 +227,4 @@ class _DiscoverHubSection extends ConsumerWidget {
     }
   }
 }
+

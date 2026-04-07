@@ -325,3 +325,4 @@ class _DownloadManagerNotifier extends AsyncNotifier<DownloadManager> {
     return dm;
   }
 }
+

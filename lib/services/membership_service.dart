@@ -428,3 +428,4 @@ Future<bool> verifyMembershipRequirements({
   _memLog('verify: all checks OK');
   return true;
 }
+

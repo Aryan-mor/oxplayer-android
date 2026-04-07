@@ -30,3 +30,4 @@ Future<void> clearTelegramSession() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.remove('telegram_session');
 }
+

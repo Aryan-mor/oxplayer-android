@@ -11,3 +11,4 @@ String? remotePosterUrlForAppMedia(AppMedia media) {
   if (value.startsWith('/')) return 'https://image.tmdb.org/t/p/w500$value';
   return value;
 }
+

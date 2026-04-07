@@ -57,3 +57,4 @@ const allAppNavigationTabs = [
     getLabel: _getSettingsLabel,
   ),
 ];
+

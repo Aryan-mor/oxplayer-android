@@ -257,3 +257,4 @@ class _SettingsPlaceholder extends StatelessWidget {
     );
   }
 }
+

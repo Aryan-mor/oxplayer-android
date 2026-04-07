@@ -17,3 +17,4 @@ class HomePresentationAdapter {
     HomeSectionVm(id: 'home_other', title: 'Other', kind: 'general_video'),
   ];
 }
+

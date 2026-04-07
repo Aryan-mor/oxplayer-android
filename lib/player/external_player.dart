@@ -128,3 +128,4 @@ class ExternalPlayer {
     return 'video/*';
   }
 }
+

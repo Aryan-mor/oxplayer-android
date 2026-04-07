@@ -141,3 +141,4 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
     );
   }
 }
+

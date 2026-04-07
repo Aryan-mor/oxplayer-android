@@ -76,3 +76,4 @@ class DeviceProfileService {
     return shortest >= 600 && longest >= 960;
   }
 }
+

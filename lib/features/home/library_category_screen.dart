@@ -185,3 +185,4 @@ class _CategoryCell extends StatelessWidget {
     );
   }
 }
+

@@ -1,0 +1,614 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show protected;
+import 'package:flutter/services.dart';
+
+import '../../utils/app_logger.dart';
+import '../font_loader.dart';
+import '../models.dart';
+import 'player.dart';
+import 'player_state.dart';
+import 'player_stream_controllers.dart';
+import 'player_streams.dart';
+
+/// Abstract base class for player implementations.
+///
+/// This class contains shared logic for both [PlayerAndroid] (ExoPlayer)
+/// and [PlayerNative] (MPV) implementations, including:
+/// - State management
+/// - Stream controller setup
+/// - Event handling infrastructure
+/// - Property change handlers
+/// - Track parsing and selection
+/// - Common lifecycle methods
+abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
+  PlayerState _state = const PlayerState();
+
+  @override
+  PlayerState get state => _state;
+
+  late final PlayerStreams _streams;
+
+  @override
+  PlayerStreams get streams => _streams;
+
+  @override
+  int? get textureId => null;
+
+  StreamSubscription? _eventSubscription;
+  StreamSubscription? _logSubscription;
+  bool _disposed = false;
+  final _throttleSw = Stopwatch()..start();
+  int _lastEmitMs = 0;
+  int _lastCacheStateMs = 0;
+  int _positionMs = 0;
+  int _nextPropId = 0;
+  final Map<int, String> _propIdToName = {};
+
+  /// Whether the player has been initialized.
+  /// Subclasses should set this to true after initialization.
+  @protected
+  bool initialized = false;
+
+  /// Whether the player has been disposed.
+  @override
+  bool get disposed => _disposed;
+
+  /// The method channel for platform communication.
+  MethodChannel get methodChannel;
+
+  /// The event channel for receiving platform events.
+  EventChannel get eventChannel;
+
+  /// The log prefix for this player (e.g., 'MPV', 'ExoPlayer').
+  String get logPrefix;
+
+  PlayerBase() {
+    _streams = createStreams();
+    _setupEventListener();
+    _logSubscription = logController.stream.listen(_forwardToAppLogger);
+  }
+
+  void _forwardToAppLogger(PlayerLog log) {
+    final message = '[$logPrefix:${log.prefix}] ${log.text}'.trimRight();
+    switch (log.level) {
+      case PlayerLogLevel.fatal:
+      case PlayerLogLevel.error:
+        appLogger.e(message);
+      case PlayerLogLevel.warn:
+        appLogger.w(message);
+      case PlayerLogLevel.info:
+      case PlayerLogLevel.verbose:
+        appLogger.i(message);
+      case PlayerLogLevel.debug:
+      case PlayerLogLevel.trace:
+        appLogger.d(message);
+      case PlayerLogLevel.none:
+        break;
+    }
+  }
+
+  void _setupEventListener() {
+    _eventSubscription = eventChannel.receiveBroadcastStream().listen(
+      _handleEvent,
+      onError: (error) {
+        if (_disposed) return;
+        errorController.add(error.toString());
+      },
+    );
+  }
+
+  /// Observes a property on the native player and assigns it a compact propId
+  /// for efficient event channel communication.
+  @protected
+  Future<void> observeProperty(String name, String format) async {
+    final propId = _nextPropId++;
+    _propIdToName[propId] = name;
+    await invoke('observeProperty', {'name': name, 'format': format, 'id': propId});
+  }
+
+  void _handleEvent(dynamic event) {
+    if (_disposed) return;
+    if (event is List && event.length == 2) {
+      final name = _propIdToName[event.first as int];
+      if (name != null) {
+        handlePropertyChange(name, event[1]);
+      }
+    } else if (event is Map) {
+      final type = event['type'] as String?;
+      final name = event['name'] as String?;
+      if (type == 'event' && name != null) {
+        handlePlayerEvent(name, event['data'] as Map?);
+      }
+    }
+  }
+
+  /// Handle a property change event from the platform.
+  /// Subclasses can override this to handle platform-specific properties.
+  void handlePropertyChange(String name, dynamic value) {
+    if (_disposed) return;
+    switch (name) {
+      case 'pause':
+        final playing = value == false;
+        _state = _state.copyWith(playing: playing);
+        playingController.add(playing);
+        break;
+
+      case 'eof-reached':
+        final completed = value == true;
+        _state = _state.copyWith(completed: completed);
+        completedController.add(completed);
+        break;
+
+      case 'paused-for-cache':
+        final buffering = value == true;
+        _state = _state.copyWith(buffering: buffering);
+        bufferingController.add(buffering);
+        break;
+
+      case 'time-pos':
+        if (value is num) {
+          _positionMs = (value * 1000).round();
+          // Only allocate Duration + copyWith + emit at ~4Hz (250ms).
+          // Raw int is stored every tick so synchronous reads via _positionMs stay current.
+          final nowMs = _throttleSw.elapsedMilliseconds;
+          if (nowMs - _lastEmitMs >= 250) {
+            _lastEmitMs = nowMs;
+            final pos = Duration(milliseconds: _positionMs);
+            _state = _state.copyWith(position: pos);
+            positionController.add(pos);
+          }
+        }
+        break;
+
+      case 'duration':
+        if (value is num) {
+          final duration = Duration(milliseconds: (value * 1000).toInt());
+          _state = _state.copyWith(duration: duration);
+          durationController.add(duration);
+        }
+        break;
+
+      case 'seekable':
+        if (value is bool) {
+          setSeekable(value);
+        }
+        break;
+
+      case 'demuxer-cache-time':
+        if (value is num) {
+          final nowMs = _throttleSw.elapsedMilliseconds;
+          if (nowMs - _lastCacheStateMs < 250) break;
+          _lastCacheStateMs = nowMs;
+          final buffer = Duration(milliseconds: (value * 1000).toInt());
+          _state = _state.copyWith(buffer: buffer);
+          bufferController.add(buffer);
+          // Synthesize a single range for players without demuxer-cache-state (ExoPlayer).
+          // ExoPlayer only buffers ahead of the current position, so use position as start.
+          final ranges = [BufferRange(start: _state.position, end: buffer)];
+          _state = _state.copyWith(bufferRanges: ranges);
+          bufferRangesController.add(ranges);
+        }
+        break;
+
+      case 'demuxer-cache-state':
+        _handleDemuxerCacheState(value);
+        break;
+
+      case 'volume':
+        if (value is num) {
+          final volume = value.toDouble();
+          _state = _state.copyWith(volume: volume);
+          volumeController.add(volume);
+        }
+        break;
+
+      case 'speed':
+        if (value is num) {
+          final rate = value.toDouble();
+          _state = _state.copyWith(rate: rate);
+          rateController.add(rate);
+        }
+        break;
+
+      case 'track-list':
+        List? trackList;
+        if (value is List) {
+          trackList = value;
+        } else if (value is String && value.isNotEmpty) {
+          try {
+            final parsed = jsonDecode(value);
+            if (parsed is List) trackList = parsed;
+          } catch (_) {
+            // Ignore parse errors
+          }
+        }
+        if (trackList != null) {
+          final result = parseTrackList(trackList);
+          _state = _state.copyWith(tracks: result.tracks);
+          tracksController.add(result.tracks);
+          // Derive selection from mpv's "selected" field in the track data.
+          // This is the source of truth and handles cases where aid/sid
+          // values don't match track IDs (e.g. "auto", "0", "no").
+          if (result.selectedAudioId != null) {
+            updateSelectedAudioTrack(result.selectedAudioId);
+          }
+          if (result.selectedSubtitleId != null) {
+            updateSelectedSubtitleTrack(result.selectedSubtitleId);
+          }
+        }
+        break;
+
+      case 'aid':
+        updateSelectedAudioTrack(value);
+        break;
+
+      case 'sid':
+        updateSelectedSubtitleTrack(value);
+        break;
+
+      case 'secondary-sid':
+        updateSelectedSecondarySubtitleTrack(value);
+        break;
+
+      case 'audio-device-list':
+        List? deviceList;
+        if (value is List) {
+          deviceList = value;
+        } else if (value is String && value.isNotEmpty) {
+          try {
+            final parsed = jsonDecode(value);
+            if (parsed is List) deviceList = parsed;
+          } catch (_) {}
+        }
+        if (deviceList != null) {
+          final devices = deviceList
+              .whereType<Map>()
+              .map((d) => AudioDevice(name: d['name'] as String? ?? '', description: d['description'] as String? ?? ''))
+              .toList();
+          _state = _state.copyWith(audioDevices: devices);
+          audioDevicesController.add(devices);
+        }
+        break;
+
+      case 'audio-device':
+        if (value is String && value.isNotEmpty) {
+          final device =
+              _state.audioDevices.cast<AudioDevice?>().firstWhere(
+                (d) => d?.name == value,
+                orElse: () => AudioDevice(name: value),
+              ) ??
+              AudioDevice(name: value);
+          _state = _state.copyWith(audioDevice: device);
+          audioDeviceController.add(device);
+        }
+        break;
+    }
+  }
+
+  /// Parse demuxer-cache-state property to extract seekable ranges and buffer end.
+  void _handleDemuxerCacheState(dynamic value) {
+    Map? cacheState;
+    if (value is Map) {
+      cacheState = value;
+    } else if (value is String && value.isNotEmpty) {
+      // Throttle JSON parsing to avoid ANR on low-end devices
+      final nowMs = _throttleSw.elapsedMilliseconds;
+      if (nowMs - _lastCacheStateMs < 250) return;
+      _lastCacheStateMs = nowMs;
+      try {
+        final parsed = jsonDecode(value);
+        if (parsed is Map) cacheState = parsed;
+      } catch (_) {}
+    }
+    if (cacheState == null) return;
+
+    // Extract cache-end for the single buffer duration (replaces demuxer-cache-time)
+    final cacheEnd = cacheState['cache-end'] as num?;
+    if (cacheEnd != null) {
+      final buffer = Duration(milliseconds: (cacheEnd * 1000).toInt());
+      _state = _state.copyWith(buffer: buffer);
+      bufferController.add(buffer);
+    }
+
+    // Extract seekable-ranges array
+    final seekableRanges = cacheState['seekable-ranges'];
+    if (seekableRanges is List) {
+      final ranges = <BufferRange>[];
+      for (final range in seekableRanges) {
+        if (range is Map) {
+          final start = range['start'] as num?;
+          final end = range['end'] as num?;
+          if (start != null && end != null) {
+            ranges.add(
+              BufferRange(
+                start: Duration(milliseconds: (start * 1000).toInt()),
+                end: Duration(milliseconds: (end * 1000).toInt()),
+              ),
+            );
+          }
+        }
+      }
+      _state = _state.copyWith(bufferRanges: ranges);
+      bufferRangesController.add(ranges);
+    }
+  }
+
+  /// Handle a player event from the platform.
+  /// Subclasses can override this to handle platform-specific events.
+  void handlePlayerEvent(String name, Map? data) {
+    if (_disposed) return;
+    switch (name) {
+      case 'end-file':
+        setSeekable(false);
+        final rawReason = data?['reason'];
+        final reason = switch (rawReason) {
+          0 => 'eof',
+          2 => 'stop',
+          3 => 'quit',
+          4 => 'error',
+          5 => 'redirect',
+          String s => s,
+          _ => null,
+        };
+        if (reason == 'eof') {
+          _state = _state.copyWith(completed: true);
+          completedController.add(true);
+        } else if (reason == 'error') {
+          errorController.add(data?['message'] as String? ?? 'Playback error');
+        }
+        break;
+
+      case 'file-loaded':
+        _state = _state.copyWith(completed: false);
+        completedController.add(false);
+        break;
+
+      case 'playback-restart':
+        playbackRestartController.add(null);
+        break;
+
+      case 'log-message':
+        final prefix = data?['prefix'] as String? ?? '';
+        final levelStr = data?['level'] as String? ?? 'info';
+        final text = data?['text'] as String? ?? '';
+        final level = parseLogLevel(levelStr);
+        logController.add(PlayerLog(level: level, prefix: prefix, text: text));
+        break;
+    }
+  }
+
+  /// Parse a log level string to [PlayerLogLevel].
+  PlayerLogLevel parseLogLevel(String level) {
+    return switch (level) {
+      'fatal' => PlayerLogLevel.fatal,
+      'error' => PlayerLogLevel.error,
+      'warn' => PlayerLogLevel.warn,
+      'info' => PlayerLogLevel.info,
+      'v' || 'verbose' => PlayerLogLevel.verbose,
+      'debug' => PlayerLogLevel.debug,
+      'trace' => PlayerLogLevel.trace,
+      _ => PlayerLogLevel.info,
+    };
+  }
+
+  /// Parse a track list from the platform into [Tracks] and selected track IDs.
+  ({Tracks tracks, String? selectedAudioId, String? selectedSubtitleId}) parseTrackList(List trackList) {
+    final audioTracks = <AudioTrack>[];
+    final subtitleTracks = <SubtitleTrack>[];
+    String? selectedAudioId;
+    String? selectedSubtitleId;
+
+    for (final track in trackList) {
+      if (track is! Map) continue;
+
+      final type = track['type'] as String?;
+      final id = track['id']?.toString() ?? '';
+      final selected = track['selected'] as bool? ?? false;
+
+      if (type == 'audio') {
+        if (selected) selectedAudioId = id;
+        audioTracks.add(
+          AudioTrack(
+            id: id,
+            title: track['title'] as String?,
+            language: track['lang'] as String?,
+            codec: track['codec'] as String?,
+            channels: (track['demux-channel-count'] as num?)?.toInt(),
+            sampleRate: (track['demux-samplerate'] as num?)?.toInt(),
+            isDefault: track['default'] as bool? ?? false,
+          ),
+        );
+      } else if (type == 'sub') {
+        if (selected) selectedSubtitleId = id;
+        subtitleTracks.add(
+          SubtitleTrack(
+            id: id,
+            title: track['title'] as String?,
+            language: track['lang'] as String?,
+            codec: track['codec'] as String?,
+            isDefault: track['default'] as bool? ?? false,
+            isForced: track['forced'] as bool? ?? false,
+            isExternal: track['external'] as bool? ?? false,
+            uri: track['external-filename'] as String?,
+          ),
+        );
+      }
+    }
+
+    return (tracks: Tracks(audio: audioTracks, subtitle: subtitleTracks), selectedAudioId: selectedAudioId, selectedSubtitleId: selectedSubtitleId);
+  }
+
+  /// Update the selected audio track.
+  void updateSelectedAudioTrack(dynamic trackId) {
+    final id = trackId?.toString();
+    AudioTrack? selectedTrack;
+
+    if (id != null && id != 'no') {
+      selectedTrack = _state.tracks.audio.cast<AudioTrack?>().firstWhere((t) => t?.id == id, orElse: () => null);
+    }
+
+    _state = _state.copyWith(track: _state.track.copyWith(audio: selectedTrack));
+    trackController.add(_state.track);
+  }
+
+  /// Update the selected subtitle track.
+  void updateSelectedSubtitleTrack(dynamic trackId) {
+    final id = trackId?.toString();
+    SubtitleTrack? selectedTrack;
+
+    selectedTrack = (id == null || id == 'no')
+        ? SubtitleTrack.off
+        : _state.tracks.subtitle.cast<SubtitleTrack?>().firstWhere((t) => t?.id == id, orElse: () => null);
+
+    _state = _state.copyWith(track: _state.track.copyWith(subtitle: selectedTrack));
+    trackController.add(_state.track);
+  }
+
+  /// Update the selected secondary subtitle track.
+  void updateSelectedSecondarySubtitleTrack(dynamic trackId) {
+    final id = trackId?.toString();
+    SubtitleTrack? selectedTrack;
+
+    if (id == null || id == 'no') {
+      selectedTrack = null;
+    } else {
+      selectedTrack = _state.tracks.subtitle.cast<SubtitleTrack?>().firstWhere((t) => t?.id == id, orElse: () => null);
+    }
+
+    _state = _state.copyWith(track: _state.track.copyWith(secondarySubtitle: selectedTrack));
+    trackController.add(_state.track);
+  }
+
+  /// Update the internal state.
+  void updateState(PlayerState Function(PlayerState) update) {
+    _state = update(_state);
+  }
+
+  @protected
+  void clearTracks() {
+    const empty = Tracks();
+    _state = _state.copyWith(tracks: empty, track: const TrackSelection());
+    tracksController.add(empty);
+  }
+
+  @protected
+  void setSeekable(bool seekable) {
+    if (_state.seekable == seekable) return;
+    _state = _state.copyWith(seekable: seekable);
+    seekableController.add(seekable);
+  }
+
+  /// Safe method channel invocation — no-ops if player is disposed.
+  @protected
+  Future<T?> invoke<T>(String method, [dynamic args]) async {
+    if (_disposed) return null;
+    return methodChannel.invokeMethod<T>(method, args);
+  }
+
+  // ============================================
+  // Default Implementations
+  // ============================================
+
+  @override
+  Future<void> playOrPause() async {
+    if (_disposed) return;
+    if (_state.playing) {
+      await pause();
+    } else {
+      await play();
+    }
+  }
+
+  @override
+  Future<bool> setVisible(bool visible) async {
+    if (_disposed) return false;
+    try {
+      await invoke('setVisible', {'visible': visible});
+      return true;
+    } catch (e) {
+      errorController.add('Failed to set visibility: $e');
+      return false;
+    }
+  }
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> updateFrame() async {}
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> setVideoFrameRate(double fps, int durationMs) async {}
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> clearVideoFrameRate() async {}
+
+  @override
+  Future<bool> requestAudioFocus() async {
+    // Default returns true, overridden by Android
+    return true;
+  }
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> abandonAudioFocus() async {}
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> setAudioDevice(AudioDevice device) async {}
+
+  @override
+  bool get supportsSecondarySubtitles => true;
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> selectSecondarySubtitleTrack(SubtitleTrack track) async {}
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> setAudioPassthrough(bool enabled) async {}
+
+  @override
+  // ignore: no-empty-block - base no-op, overridden by platform subclasses
+  Future<void> setLogLevel(String level) async {}
+
+  // ============================================
+  // Subtitle Fonts
+  // ============================================
+
+  @override
+  Future<void> configureSubtitleFonts() async {
+    try {
+      final fontDir = await SubtitleFontLoader.loadSubtitleFont();
+      if (fontDir != null) {
+        await setProperty('sub-fonts-dir', fontDir);
+        await setProperty('sub-font', SubtitleFontLoader.fontName);
+      }
+    } catch (e) {
+      // Font configuration is not critical - continue without it
+      logController.add(PlayerLog(
+        prefix: 'fonts',
+        level: PlayerLogLevel.warn,
+        text: 'Failed to configure subtitle fonts: $e',
+      ));
+    }
+  }
+
+  // ============================================
+  // Lifecycle
+  // ============================================
+
+  @override
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+
+    await _eventSubscription?.cancel();
+    await _logSubscription?.cancel();
+    await methodChannel.invokeMethod('dispose'); // Direct call — already guarded by _disposed check above
+    await closeStreamControllers();
+  }
+}
+

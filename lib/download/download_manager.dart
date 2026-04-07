@@ -1415,3 +1415,4 @@ class DownloadManager extends ChangeNotifier {
     super.dispose();
   }
 }
+

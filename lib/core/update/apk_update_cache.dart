@@ -107,3 +107,4 @@ Future<String?> cachedApkPathForRelease(String releaseTag) async {
     return null;
   }
 }
+

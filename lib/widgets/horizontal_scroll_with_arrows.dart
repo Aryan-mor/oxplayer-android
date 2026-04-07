@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:oxplayer/widgets/app_icon.dart';
+import 'package:material_symbols_icons/symbols.dart';
+import '../theme/mono_tokens.dart';
+import '../utils/platform_detector.dart';
 
-/// A wrapper that adds hover-activated navigation arrows to horizontal scrolling content.
-/// Arrows only appear on non-TV (pointer) platforms and hide at scroll boundaries.
+/// A wrapper widget that adds hover-activated navigation arrows to horizontal scrolling content.
+/// The arrows only appear on desktop/web platforms and hide at scroll boundaries.
+///
+/// This widget creates and manages its own ScrollController internally. Use the [builder]
+/// constructor to access the ScrollController for the scrollable child widget.
 class HorizontalScrollWithArrows extends StatefulWidget {
   final Widget Function(ScrollController) builder;
   final double scrollAmount;
@@ -10,7 +17,7 @@ class HorizontalScrollWithArrows extends StatefulWidget {
   const HorizontalScrollWithArrows({
     super.key,
     required this.builder,
-    this.scrollAmount = 0.8,
+    this.scrollAmount = 0.8, // Scroll by 80% of viewport width by default
     this.controller,
   });
 
@@ -31,13 +38,16 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
     _ownsController = widget.controller == null;
     _scrollController = widget.controller ?? ScrollController();
     _scrollController.addListener(_updateScrollState);
+    // Initial state update after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateScrollState());
   }
 
   @override
   void dispose() {
     _scrollController.removeListener(_updateScrollState);
-    if (_ownsController) _scrollController.dispose();
+    if (_ownsController) {
+      _scrollController.dispose();
+    }
     super.dispose();
   }
 
@@ -51,6 +61,7 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
       }
       return;
     }
+
     final position = _scrollController.position;
     final newLeft = position.pixels > 0;
     final newRight = position.pixels < position.maxScrollExtent;
@@ -67,8 +78,12 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
     final position = _scrollController.position;
     final delta = direction * position.viewportDimension * widget.scrollAmount;
     final targetScroll = (position.pixels + delta).clamp(0.0, position.maxScrollExtent);
-    _scrollController.animateTo(targetScroll, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+    _scrollController.animateTo(targetScroll, duration: tokens(context).slow, curve: Curves.easeInOut);
   }
+
+  void _scrollLeft() => _animateScroll(-1);
+
+  void _scrollRight() => _animateScroll(1);
 
   Widget _buildArrowButton({
     required double position,
@@ -77,7 +92,7 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
     required bool canScroll,
   }) {
     return Positioned(
-      left: position >= 0 ? position : null,
+      left: position < 0 ? null : position,
       right: position < 0 ? -position : null,
       top: 0,
       bottom: 0,
@@ -85,20 +100,10 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
         child: AnimatedOpacity(
           opacity: (_isHovering && canScroll) ? 1.0 : 0.0,
           duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
           child: IgnorePointer(
             ignoring: !(_isHovering && canScroll),
-            child: GestureDetector(
-              onTap: onPressed,
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.black.withValues(alpha: 0.7),
-                ),
-                child: Icon(icon, color: Colors.white, size: 24),
-              ),
-            ),
+            child: _NavigationArrow(icon: icon, onPressed: onPressed),
           ),
         ),
       ),
@@ -109,12 +114,10 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
   Widget build(BuildContext context) {
     final child = widget.builder(_scrollController);
 
-    // On TV/Android, just return the child without arrows
-    final isDesktop = Theme.of(context).platform == TargetPlatform.macOS ||
-        Theme.of(context).platform == TargetPlatform.windows ||
-        Theme.of(context).platform == TargetPlatform.linux;
-
-    if (!isDesktop) return child;
+    if (!PlatformDetector.isDesktop(context)) {
+      // On mobile, just return the child without arrows
+      return child;
+    }
 
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovering = true),
@@ -124,14 +127,14 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
           child,
           _buildArrowButton(
             position: 8,
-            icon: Icons.chevron_left_rounded,
-            onPressed: () => _animateScroll(-1),
+            icon: Symbols.chevron_left_rounded,
+            onPressed: _scrollLeft,
             canScroll: _canScrollLeft,
           ),
           _buildArrowButton(
             position: -8,
-            icon: Icons.chevron_right_rounded,
-            onPressed: () => _animateScroll(1),
+            icon: Symbols.chevron_right_rounded,
+            onPressed: _scrollRight,
             canScroll: _canScrollRight,
           ),
         ],
@@ -139,3 +142,43 @@ class _HorizontalScrollWithArrowsState extends State<HorizontalScrollWithArrows>
     );
   }
 }
+
+class _NavigationArrow extends StatefulWidget {
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  const _NavigationArrow({required this.icon, required this.onPressed});
+
+  @override
+  State<_NavigationArrow> createState() => _NavigationArrowState();
+}
+
+class _NavigationArrowState extends State<_NavigationArrow> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTapDown: (_) => setState(() => _isPressed = true),
+        onTapUp: (_) {
+          setState(() => _isPressed = false);
+          widget.onPressed();
+        },
+        onTapCancel: () => setState(() => _isPressed = false),
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.black.withValues(alpha: _isPressed ? 0.9 : 0.7),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 8, spreadRadius: 0)],
+          ),
+          child: AppIcon(widget.icon, fill: 1, color: Colors.white, size: 32),
+        ),
+      ),
+    );
+  }
+}
+

@@ -7,3 +7,4 @@ class PlayerRouteArgs {
   final String title;
   final Uri uri;
 }
+
