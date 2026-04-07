@@ -9,6 +9,7 @@ import 'core/debug/app_debug_log.dart';
 import 'core/config/app_config.dart';
 import 'data/api/oxplayer_api_service.dart';
 import 'data/models/app_media.dart';
+import 'data/models/user_chat_dtos.dart';
 import 'data/local/telegram_session_store.dart';
 import 'data/tmdb/tmdb_repository.dart';
 import 'download/download_manager.dart';
@@ -133,6 +134,34 @@ final libraryMediaByKindProvider =
 
 /// Bumped after a library refresh from the API so explore can refetch (`/me/explore/media`).
 final exploreCatalogRefreshGenerationProvider = StateProvider<int>((ref) => 0);
+
+/// Bumped to refetch GET [/me/chats] for the Sources tab and picker.
+final indexedChatsRefreshGenerationProvider = StateProvider<int>((ref) => 0);
+
+/// Indexed chats for one API bucket: `chats` | `groups` | `channels` | `bots`.
+final indexedChatsForBucketProvider =
+    FutureProvider.family<UserChatListPage, String>((ref, bucket) async {
+  final (:isLoggedIn, :apiAccessToken) = ref.watch(
+    authNotifierProvider.select(
+      (a) => (isLoggedIn: a.isLoggedIn, apiAccessToken: a.apiAccessToken),
+    ),
+  );
+  ref.watch(indexedChatsRefreshGenerationProvider);
+  final token = apiAccessToken;
+  if (!isLoggedIn || token == null || token.isEmpty) {
+    return const UserChatListPage(items: [], total: 0);
+  }
+  final config = ref.read(appConfigProvider);
+  final api = ref.read(oxplayerApiServiceProvider);
+  return api.fetchUserChats(
+    config: config,
+    accessToken: token,
+    bucket: bucket,
+    indexedOnly: true,
+    limit: 200,
+    offset: 0,
+  );
+});
 
 /// Library items only (same [AsyncValue] shape widgets expect from the old [FutureProvider]).
 final mediaListProvider = Provider<AsyncValue<List<AppMediaAggregate>>>((ref) {

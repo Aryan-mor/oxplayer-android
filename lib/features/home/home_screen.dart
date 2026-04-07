@@ -16,6 +16,7 @@ import '../../download/download_manager.dart';
 import '../../providers.dart';
 import '../../telegram/tdlib_facade.dart';
 import '../../widgets/library_media_poster.dart';
+import '../sources/sources_tab_content.dart';
 
 const _kBackExitWindow = Duration(seconds: 3);
 
@@ -79,8 +80,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _mainTab = 0;
   final GlobalKey<_HomeTabContentState> _homeTabKey =
       GlobalKey<_HomeTabContentState>();
-  final GlobalKey<_SourcesTabContentState> _sourcesTabKey =
-      GlobalKey<_SourcesTabContentState>();
+  final GlobalKey<SourcesTabContentState> _sourcesTabKey =
+      GlobalKey<SourcesTabContentState>();
 
   late final FocusNode _homeNavFocus =
       FocusNode(debugLabel: 'home-nav-home');
@@ -469,10 +470,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       headerHomeNavFocus: _homeNavFocus,
                       onOpenItem: (item) => _openItem(context, item),
                     ),
-                    _SourcesTabContent(
+                    SourcesTabContent(
                       key: _sourcesTabKey,
                       sourcesNavFocus: _sourcesNavFocus,
-                      onOpenItem: (item) => _openItem(context, item),
                     ),
                     const _MyOxTabContent(),
                   ],
@@ -1426,280 +1426,6 @@ class _CarouselShowMoreCard extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SourcesTabContent extends ConsumerStatefulWidget {
-  const _SourcesTabContent({
-    super.key,
-    required this.sourcesNavFocus,
-    required this.onOpenItem,
-  });
-
-  final FocusNode sourcesNavFocus;
-  final void Function(AppMediaAggregate item) onOpenItem;
-
-  @override
-  ConsumerState<_SourcesTabContent> createState() => _SourcesTabContentState();
-}
-
-class _SourcesTabContentState extends ConsumerState<_SourcesTabContent> {
-  static const int _cols = 5;
-
-  final List<FocusNode> _focusNodes = <FocusNode>[];
-  int? _focusedIndex;
-  int? _lastItemCount;
-
-  @override
-  void dispose() {
-    for (final n in _focusNodes) {
-      n.dispose();
-    }
-    super.dispose();
-  }
-
-  void _syncFocusNodes(int count) {
-    if (_focusNodes.length == count) return;
-    if (_focusNodes.length > count) {
-      for (var i = count; i < _focusNodes.length; i++) {
-        _focusNodes[i].dispose();
-      }
-      _focusNodes.removeRange(count, _focusNodes.length);
-      return;
-    }
-    for (var i = _focusNodes.length; i < count; i++) {
-      _focusNodes.add(FocusNode(debugLabel: 'sources-grid-$i'));
-    }
-  }
-
-  int? get lastBuiltItemCount => _lastItemCount;
-
-  bool focusGridIndex(int index) {
-    final n = _lastItemCount;
-    if (n == null || n <= 0 || index < 0 || index >= n) return false;
-    _syncFocusNodes(n);
-    setState(() => _focusedIndex = index);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (index < _focusNodes.length) {
-        _focusNodes[index].requestFocus();
-      }
-    });
-    return true;
-  }
-
-  void focusFirstGridTile() {
-    void attempt(int n) {
-      if (!mounted) return;
-      if (focusGridIndex(0)) return;
-      if (n < 15) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => attempt(n + 1));
-      }
-    }
-
-    attempt(0);
-  }
-
-  void _moveGridFocus(int newIndex, int total) {
-    if (newIndex < 0 || newIndex >= total) return;
-    setState(() => _focusedIndex = newIndex);
-    if (newIndex < _focusNodes.length) {
-      _focusNodes[newIndex].requestFocus();
-    }
-  }
-
-  KeyEventResult _gridKeyHandler(
-    int index,
-    List<AppMediaAggregate> items,
-    KeyEvent event,
-  ) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    final total = items.length;
-    final cols = _cols;
-    final row = index ~/ cols;
-    final col = index % cols;
-    final k = event.logicalKey;
-
-    if (_focusedIndex != index) {
-      setState(() => _focusedIndex = index);
-    }
-
-    if (k == LogicalKeyboardKey.arrowLeft) {
-      if (col > 0) _moveGridFocus(index - 1, total);
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.arrowRight) {
-      if (col < cols - 1 && index + 1 < total) {
-        _moveGridFocus(index + 1, total);
-      }
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.arrowUp) {
-      if (row > 0) {
-        _moveGridFocus(index - cols, total);
-      } else {
-        widget.sourcesNavFocus.requestFocus();
-      }
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.arrowDown) {
-      if (index + cols < total) {
-        _moveGridFocus(index + cols, total);
-      }
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.select ||
-        k == LogicalKeyboardKey.enter ||
-        k == LogicalKeyboardKey.numpadEnter ||
-        k == LogicalKeyboardKey.space) {
-      ref.read(homeBrowseFocusProvider.notifier).setSourcesGridFocus(
-            mainTab: 1,
-            gridIndex: index,
-          );
-      widget.onOpenItem(items[index]);
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final async = ref.watch(libraryFetchProvider);
-
-    return async.when(
-      data: (result) {
-        final items = result.items;
-        if (items.isEmpty) {
-          return const Center(
-            child: Text(
-              'No library items yet.',
-              style: TextStyle(color: AppColors.textMuted),
-            ),
-          );
-        }
-        final n = items.length;
-        _lastItemCount = n;
-        _syncFocusNodes(n);
-        if (_focusedIndex != null && _focusedIndex! >= n) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _focusedIndex = null);
-          });
-        }
-        return LayoutBuilder(
-          builder: (context, c) {
-            const gap = 10.0;
-            final pad = AppLayout.tvHorizontalInset;
-            final w = c.maxWidth - pad * 2;
-            final cellW = (w - gap * (_cols - 1)) / _cols;
-            final posterH = cellW * 1.5;
-            final cellH = posterH + 52;
-            return GridView.builder(
-              padding: EdgeInsets.fromLTRB(
-                pad,
-                8,
-                pad,
-                AppLayout.screenBottomInset + AppLayout.tvSectionVerticalGap,
-              ),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: _cols,
-                mainAxisSpacing: gap,
-                crossAxisSpacing: gap,
-                childAspectRatio: cellW / cellH,
-              ),
-              itemCount: n,
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final m = item.media;
-                final selected = _focusedIndex == index;
-                return Focus(
-                  focusNode: _focusNodes[index],
-                  onFocusChange: (hasFocus) {
-                    if (hasFocus) {
-                      ref.read(homeBrowseFocusProvider.notifier).setSourcesGridFocus(
-                            mainTab: 1,
-                            gridIndex: index,
-                          );
-                      if (_focusedIndex == index) return;
-                      setState(() => _focusedIndex = index);
-                      return;
-                    }
-                    if (_focusedIndex != index) return;
-                    setState(() => _focusedIndex = null);
-                  },
-                  onKeyEvent: (_, e) => _gridKeyHandler(index, items, e),
-                  child: Material(
-                    color: AppColors.card,
-                    borderRadius: BorderRadius.circular(10),
-                    clipBehavior: Clip.antiAlias,
-                    elevation: selected ? 6 : 0,
-                    shadowColor: Colors.black,
-                    surfaceTintColor: Colors.transparent,
-                    child: InkWell(
-                      onTap: () {
-                        ref.read(homeBrowseFocusProvider.notifier).setSourcesGridFocus(
-                              mainTab: 1,
-                              gridIndex: index,
-                            );
-                        widget.onOpenItem(item);
-                      },
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child: LibraryMediaPoster(
-                              media: m,
-                              files: item.files,
-                              placeholderIconSize: 32,
-                              progressStrokeWidth: 2,
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  m.title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: selected ? 13 : 12,
-                                    height: 1.2,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  _libraryTypeLabel(m.type),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: AppColors.textMuted,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            );
-          },
-        );
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(
-        child: Text(
-          'Could not load library.\n$e',
-          style: const TextStyle(color: AppColors.textMuted),
-          textAlign: TextAlign.center,
         ),
       ),
     );

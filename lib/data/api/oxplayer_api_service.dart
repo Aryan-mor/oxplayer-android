@@ -10,6 +10,7 @@ import '../../core/debug/app_debug_log.dart';
 import '../../telegram/tdlib_facade.dart';
 import '../models/app_media.dart';
 import '../models/series_episode_guide.dart';
+import '../models/user_chat_dtos.dart';
 
 void _apilog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.api);
@@ -1065,6 +1066,115 @@ class OxplayerApiService {
     } catch (e) {
       _apilog('InitData: failed to parse auth_date: $e');
     }
+  }
+
+  Future<UserChatListPage> fetchUserChats({
+    required AppConfig config,
+    required String accessToken,
+    required String bucket,
+    bool indexedOnly = true,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final dio = _dio(config.apiBaseUrl);
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/chats',
+      queryParameters: <String, dynamic>{
+        'bucket': bucket,
+        'indexedOnly': indexedOnly,
+        'limit': limit,
+        'offset': offset,
+      },
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
+    final data = response.data;
+    if (data == null) {
+      return const UserChatListPage(items: [], total: 0);
+    }
+    return UserChatListPage.fromJson(data);
+  }
+
+  Future<void> upsertUserChat({
+    required AppConfig config,
+    required String accessToken,
+    required int telegramChatId,
+    required String title,
+    required String chatType,
+    String? photoUrl,
+    bool peerIsBot = false,
+  }) async {
+    final dio = _dio(config.apiBaseUrl);
+    await dio.post<void>(
+      '/me/chats/upsert',
+      data: <String, dynamic>{
+        'telegramChatId': telegramChatId,
+        'title': title,
+        'chatType': chatType,
+        'photoUrl': photoUrl,
+        'peerIsBot': peerIsBot,
+      },
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
+  }
+
+  Future<int> patchUserChatsIndexed({
+    required AppConfig config,
+    required String accessToken,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final dio = _dio(config.apiBaseUrl);
+    final response = await dio.patch<Map<String, dynamic>>(
+      '/me/chats/indexed',
+      data: <String, dynamic>{'items': items},
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
+    final u = response.data?['updated'];
+    if (u is int) return u;
+    return int.tryParse(u?.toString() ?? '') ?? 0;
+  }
+
+  Future<SourceChatMediaPage> fetchSourceChatMedia({
+    required AppConfig config,
+    required String accessToken,
+    required int telegramChatId,
+    int limit = 40,
+    int offset = 0,
+  }) async {
+    final dio = _dio(config.apiBaseUrl);
+    final enc = Uri.encodeComponent(telegramChatId.toString());
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/chats/by-telegram-id/$enc/media',
+      queryParameters: <String, dynamic>{
+        'limit': limit,
+        'offset': offset,
+      },
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
+    final data = response.data;
+    if (data == null) {
+      return const SourceChatMediaPage(items: [], total: 0);
+    }
+    return SourceChatMediaPage.fromJson(data);
+  }
+
+  Future<void> ingestSourceChatMessages({
+    required AppConfig config,
+    required String accessToken,
+    required int telegramChatId,
+    required List<Map<String, dynamic>> items,
+    int? lastIndexedMessageId,
+  }) async {
+    final dio = _dio(config.apiBaseUrl);
+    final enc = Uri.encodeComponent(telegramChatId.toString());
+    await dio.post<void>(
+      '/me/chats/by-telegram-id/$enc/ingest',
+      data: <String, dynamic>{
+        'items': items,
+        if (lastIndexedMessageId != null)
+          'lastIndexedMessageId': lastIndexedMessageId,
+      },
+      options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+    );
   }
 
   Future<_ApiDeviceIdentity> _resolveDeviceIdentity() async {
