@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../device/device_profile.dart';
+import '../focus/focus_keys.dart';
+import 'adaptive_tokens.dart';
 import 'app_theme.dart';
+import 'focus_wrapper.dart';
 
 /// D-pad navigable button with scale + glow + focus ring animations.
 ///
@@ -65,23 +69,6 @@ class _OxplayerButtonState extends State<OxplayerButton> {
     super.dispose();
   }
 
-  bool _isCenterOrSelect(LogicalKeyboardKey key) {
-    if (key == LogicalKeyboardKey.select) return true;
-    final label = key.keyLabel.toLowerCase();
-    if (label == 'center' || label == 'dpad center' || label == 'select') {
-      return true;
-    }
-    // Android keyCode 23 (DPAD_CENTER) often appears on generic handheld remotes.
-    return key.keyId == 0x00100000017 || key.keyId == 23;
-  }
-
-  bool _isActivateKey(LogicalKeyboardKey key) {
-    return _isCenterOrSelect(key) ||
-        key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter ||
-        key == LogicalKeyboardKey.gameButtonA;
-  }
-
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     final custom = widget.onKeyEvent;
     if (custom != null) {
@@ -89,7 +76,7 @@ class _OxplayerButtonState extends State<OxplayerButton> {
       if (result == KeyEventResult.handled) return result;
     }
     if (!widget.enabled) return KeyEventResult.ignored;
-    if (event is KeyDownEvent && _isActivateKey(event.logicalKey)) {
+    if (event is KeyDownEvent && FocusKeys.isActivate(event.logicalKey)) {
       widget.onPressed?.call();
       return KeyEventResult.handled;
     }
@@ -98,19 +85,34 @@ class _OxplayerButtonState extends State<OxplayerButton> {
 
   @override
   Widget build(BuildContext context) {
+    final isTv = MediaQuery.sizeOf(context).shortestSide >= 600;
     final focusNode = widget.focusNode ?? _internalFocusNode!;
     final plain = widget.plainWhenUnfocused && !_focused && !widget.selected;
-    return Focus(
+    final scale = isTv ? 1.05 : 1.02;
+    final defaultPadding = AdaptiveTokens.controlPadding(
+      isTv
+          ? const DeviceProfile(
+              formFactor: DeviceFormFactor.tv,
+              supportsDynamicOrientation: false,
+            )
+          : const DeviceProfile(
+              formFactor: DeviceFormFactor.handheld,
+              supportsDynamicOrientation: true,
+            ),
+    );
+    return FocusWrapper(
       autofocus: widget.autofocus,
       focusNode: focusNode,
       onKeyEvent: _handleKey,
-      onFocusChange: (focused) {
+      onFocusChanged: (focused) {
         if (!mounted) return;
         setState(() => _focused = focused);
         widget.onFocusChanged?.call(focused);
       },
+      borderRadius: widget.borderRadius,
+      disableScale: !isTv,
       child: Transform.scale(
-        scale: _focused ? 1.05 : 1.0,
+        scale: _focused ? scale : 1.0,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeInOut,
@@ -126,15 +128,6 @@ class _OxplayerButtonState extends State<OxplayerButton> {
                           : Colors.transparent,
               width: _kFocusRingWidth,
             ),
-            boxShadow: _focused
-                ? [
-                    BoxShadow(
-                      color: AppColors.highlight.withValues(alpha: 0.45),
-                      blurRadius: 15,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
             color: plain
                 ? Colors.transparent
                 : _focused
@@ -149,7 +142,10 @@ class _OxplayerButtonState extends State<OxplayerButton> {
               borderRadius: BorderRadius.circular(widget.borderRadius),
               onTap: widget.enabled ? widget.onPressed : null,
               child: Padding(
-                padding: widget.padding,
+                padding:
+                    widget.padding == const EdgeInsets.symmetric(horizontal: 20, vertical: 14)
+                        ? defaultPadding
+                        : widget.padding,
                 child: widget.child,
               ),
             ),

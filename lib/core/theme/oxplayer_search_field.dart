@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../focus/focus_keys.dart';
 import 'app_theme.dart';
+import 'focus_wrapper.dart';
 
 /// Search row for remote / D-pad: the outer shell receives focus first (like [OxplayerButton]).
 /// Select / Enter opens text entry on the inner [TextField]; Back exits typing
@@ -70,22 +72,6 @@ class _OxplayerSearchFieldState extends State<OxplayerSearchField> {
     }
   }
 
-  bool _isCenterOrSelect(LogicalKeyboardKey key) {
-    if (key == LogicalKeyboardKey.select) return true;
-    final label = key.keyLabel.toLowerCase();
-    if (label == 'center' || label == 'dpad center' || label == 'select') {
-      return true;
-    }
-    return key.keyId == 0x00100000017 || key.keyId == 23;
-  }
-
-  bool _isActivateKey(LogicalKeyboardKey key) {
-    return _isCenterOrSelect(key) ||
-        key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter ||
-        key == LogicalKeyboardKey.gameButtonA;
-  }
-
   void _enterTyping() {
     if (_typing) return;
     setState(() => _typing = true);
@@ -105,7 +91,7 @@ class _OxplayerSearchFieldState extends State<OxplayerSearchField> {
   }
 
   KeyEventResult _onShellKey(FocusNode node, KeyEvent event) {
-    if (event is KeyDownEvent && _isActivateKey(event.logicalKey)) {
+    if (event is KeyDownEvent && FocusKeys.isActivate(event.logicalKey)) {
       _enterTyping();
       return KeyEventResult.handled;
     }
@@ -115,11 +101,11 @@ class _OxplayerSearchFieldState extends State<OxplayerSearchField> {
   Widget _buildShell() {
     final empty = widget.controller.text.isEmpty;
     final hint = widget.hintText ?? '';
-    return Focus(
+    return FocusWrapper(
       autofocus: widget.autofocus,
       focusNode: _shell,
       onKeyEvent: _onShellKey,
-      onFocusChange: (focused) {
+      onFocusChanged: (focused) {
         if (!mounted) return;
         setState(() => _shellFocused = focused);
       },

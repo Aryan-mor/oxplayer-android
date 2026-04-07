@@ -55,6 +55,7 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL_APP = "oxplayer/app_info"
         private const val CHANNEL_STORAGE = "oxplayer/storage_space"
         private const val CHANNEL_APK = "oxplayer/apk_install"
+        private const val CHANNEL_DEVICE_PROFILE = "de.aryanmo.oxplayer/device_profile"
 
         init {
             // Load TDLib JSON client from jniLibs/<abi>/libtdjson.so (x86, x86_64, arm*, …)
@@ -79,6 +80,21 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CHANNEL_DEVICE_PROFILE,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isAndroidTv" -> {
+                    val pm = applicationContext.packageManager
+                    val leanback = pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+                    val tv = pm.hasSystemFeature(PackageManager.FEATURE_TELEVISION)
+                    result.success(leanback || tv)
+                }
+                else -> result.notImplemented()
+            }
+        }
 
         // ── App package version (replaces package_info_plus plugin registration) ─
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_APP)

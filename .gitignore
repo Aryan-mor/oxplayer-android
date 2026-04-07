@@ -26,6 +26,9 @@ lib/generated_plugin_registrant.dart
 app.*.symbols
 app.*.map.json
 
+# refs
+refs/
+
 # Android / Gradle
 .gradle/
 android/.kotlin/

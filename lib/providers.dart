@@ -6,6 +6,7 @@ export 'core/navigation/home_browse_focus.dart';
 
 import 'core/auth/auth_notifier.dart';
 import 'core/debug/app_debug_log.dart';
+import 'core/device/device_profile.dart';
 import 'core/config/app_config.dart';
 import 'data/api/oxplayer_api_service.dart';
 import 'data/models/app_media.dart';
@@ -20,6 +21,7 @@ import 'telegram/tdlib_facade.dart';
 final appConfigProvider = Provider<AppConfig>((ref) => AppConfig.fromEnv());
 final oxplayerApiServiceProvider =
     Provider<OxplayerApiService>((ref) => OxplayerApiService());
+final deviceProfileProvider = StateProvider<DeviceProfile?>((ref) => null);
 
 enum LibraryTypeFilter { all, movies, series }
 

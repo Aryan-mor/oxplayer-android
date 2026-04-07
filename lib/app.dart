@@ -92,6 +92,8 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
     return MaterialApp.router(
       title: 'OXPlayer',
       theme: buildOxplayerTheme(),
+      darkTheme: buildOxplayerTheme(),
+      themeMode: ThemeMode.dark,
       routerConfig: router,
       builder: (context, child) {
         final mq = MediaQuery.sizeOf(context);

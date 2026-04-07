@@ -3,7 +3,10 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../router.dart';
+import '../device/device_profile.dart';
+import '../focus/input_mode_tracker.dart';
 import 'app_debug_log.dart';
+
 
 /// Debug-only control (bottom-right). Tap opens a dialog: tabs (All + categories), Copy (active tab), Clear, Close.
 /// Uses [rootNavigatorKey] so [showDialog] works from [MaterialApp.builder] (FAB is not under [Navigator]).
@@ -135,6 +138,32 @@ class _DebugLogDialogState extends State<_DebugLogDialog>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // UI Testing Overrides
+                Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: const Text('Force TV Mode (isTv)'),
+                        subtitle: const Text('Overrides DeviceProfile to force TV layout'),
+                        value: DeviceProfileService.debugOverrideIsTv ?? false,
+                        onChanged: (val) {
+                          DeviceProfileService.toggleDebugTvMode(val);
+                          setState(() {});
+                        },
+                      ),
+                      SwitchListTile(
+                        title: const Text('Force Keyboard Mode'),
+                        subtitle: const Text('Forces focus styling/scaling on all platforms'),
+                        value: InputModeTracker.debugOverrideMode == InputMode.keyboard,
+                        onChanged: (val) {
+                          InputModeTracker.toggleDebugMode(val);
+                          setState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                ),
                 TabBar(
                   controller: _tabController,
                   isScrollable: true,
@@ -160,6 +189,7 @@ class _DebugLogDialogState extends State<_DebugLogDialog>
               ],
             ),
           ),
+
           actions: [
             TextButton(
               onPressed: activeText.isEmpty ? null : copyActive,

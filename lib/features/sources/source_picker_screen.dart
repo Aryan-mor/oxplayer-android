@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/focus/section_focus_coordinator.dart';
+import '../../core/layout/section_container.dart';
 import '../../core/sources/sources_local_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/oxplayer_button.dart';
@@ -35,6 +37,8 @@ class _SourcePickerScreenState extends ConsumerState<SourcePickerScreen> {
   int? _focusedIndex;
   Timer? _debounce;
   final Map<int, bool> _pendingIndexed = {};
+  final SectionFocusCoordinator _sectionFocusCoordinator =
+      SectionFocusCoordinator();
 
   List<TdlibPickerChatRow> get _visibleRows {
     final list = _rowsByChatId.values.where((r) => r.matchesBucket(_bucket)).toList();
@@ -53,6 +57,7 @@ class _SourcePickerScreenState extends ConsumerState<SourcePickerScreen> {
 
   @override
   void dispose() {
+    _sectionFocusCoordinator.dispose();
     _debounce?.cancel();
     if (_pendingIndexed.isNotEmpty) {
       unawaited(_flushPending());
@@ -298,7 +303,9 @@ class _SourcePickerScreenState extends ConsumerState<SourcePickerScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
+          SectionContainer(
+            sectionId: 'source_picker_buckets',
+            focusCoordinator: _sectionFocusCoordinator,
             padding: const EdgeInsets.fromLTRB(
               AppLayout.tvHorizontalInset,
               8,
@@ -355,7 +362,10 @@ class _SourcePickerScreenState extends ConsumerState<SourcePickerScreen> {
                           style: TextStyle(color: AppColors.textMuted),
                         ),
                       )
-                    : GridView.builder(
+                    : SectionContainer(
+                        sectionId: 'source_picker_grid',
+                        focusCoordinator: _sectionFocusCoordinator,
+                        child: GridView.builder(
                         padding: const EdgeInsets.fromLTRB(
                           AppLayout.tvHorizontalInset,
                           8,
@@ -440,6 +450,7 @@ class _SourcePickerScreenState extends ConsumerState<SourcePickerScreen> {
                             ),
                           );
                         },
+                        ),
                       ),
           ),
           Padding(

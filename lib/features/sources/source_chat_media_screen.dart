@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/focus/section_focus_coordinator.dart';
+import '../../core/layout/section_container.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/oxplayer_button.dart';
 import '../../data/models/user_chat_dtos.dart';
@@ -39,6 +41,8 @@ class _SourceChatMediaScreenState extends ConsumerState<SourceChatMediaScreen> {
   int? _focusedIndex;
   int? _overlayIndex;
   final ScrollController _scroll = ScrollController();
+  final SectionFocusCoordinator _sectionFocusCoordinator =
+      SectionFocusCoordinator();
 
   List<SourceChatMediaRow> _items = const [];
   bool _loading = true;
@@ -82,6 +86,7 @@ class _SourceChatMediaScreenState extends ConsumerState<SourceChatMediaScreen> {
 
   @override
   void dispose() {
+    _sectionFocusCoordinator.dispose();
     for (final n in _focusNodes) {
       n.dispose();
     }
@@ -215,7 +220,10 @@ class _SourceChatMediaScreenState extends ConsumerState<SourceChatMediaScreen> {
     return Column(
       children: [
         Expanded(
-          child: GridView.builder(
+          child: SectionContainer(
+            sectionId: 'source_chat_media_grid',
+            focusCoordinator: _sectionFocusCoordinator,
+            child: GridView.builder(
             controller: _scroll,
             padding: const EdgeInsets.fromLTRB(
               AppLayout.tvHorizontalInset,
@@ -283,6 +291,7 @@ class _SourceChatMediaScreenState extends ConsumerState<SourceChatMediaScreen> {
                 ),
               );
             },
+            ),
           ),
         ),
         if (_hasMore)
