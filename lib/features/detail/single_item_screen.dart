@@ -142,9 +142,15 @@ class SingleItemArgs {
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 class SingleItemScreen extends ConsumerStatefulWidget {
-  const SingleItemScreen({super.key, required this.globalId});
+  const SingleItemScreen({
+    super.key,
+    required this.globalId,
+    this.preloadedAggregate,
+  });
 
   final String globalId;
+  /// When set (e.g. Telegram source chat tile), skips library/explore API fetch.
+  final AppMediaAggregate? preloadedAggregate;
 
   @override
   ConsumerState<SingleItemScreen> createState() => _SingleItemScreenState();
@@ -168,7 +174,13 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
   void initState() {
     super.initState();
     FocusManager.instance.addListener(_onDetailFocusHighlight);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    final pre = widget.preloadedAggregate;
+    if (pre != null) {
+      _aggregate = pre;
+      _loading = false;
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    }
   }
 
   void _onDetailFocusHighlight() {

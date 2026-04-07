@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'data/models/app_media.dart';
 import 'features/detail/single_item_screen.dart';
+import 'features/sources/source_chat_media_screen.dart';
+import 'features/sources/source_picker_screen.dart';
 import 'features/gate/membership_gate_shell.dart';
 import 'features/explore/explore_screen.dart';
 import 'features/home/home_screen.dart';
@@ -52,6 +55,40 @@ final goRouterProvider = Provider<GoRouter>((ref) {
             builder: (context, state) {
               final kind = state.pathParameters['kind'] ?? '';
               return LibraryCategoryScreen(kind: kind);
+            },
+          ),
+          GoRoute(
+            path: '/sources/picker',
+            builder: (context, state) => const SourcePickerScreen(),
+          ),
+          GoRoute(
+            path: '/sources/chat/:telegramChatId',
+            builder: (context, state) {
+              final raw = state.pathParameters['telegramChatId'] ?? '';
+              final id = int.tryParse(raw) ?? 0;
+              final title = state.uri.queryParameters['title'] ?? 'Chat';
+              final lastMsg = state.uri.queryParameters['lastMsg'];
+              return SourceChatMediaScreen(
+                telegramChatId: id,
+                chatTitle: title,
+                lastIndexedMessageId:
+                    (lastMsg != null && lastMsg.isNotEmpty) ? lastMsg : null,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/telegram-item',
+            builder: (context, state) {
+              final extra = state.extra as AppMediaAggregate?;
+              if (extra == null) {
+                return const Scaffold(
+                  body: Center(child: Text('Missing item.')),
+                );
+              }
+              return SingleItemScreen(
+                globalId: extra.media.id,
+                preloadedAggregate: extra,
+              );
             },
           ),
           GoRoute(

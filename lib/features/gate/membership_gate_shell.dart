@@ -108,9 +108,9 @@ class _MembershipGateShellState extends ConsumerState<MembershipGateShell> {
     }
 
     if (_running) {
-      return LayoutProbe(
+      return const LayoutProbe(
         label: 'gate_running',
-        child: const Scaffold(
+        child: Scaffold(
           body: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,

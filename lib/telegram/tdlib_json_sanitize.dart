@@ -317,8 +317,9 @@ void _patchDraftMessage(Map<String, dynamic> d) {
 
 /// TDLib 1.8+ may omit [disable_web_page_preview]; [InputMessageText.fromJson] requires bools.
 void _patchInputMessageText(Map<String, dynamic> m) {
-  if (m['disable_web_page_preview'] == null)
+  if (m['disable_web_page_preview'] == null) {
     m['disable_web_page_preview'] = false;
+  }
   if (m['clear_draft'] == null) m['clear_draft'] = false;
 }
 
@@ -512,8 +513,9 @@ void _patchUserFullInfo(Map<String, dynamic> m) {
     if (m[k] == null) m[k] = false;
   }
   if (m['group_in_common_count'] == null) m['group_in_common_count'] = 0;
-  if (m['premium_gift_options'] == null)
+  if (m['premium_gift_options'] == null) {
     m['premium_gift_options'] = <dynamic>[];
+  }
 }
 
 void _patchUser(Map<String, dynamic> u) {
@@ -615,8 +617,9 @@ void _patchPoll(Map<String, dynamic> p) {
     p['options'] = <dynamic>[];
   }
   if (p['is_anonymous'] == null) p['is_anonymous'] = true;
-  if (p['allows_multiple_answers'] == null)
+  if (p['allows_multiple_answers'] == null) {
     p['allows_multiple_answers'] = false;
+  }
   if (p['is_closed'] == null) p['is_closed'] = false;
   if (p['total_voter_count'] == null) p['total_voter_count'] = 0;
 }
