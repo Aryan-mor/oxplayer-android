@@ -10,8 +10,8 @@ import 'package:tdlib/td_api.dart' as td;
 import '../core/debug/app_debug_log.dart';
 import '../core/storage/storage_headroom.dart';
 import '../player/telegram_range_playback.dart';
-import '../telegram/media_file_locator_resolver.dart';
-import '../telegram/tdlib_facade.dart';
+import '../infrastructure/telegram/media_file_locator_resolver.dart';
+import '../infrastructure/telegram/tdlib_facade.dart';
 
 void _dmglog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.download);

@@ -72,7 +72,9 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
   # isar_generator 3.1.x requires build ^2.x; build_runner 2.9+ pulls build ^4 (incompatible).
-  build_runner: ">=2.4.13 <2.9.0"
+  build_runner: ^2.13.1
+  drift_dev: ^2.32.1
+  json_serializable: ^6.13.1
 
 flutter:
   uses-material-design: true

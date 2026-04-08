@@ -1,4 +1,4 @@
-import '../../data/models/app_media.dart';
+import '../../models/app_media.dart';
 
 class DetailHeaderVm {
   const DetailHeaderVm({

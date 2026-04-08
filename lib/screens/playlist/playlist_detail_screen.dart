@@ -11,7 +11,7 @@ import '../../utils/provider_extensions.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/desktop_app_bar.dart';
 import '../../focus/dpad_navigator.dart';
-import '../../focus/input_mode_tracker.dart';
+import '../../core/focus/input_mode_tracker.dart';
 import '../../focus/key_event_utils.dart';
 import 'playlist_item_card.dart';
 import '../../i18n/strings.g.dart';
@@ -625,4 +625,5 @@ class _PlaylistDetailScreenState extends BaseMediaListDetailScreen<PlaylistDetai
     );
   }
 }
+
 

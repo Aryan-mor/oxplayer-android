@@ -11,6 +11,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'screens/main_screen.dart';
 import 'screens/auth_screen.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' as riverpod;
+import 'app.dart';
 import 'services/storage_service.dart';
 import 'services/macos_window_service.dart';
 import 'services/fullscreen_state_manager.dart';
@@ -47,7 +49,8 @@ import 'database/app_database.dart';
 import 'utils/app_logger.dart';
 import 'utils/orientation_helper.dart';
 import 'i18n/strings.g.dart';
-import 'focus/input_mode_tracker.dart';
+import 'bootstrap.dart';
+import 'core/focus/input_mode_tracker.dart';
 import 'focus/key_event_utils.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'utils/navigation_transitions.dart';
@@ -100,6 +103,8 @@ Future<void> main() async {
 }
 
 Future<void> _bootstrapApp() async {
+  await bootstrap();
+
   // Initialize settings first to get saved locale
   final settings = await SettingsService.getInstance();
   final savedLocale = settings.getAppLocale();
@@ -172,7 +177,88 @@ Future<void> _bootstrapApp() async {
   // Register bundled shader licenses
   _registerShaderLicenses();
 
-  runApp(const MainApp());
+  runApp(const riverpod.ProviderScope(child: _LegacyProviderScope(child: OxplayerApp())));
+}
+
+class _LegacyProviderScope extends StatelessWidget {
+  final Widget child;
+
+  const _LegacyProviderScope({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        Provider<AppDatabase>(
+          create: (_) => AppDatabase(),
+          dispose: (_, db) => db.close(),
+        ),
+        Provider<MultiServerManager>(
+          create: (_) => MultiServerManager(),
+          dispose: (_, manager) => manager.dispose(),
+        ),
+        Provider<DataAggregationService>(
+          create: (context) => DataAggregationService(context.read<MultiServerManager>()),
+        ),
+        Provider<DownloadManagerService>(
+          create: (context) => DownloadManagerService(
+            database: context.read<AppDatabase>(),
+            storageService: DownloadStorageService.instance,
+          ),
+          dispose: (_, service) => service.dispose(),
+        ),
+        ChangeNotifierProvider<OfflineWatchSyncService>(
+          create: (context) => OfflineWatchSyncService(
+            database: context.read<AppDatabase>(),
+            serverManager: context.read<MultiServerManager>(),
+          ),
+        ),
+        ChangeNotifierProvider<MultiServerProvider>(
+          create: (context) => MultiServerProvider(
+            context.read<MultiServerManager>(),
+            context.read<DataAggregationService>(),
+          ),
+        ),
+        ChangeNotifierProvider<OfflineModeProvider>(
+          create: (context) {
+            final provider = OfflineModeProvider(context.read<MultiServerManager>());
+            unawaited(provider.initialize());
+            return provider;
+          },
+        ),
+        ChangeNotifierProvider<UserProfileProvider>(create: (_) => UserProfileProvider()),
+        ChangeNotifierProvider<ThemeProvider>(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider<SettingsProvider>(create: (_) => SettingsProvider()),
+        ChangeNotifierProvider<HiddenLibrariesProvider>(create: (_) => HiddenLibrariesProvider()),
+        ChangeNotifierProvider<LibrariesProvider>(create: (_) => LibrariesProvider()),
+        ChangeNotifierProvider<PlaybackStateProvider>(create: (_) => PlaybackStateProvider()),
+        ChangeNotifierProvider<CompanionRemoteProvider>(create: (_) => CompanionRemoteProvider()),
+        ChangeNotifierProvider<ShaderProvider>(create: (_) => ShaderProvider()),
+        ChangeNotifierProvider<WatchTogetherProvider>(create: (_) => WatchTogetherProvider()),
+        ChangeNotifierProvider<DownloadProvider>(
+          create: (context) {
+            final provider = DownloadProvider(downloadManager: context.read<DownloadManagerService>());
+            final syncService = context.read<OfflineWatchSyncService>();
+            syncService.onWatchStatesRefreshed = () {
+              unawaited(provider.refreshMetadataFromCache());
+            };
+            return provider;
+          },
+        ),
+        ChangeNotifierProvider<OfflineWatchProvider>(
+          create: (context) {
+            final syncService = context.read<OfflineWatchSyncService>();
+            syncService.startConnectivityMonitoring(context.read<OfflineModeProvider>());
+            return OfflineWatchProvider(
+              syncService: syncService,
+              downloadProvider: context.read<DownloadProvider>(),
+            );
+          },
+        ),
+      ],
+      child: child,
+    );
+  }
 }
 
 Breadcrumb? _beforeBreadcrumb(Breadcrumb? breadcrumb, Hint _) {
@@ -287,460 +373,5 @@ void _registerShaderLicenses() {
   });
 }
 
-// Global RouteObserver for tracking navigation
-final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
 
-class MainApp extends StatefulWidget {
-  const MainApp({super.key});
-
-  @override
-  State<MainApp> createState() => _MainAppState();
-}
-
-class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
-  // Initialize multi-server infrastructure
-  late final MultiServerManager _serverManager;
-  late final DataAggregationService _aggregationService;
-  late final AppDatabase _appDatabase;
-  late final DownloadManagerService _downloadManager;
-  late final OfflineWatchSyncService _offlineWatchSyncService;
-  late final AppLifecycleListener _appLifecycleListener;
-
-  /// Last time server health probes ran from a resume event (cooldown for desktop)
-  DateTime _lastResumeProbe = DateTime(0);
-
-  /// Periodic memory check timer for desktop platforms
-  Timer? _memoryCheckTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-
-    // On desktop, periodically check RSS and evict image cache if too high
-    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-      _memoryCheckTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-        final rss = ProcessInfo.currentRss;
-        if (rss > 1536 * 1024 * 1024) { // 1.5GB
-          appLogger.w('RSS high ($rss bytes), evicting image caches');
-          _evictImageCaches();
-        }
-      });
-    }
-
-    _serverManager = MultiServerManager();
-    _aggregationService = DataAggregationService(_serverManager);
-    _appDatabase = AppDatabase();
-
-    // Initialize API cache with database
-    PlexApiCache.initialize(_appDatabase);
-
-    _downloadManager = DownloadManagerService(database: _appDatabase, storageService: DownloadStorageService.instance);
-    _downloadManager.recoveryFuture = _downloadManager.recoverInterruptedDownloads();
-
-    _offlineWatchSyncService = OfflineWatchSyncService(database: _appDatabase, serverManager: _serverManager);
-
-    _appLifecycleListener = AppLifecycleListener(
-      onExitRequested: () async {
-        await _appDatabase.close();
-        return AppExitResponse.exit;
-      },
-    );
-
-    // Start in-app review session tracking
-    InAppReviewService.instance.startSession();
-  }
-
-  @override
-  void dispose() {
-    _memoryCheckTimer?.cancel();
-    _appLifecycleListener.dispose();
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didHaveMemoryPressure() {
-    super.didHaveMemoryPressure();
-    appLogger.w('System memory pressure, evicting image caches');
-    _evictImageCaches();
-  }
-
-  void _evictImageCaches() {
-    PaintingBinding.instance.imageCache.clear();
-    PaintingBinding.instance.imageCache.clearLiveImages();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.resumed:
-        // App came back to foreground - trigger sync check and start new session
-        _offlineWatchSyncService.onAppResumed();
-        InAppReviewService.instance.startSession();
-        // Re-probe servers — mobile OS may have dropped TCP connections during doze/sleep.
-        // On desktop, resumed fires on every window focus (alt-tab), so apply a cooldown
-        // to avoid piling up network probes from rapid alt-tabbing.
-        final now = DateTime.now();
-        final cooldown = (Platform.isIOS || Platform.isAndroid)
-            ? const Duration(seconds: 10)
-            : const Duration(minutes: 2);
-        if (now.difference(_lastResumeProbe) >= cooldown) {
-          _lastResumeProbe = now;
-          _serverManager.checkServerHealth();
-          _serverManager.reconnectOfflineServers();
-        }
-      case AppLifecycleState.paused:
-      case AppLifecycleState.detached:
-        // Database is session-scoped and must survive suspend/resume.
-        // Closing here would kill the Drift isolate channel while services
-        // (sync, downloads, cache) still hold references to the executor.
-        // SQLite WAL mode handles process death; desktop uses onExitRequested.
-        InAppReviewService.instance.endSession();
-        if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-          if (ProcessInfo.currentRss > 1024 * 1024 * 1024) { // 1GB
-            _evictImageCaches();
-          }
-        }
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.hidden:
-        // Transitional states - don't trigger session events
-        break;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (context) => MultiServerProvider(_serverManager, _aggregationService)),
-        // Offline mode provider - depends on MultiServerProvider
-        ChangeNotifierProxyProvider<MultiServerProvider, OfflineModeProvider>(
-          create: (_) {
-            final provider = OfflineModeProvider(_serverManager);
-            provider.initialize(); // Initialize immediately so statusStream listener is ready
-            return provider;
-          },
-          update: (_, multiServerProvider, previous) {
-            final provider = previous ?? OfflineModeProvider(_serverManager);
-            provider.initialize(); // Idempotent - safe to call again
-            return provider;
-          },
-        ),
-        // Download provider
-        ChangeNotifierProvider(create: (context) => DownloadProvider(downloadManager: _downloadManager)),
-        // Offline watch sync service
-        ChangeNotifierProvider<OfflineWatchSyncService>(
-          create: (context) {
-            final offlineModeProvider = context.read<OfflineModeProvider>();
-            final downloadProvider = context.read<DownloadProvider>();
-
-            // Wire up callback to refresh download provider after watch state sync
-            _offlineWatchSyncService.onWatchStatesRefreshed = () {
-              downloadProvider.refreshMetadataFromCache();
-            };
-
-            _offlineWatchSyncService.startConnectivityMonitoring(offlineModeProvider);
-            return _offlineWatchSyncService;
-          },
-        ),
-        // Offline watch provider - depends on sync service and download provider
-        ChangeNotifierProxyProvider2<OfflineWatchSyncService, DownloadProvider, OfflineWatchProvider>(
-          create: (context) => OfflineWatchProvider(
-            syncService: _offlineWatchSyncService,
-            downloadProvider: context.read<DownloadProvider>(),
-          ),
-          update: (_, syncService, downloadProvider, previous) {
-            return previous ?? OfflineWatchProvider(syncService: syncService, downloadProvider: downloadProvider);
-          },
-        ),
-        // Existing providers
-        ChangeNotifierProvider(create: (context) => UserProfileProvider()),
-        ChangeNotifierProvider(create: (context) => ThemeProvider()),
-        ChangeNotifierProvider(create: (context) => SettingsProvider(), lazy: true),
-        ChangeNotifierProvider(create: (context) => HiddenLibrariesProvider(), lazy: true),
-        ChangeNotifierProvider(create: (context) => LibrariesProvider()),
-        ChangeNotifierProvider(create: (context) => PlaybackStateProvider()),
-        ChangeNotifierProvider(create: (context) => WatchTogetherProvider()),
-        ChangeNotifierProvider(create: (context) => CompanionRemoteProvider()),
-        ChangeNotifierProvider(create: (context) => ShaderProvider()),
-      ],
-      child: Consumer<ThemeProvider>(
-        builder: (context, themeProvider, child) {
-          return TranslationProvider(
-            child: InputModeTracker(
-              child: MaterialApp(
-                title: t.app.title,
-                debugShowCheckedModeBanner: false,
-                theme: themeProvider.lightTheme,
-                darkTheme: themeProvider.darkTheme,
-                themeMode: themeProvider.materialThemeMode,
-                navigatorObservers: [routeObserver, BackKeySuppressorObserver()],
-                home: const OrientationAwareSetup(),
-                builder: (context, child) => ScaffoldMessenger(
-                  key: rootScaffoldMessengerKey,
-                  child: Scaffold(
-                    backgroundColor: Colors.transparent,
-                    body: child,
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class OrientationAwareSetup extends StatefulWidget {
-  const OrientationAwareSetup({super.key});
-
-  @override
-  State<OrientationAwareSetup> createState() => _OrientationAwareSetupState();
-}
-
-class _OrientationAwareSetupState extends State<OrientationAwareSetup> {
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _setOrientationPreferences();
-  }
-
-  void _setOrientationPreferences() {
-    OrientationHelper.restoreDefaultOrientations(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return const SetupScreen();
-  }
-}
-
-class SetupScreen extends StatefulWidget {
-  const SetupScreen({super.key});
-
-  @override
-  State<SetupScreen> createState() => _SetupScreenState();
-}
-
-class _SetupScreenState extends State<SetupScreen> {
-  String _statusMessage = '';
-
-  // Per-server connection status: serverId -> (name, connected?)
-  final Map<String, (String name, bool? connected)> _serverStatus = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSavedCredentials();
-  }
-
-  void _setStatus(String message) {
-    if (mounted) setState(() => _statusMessage = message);
-  }
-
-  Future<void> _loadSavedCredentials() async {
-    _setStatus(t.common.checkingNetwork);
-
-    final storage = await StorageService.getInstance();
-    final registry = ServerRegistry(storage);
-
-    // Check network connectivity early to fast-path airplane mode.
-    // Timeout guards against connectivity_plus hanging on some Android TV devices after force-close.
-    bool hasNetwork;
-    Sentry.addBreadcrumb(Breadcrumb(message: 'Checking network connectivity', category: 'setup'));
-    try {
-      final connectivityResult = await Connectivity().checkConnectivity().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => [ConnectivityResult.other],
-      );
-      hasNetwork = !connectivityResult.contains(ConnectivityResult.none);
-    } catch (e) {
-      // connectivity_plus throws DBusServiceUnknownException on Linux without NetworkManager
-      hasNetwork = true;
-    }
-
-    Sentry.addBreadcrumb(Breadcrumb(message: 'Network check done: hasNetwork=$hasNetwork', category: 'setup'));
-
-    if (hasNetwork) {
-      _setStatus(t.common.refreshingServers);
-
-      // Refresh servers from API to get updated connection info (IPs may change).
-      // If the stored token is invalid (e.g. after removing a Plex profile PIN),
-      // redirect to AuthScreen so the user can re-authenticate.
-      final refreshResult = await registry.refreshServersFromApi();
-      if (refreshResult == ServerRefreshResult.authError) {
-        await storage.clearCredentials();
-        if (mounted) {
-          Navigator.pushReplacement(context, fadeRoute(const AuthScreen()));
-        }
-        return;
-      }
-    }
-
-    _setStatus(t.common.loadingServers);
-
-    // Load all configured servers
-    final servers = await registry.getServers();
-
-    if (servers.isEmpty) {
-      if (mounted) {
-        Navigator.pushReplacement(context, fadeRoute(const AuthScreen()));
-      }
-      return;
-    }
-
-    if (!mounted) return;
-
-    // No network — skip connection attempts and go straight to offline mode
-    if (!hasNetwork) {
-      _setStatus(t.common.startingOfflineMode);
-      await context.read<DownloadProvider>().ensureInitialized();
-      if (!mounted) return;
-      Navigator.pushReplacement(context, fadeRoute(const MainScreen(isOfflineMode: true)));
-      return;
-    }
-
-    Sentry.addBreadcrumb(Breadcrumb(message: 'Connecting to ${servers.length} server(s)', category: 'setup'));
-    _setStatus(t.common.connectingToServers);
-
-    // Populate per-server status for splash display
-    if (mounted) {
-      setState(() {
-        for (final server in servers) {
-          _serverStatus[server.clientIdentifier] = (server.name, null);
-        }
-      });
-    }
-
-    try {
-      final result = await ServerConnectionOrchestrator.connectAndInitialize(
-        servers: servers,
-        multiServerProvider: context.read<MultiServerProvider>(),
-        librariesProvider: context.read<LibrariesProvider>(),
-        syncService: context.read<OfflineWatchSyncService>(),
-        clientIdentifier: storage.getClientIdentifier(),
-        onServerStatus: (serverId, success) {
-          if (mounted) {
-            setState(() {
-              final existing = _serverStatus[serverId];
-              if (existing != null) {
-                _serverStatus[serverId] = (existing.$1, success);
-              }
-            });
-          }
-        },
-      );
-
-      if (!mounted) return;
-
-      if (result.hasConnections && result.firstClient != null) {
-        // Resume any downloads that were interrupted by app kill
-        final downloadProvider = context.read<DownloadProvider>();
-        downloadProvider.ensureInitialized().then((_) {
-          downloadProvider.resumeQueuedDownloads(result.firstClient!);
-        });
-
-        Navigator.pushReplacement(context, fadeRoute(MainScreen(client: result.firstClient!)));
-      } else {
-        _setStatus(t.common.startingOfflineMode);
-        await context.read<DownloadProvider>().ensureInitialized();
-        if (!mounted) return;
-        Navigator.pushReplacement(context, fadeRoute(const MainScreen(isOfflineMode: true)));
-      }
-    } catch (e, stackTrace) {
-      appLogger.e('Error during multi-server connection', error: e, stackTrace: stackTrace);
-
-      if (mounted) {
-        _setStatus(t.common.startingOfflineMode);
-        await context.read<DownloadProvider>().ensureInitialized();
-        if (!mounted) return;
-        Navigator.pushReplacement(context, fadeRoute(const MainScreen(isOfflineMode: true)));
-      }
-    }
-  }
-
-  Widget _buildStatusText(BuildContext context) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 200),
-      child: Text(
-        _statusMessage,
-        key: ValueKey(_statusMessage),
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildServerStatusList(BuildContext context) {
-    if (_serverStatus.isEmpty) return const SizedBox.shrink();
-    final textTheme = Theme.of(context).textTheme;
-    final dimColor = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5);
-    const coralColor = Color(0xFFE5A00D);
-    const successColor = Color(0xFF4CAF50);
-    const failColor = Color(0xFFEF5350);
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: _serverStatus.entries.map((entry) {
-        final (name, connected) = entry.value;
-        final Widget statusIcon;
-        if (connected == null) {
-          statusIcon = const SizedBox(
-            width: 12, height: 12,
-            child: CircularProgressIndicator(strokeWidth: 1.5, color: coralColor),
-          );
-        } else if (connected) {
-          statusIcon = const Icon(Icons.check_circle, size: 14, color: successColor);
-        } else {
-          statusIcon = const Icon(Icons.cancel, size: 14, color: failColor);
-        }
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              statusIcon,
-              const SizedBox(width: 8),
-              Text(name, style: textTheme.bodySmall?.copyWith(color: dimColor)),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const coralColor = Color(0xFFE5A00D);
-    return ColoredBox(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: Stack(
-        children: [
-          Center(child: Image.asset('assets/icon.png', width: 144, height: 144)),
-          Positioned(
-            left: 0, right: 0,
-            bottom: MediaQuery.of(context).size.height * 0.5 - 170,
-            child: _buildStatusText(context),
-          ),
-          Positioned(
-            left: 0, right: 0,
-            top: MediaQuery.of(context).size.height * 0.5 + 180,
-            child: Center(
-              child: _serverStatus.isEmpty
-                  ? const SizedBox(
-                      width: 20, height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: coralColor),
-                    )
-                  : _buildServerStatusList(context),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 

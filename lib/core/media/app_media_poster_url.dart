@@ -1,4 +1,4 @@
-import '../../data/models/app_media.dart';
+import '../../models/app_media.dart';
 
 /// Remote poster URL for [AppMedia] when the API supplied [AppMedia.posterPath].
 /// Returns null when there is no remote artwork (caller may use a local file fallback).

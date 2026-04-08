@@ -15,7 +15,7 @@ import '../widgets/rating_bottom_sheet.dart';
 import '../focus/dpad_navigator.dart';
 import '../focus/focusable_wrapper.dart';
 import '../focus/key_event_utils.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import '../widgets/focus_builders.dart';
 import '../widgets/media_card.dart';
 import '../i18n/strings.g.dart';
@@ -2841,5 +2841,6 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     return Symbols.play_arrow_rounded; // Default play icon
   }
 }
+
 
 

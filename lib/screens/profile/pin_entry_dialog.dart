@@ -6,7 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import '../../focus/dpad_navigator.dart';
 import '../../focus/focus_theme.dart';
-import '../../focus/input_mode_tracker.dart';
+import '../../core/focus/input_mode_tracker.dart';
 import '../../focus/key_event_utils.dart';
 import '../../focus/focusable_button.dart';
 import '../../i18n/strings.g.dart';
@@ -526,4 +526,5 @@ Future<String?> showPinEntryDialog(BuildContext context, String userName, {Strin
     builder: (context) => PinEntryDialog(userName: userName, errorMessage: errorMessage),
   );
 }
+
 

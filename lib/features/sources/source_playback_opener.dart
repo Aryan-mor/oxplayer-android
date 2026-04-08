@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/debug/app_debug_log.dart';
 import '../../core/storage/storage_headroom.dart';
-import '../../data/models/app_media.dart';
+import '../../models/app_media.dart';
 import '../../download/download_manager.dart';
 import '../../player/internal_player.dart';
 import '../../player/telegram_range_playback.dart';

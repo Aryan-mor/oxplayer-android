@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/gamepad_service.dart';
+import '../../services/gamepad_service.dart';
 import '../screens/main_screen.dart';
 import '../widgets/focusable_tab_chip.dart';
 

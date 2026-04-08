@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../focus/focus_theme.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 
 /// Shared builders for focusable widgets to reduce code duplication.
 ///
@@ -145,4 +145,5 @@ class FocusBuilders {
     );
   }
 }
+
 

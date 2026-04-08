@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import '../focus/key_event_utils.dart';
 import 'desktop_app_bar.dart';
 
@@ -108,4 +108,5 @@ class _FocusedScrollScaffoldState extends State<FocusedScrollScaffold> {
     );
   }
 }
+
 

@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/focus/dpad_navigator.dart';
 import '../../core/focus/locked_hub_controller.dart';
-import '../../data/models/app_media.dart';
+import '../../models/app_media.dart';
 import '../../providers.dart';
 import '../../widgets/hub_section.dart';
 import 'home_presentation_adapter.dart';

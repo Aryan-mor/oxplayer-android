@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../focus/dpad_navigator.dart';
 import '../../focus/focus_theme.dart';
-import '../../focus/input_mode_tracker.dart';
+import '../../core/focus/input_mode_tracker.dart';
 import '../../focus/key_event_utils.dart';
 import '../../i18n/strings.g.dart';
 import '../../models/livetv_channel.dart';
@@ -344,4 +344,5 @@ class _ReorderFavoritesSheetState extends State<ReorderFavoritesSheet> {
     );
   }
 }
+
 

@@ -8,11 +8,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/focus/section_focus_coordinator.dart';
 import '../../core/layout/section_container.dart';
+import '../../core/layout/app_layout.dart';
 import '../../core/sources/sources_local_cache.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/theme/oxplayer_button.dart';
+import '../../widgets/oxplayer_button.dart';
 import '../../providers.dart';
-import '../../telegram/source_chats_tdlib.dart';
+import '../../infrastructure/telegram/source_chats_tdlib.dart';
 
 class SourcePickerScreen extends ConsumerStatefulWidget {
   const SourcePickerScreen({super.key});

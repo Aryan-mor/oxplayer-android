@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dpad_navigator.dart';
 import 'focus_theme.dart';
-import 'input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import 'key_event_utils.dart';
 
 /// A wrapper widget that makes its child focusable with D-pad navigation support.
@@ -463,4 +463,5 @@ class _FocusableWrapperState extends State<FocusableWrapper> with SingleTickerPr
     return result;
   }
 }
+
 

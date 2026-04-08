@@ -15,8 +15,8 @@ import 'package:tdlib/src/tdapi/tdapi.dart' show convertToObject;
 import 'package:tdlib/src/tdclient/platform_interfaces/td_native_plugin_real.dart'
     as td_native;
 
-import '../core/config/app_config.dart';
-import '../core/debug/app_debug_log.dart';
+import '../../core/config/app_config.dart';
+import '../../core/debug/app_debug_log.dart';
 import 'tdlib_facade.dart';
 import 'tdlib_json_sanitize.dart';
 

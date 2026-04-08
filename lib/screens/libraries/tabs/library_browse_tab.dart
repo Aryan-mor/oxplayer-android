@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import '../../../focus/dpad_navigator.dart';
-import '../../../focus/input_mode_tracker.dart';
+import '../../../core/focus/input_mode_tracker.dart';
 import '../../../../services/plex_client.dart';
 import '../../../models/plex_metadata.dart';
 import '../../../models/plex_filter.dart';
@@ -1560,4 +1560,5 @@ class _SkeletonCard extends StatelessWidget {
     );
   }
 }
+
 

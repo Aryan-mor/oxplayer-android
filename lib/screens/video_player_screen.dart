@@ -65,7 +65,7 @@ import '../utils/video_player_navigation.dart';
 import '../widgets/overlay_sheet.dart';
 
 import '../focus/focusable_button.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import '../focus/dpad_navigator.dart';
 import '../focus/key_event_utils.dart';
 import '../i18n/strings.g.dart';
@@ -3281,4 +3281,5 @@ String _getHwdecValue(bool enabled) {
     return 'auto'; // Windows, Linux
   }
 }
+
 

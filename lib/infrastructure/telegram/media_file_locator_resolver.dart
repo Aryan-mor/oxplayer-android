@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:tdlib/td_api.dart' as td;
 
-import '../core/debug/app_debug_log.dart';
+import '../../core/debug/app_debug_log.dart';
 import 'tdlib_facade.dart';
 
 void _locatorLog(String m) =>

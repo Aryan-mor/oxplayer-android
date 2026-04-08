@@ -7,10 +7,10 @@ import 'package:tdlib/td_api.dart' as td;
 
 import '../../core/config/app_config.dart';
 import '../../core/debug/app_debug_log.dart';
-import '../../telegram/tdlib_facade.dart';
-import '../models/app_media.dart';
-import '../models/series_episode_guide.dart';
-import '../models/user_chat_dtos.dart';
+import '../../infrastructure/telegram/tdlib_facade.dart';
+import '../../models/app_media.dart';
+import '../../models/series_episode_guide.dart';
+import '../../models/user_chat_dtos.dart';
 
 void _apilog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.api);

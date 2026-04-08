@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../focus/focusable_action_bar.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import '../mixins/grid_focus_node_mixin.dart';
 import '../providers/settings_provider.dart';
 import '../services/settings_service.dart' show ViewMode;
@@ -200,4 +200,5 @@ mixin FocusableDetailScreenMixin<T extends StatefulWidget> on State<T>, GridFocu
     );
   }
 }
+
 

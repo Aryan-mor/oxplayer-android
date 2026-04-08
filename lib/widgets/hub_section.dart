@@ -2,12 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../models/app_media.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 import '../focus/dpad_navigator.dart';
 import '../focus/focus_theme.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import '../focus/key_event_utils.dart';
 import '../providers/settings_provider.dart';
 import '../services/settings_service.dart' show EpisodePosterMode;
@@ -39,6 +40,15 @@ class HubSection extends StatefulWidget {
   final bool isInContinueWatching;
   final bool showServerName;
 
+  /// Optional section ID used with the new Oxplayer VOD architecture.
+  final String? sectionId;
+
+  /// Optional coordinator for focus management in the new architecture.
+  final dynamic coordinator; // SectionFocusCoordinator - kept dynamic for backward compat
+
+  /// Optional tap callback used in the new Oxplayer VOD architecture.
+  final void Function(dynamic item)? onItemTap;
+
   /// Callback for vertical navigation (up/down). Return true if handled.
   final bool Function(bool isUp)? onVerticalNavigation;
 
@@ -57,11 +67,14 @@ class HubSection extends StatefulWidget {
   const HubSection({
     super.key,
     required this.hub,
-    required this.icon,
+    this.icon = Icons.movie_rounded,
     this.onRefresh,
     this.onRemoveFromContinueWatching,
     this.isInContinueWatching = false,
     this.showServerName = false,
+    this.sectionId,
+    this.coordinator,
+    this.onItemTap,
     this.onVerticalNavigation,
     this.onBack,
     this.onNavigateUp,
@@ -515,4 +528,33 @@ class HubSectionState extends State<HubSection> {
     _hubFocusNode.requestFocus();
   }
 }
+
+class HubSectionData {
+  final String hubKey;
+  final String title;
+  final List<AppMediaAggregate> items;
+  final bool more;
+
+  const HubSectionData({
+    required this.hubKey,
+    required this.title,
+    required this.items,
+    this.more = false,
+  });
+}
+
+class HubFocusMemory {
+  static final Map<String, int> _memory = {};
+
+  static void setForHub(String hubKey, int index) {
+    _memory[hubKey] = index;
+  }
+
+  static int getForHub(String hubKey, int totalCount) {
+    final index = _memory[hubKey] ?? 0;
+    if (totalCount == 0) return 0;
+    return index.clamp(0, totalCount - 1);
+  }
+}
+
 

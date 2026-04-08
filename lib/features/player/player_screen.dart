@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/theme/app_colors.dart';
 import 'player_route_args.dart';
 
 /// Internal player stub — streaming is removed from MVP v1.

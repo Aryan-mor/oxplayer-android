@@ -19,12 +19,16 @@ import 'providers.dart';
 /// where the FAB sits *next to* the navigator subtree.
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
+/// Global route observer for tracking page transitions.
+final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
+
 /// [AuthNotifier] is hydrated from SharedPreferences; [OxplayerApp] also merges
 /// an existing [TelegramSession] row from Isar into the same notifier on startup.
 final goRouterProvider = Provider<GoRouter>((ref) {
   final auth = ref.read(authNotifierProvider);
   return GoRouter(
     navigatorKey: rootNavigatorKey,
+    observers: [routeObserver],
     initialLocation: '/welcome',
     refreshListenable: auth,
     redirect: (context, state) {

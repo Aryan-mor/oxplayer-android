@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/oxplayer_button.dart';
-import '../../data/models/user_chat_dtos.dart';
+import '../../models/user_chat_dtos.dart';
 import '../../providers.dart';
 
 /// Home "Sources" tab: indexed chats from the API, four buckets, opens chat media grid.

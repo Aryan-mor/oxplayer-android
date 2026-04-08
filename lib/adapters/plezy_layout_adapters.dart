@@ -1,4 +1,4 @@
-import '../data/models/app_media.dart';
+import '../models/app_media.dart';
 import '../widgets/hub_section.dart';
 
 class PlezyLayoutAdapters {

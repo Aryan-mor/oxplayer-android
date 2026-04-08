@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 
 import '../focus/focusable_chip_mixin.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import 'focus_builders.dart';
 
 /// A focusable filter chip that shows a color change when focused.
@@ -119,4 +119,5 @@ class _FocusableFilterChipState extends State<FocusableFilterChip> with Focusabl
 
   IconData get icon => widget.icon;
 }
+
 

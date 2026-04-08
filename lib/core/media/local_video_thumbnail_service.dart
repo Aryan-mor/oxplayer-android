@@ -9,9 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
 import 'package:video_thumbnail/video_thumbnail.dart';
 
-import '../../data/models/app_media.dart';
-import '../../telegram/media_file_locator_resolver.dart';
-import '../../telegram/tdlib_facade.dart';
+import '../../models/app_media.dart';
+import '../../infrastructure/telegram/media_file_locator_resolver.dart';
+import '../../infrastructure/telegram/tdlib_facade.dart';
 import '../debug/app_debug_log.dart';
 
 const _kNegKey = 'local_video_thumb_negative_v1';

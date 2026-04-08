@@ -4,15 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../adapters/plezy_layout_adapters.dart';
 import '../../core/focus/dpad_navigator.dart';
 import '../../core/focus/input_mode_tracker.dart';
-import '../../core/focus/section_focus_coordinator.dart';
 import '../../core/focus/focusable_wrapper.dart';
-import '../../data/api/oxplayer_api_service.dart';
-import '../../data/models/app_media.dart';
+import '../../infrastructure/api/oxplayer_api_service.dart';
+import '../../models/app_media.dart';
 import '../../providers.dart';
-import '../../widgets/hub_section.dart';
 import 'explore_presentation_adapter.dart';
 
 class ExploreScreen extends ConsumerStatefulWidget {
@@ -25,7 +22,6 @@ class ExploreScreen extends ConsumerStatefulWidget {
 }
 
 class _ExploreScreenState extends ConsumerState<ExploreScreen> {
-  final SectionFocusCoordinator _coordinator = SectionFocusCoordinator();
   final TextEditingController _search = TextEditingController();
   final FocusNode _searchFocus = FocusNode(debugLabel: 'explore_search');
   final FocusNode _firstResultFocus = FocusNode(debugLabel: 'explore_first_result');
@@ -54,7 +50,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _coordinator.dispose();
     _search.dispose();
     _searchFocus.dispose();
     _firstResultFocus.dispose();
@@ -268,21 +263,88 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         child: Text('No titles'),
       );
     }
-    return HubSection(
-      sectionId: sectionId,
-      coordinator: _coordinator,
-      hub: PlezyLayoutAdapters.toHubSection(hubKey: sectionId, title: title, items: items),
-      onItemTap: (item) {
-        if (sectionId == 'explore_tmdb') {
-          final idx = items.indexOf(item);
-          if (idx >= 0 && idx < _tmdb.length) {
-            unawaited(_ensureTmdbAndOpen(_tmdb[idx].tmdbKey, context));
-          }
-          return;
-        }
-        context.push('/item/${Uri.encodeComponent(item.media.id)}');
-      },
-      onNavigateToSidebar: () => FocusScope.of(context).unfocus(),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            title,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 220,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: items.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return SizedBox(
+                width: 150,
+                child: FocusableWrapper(
+                  onSelect: () {
+                    if (sectionId == 'explore_tmdb') {
+                      if (index < _tmdb.length) {
+                        unawaited(_ensureTmdbAndOpen(_tmdb[index].tmdbKey, context));
+                      }
+                      return;
+                    }
+                    unawaited(context.push('/item/${Uri.encodeComponent(item.media.id)}'));
+                  },
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      if (sectionId == 'explore_tmdb') {
+                        if (index < _tmdb.length) {
+                          unawaited(_ensureTmdbAndOpen(_tmdb[index].tmdbKey, context));
+                        }
+                        return;
+                      }
+                      unawaited(context.push('/item/${Uri.encodeComponent(item.media.id)}'));
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Theme.of(context).colorScheme.outline),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Container(
+                                width: double.infinity,
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.movie_creation_outlined),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              item.media.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -359,4 +421,5 @@ extension on _ExploreScreenState {
     } catch (_) {}
   }
 }
+
 

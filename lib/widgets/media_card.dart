@@ -5,7 +5,7 @@ import 'package:oxplayer/utils/content_utils.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import '../models/plex_metadata.dart';
 import '../models/plex_playlist.dart';
 import '../providers/download_provider.dart';
@@ -1040,5 +1040,6 @@ class SkeletonLoader extends StatelessWidget {
     );
   }
 }
+
 
 

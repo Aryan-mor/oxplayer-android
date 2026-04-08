@@ -1,5 +1,5 @@
-import '../../data/models/app_media.dart';
-import '../../data/models/user_chat_dtos.dart';
+import '../../models/app_media.dart';
+import '../../models/user_chat_dtos.dart';
 
 AppMediaAggregate sourceChatRowToAggregate({
   required String telegramChatId,

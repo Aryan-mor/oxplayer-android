@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../utils/platform_detector.dart';
-import '../services/gamepad_service.dart';
+import '../../services/gamepad_service.dart';
 import 'dpad_navigator.dart';
-import '../services/companion_remote/companion_remote_receiver.dart';
+import '../../services/companion_remote/companion_remote_receiver.dart';
 
 /// Tracks whether the user is navigating via keyboard/d-pad or pointer (mouse/touch).
 ///
 /// Focus effects should only be shown during keyboard navigation.
-enum InputMode { keyboard, pointer }
+enum InputMode { none, keyboard, pointer }
 
 /// Provides input mode tracking to descendant widgets.
 ///
@@ -27,11 +27,25 @@ enum InputMode { keyboard, pointer }
 class InputModeTracker extends StatefulWidget {
   final Widget child;
 
+  static InputMode _debugOverride = InputMode.none;
+  static bool _debugMode = false;
+
   const InputModeTracker({super.key, required this.child});
+
+  static bool toggleDebugMode(bool val) {
+    _debugMode = val;
+    _debugOverride = val ? InputMode.keyboard : InputMode.none;
+    return _debugMode;
+  }
+
+  static InputMode get debugOverrideMode => _debugOverride;
 
   /// Get the current input mode.
   static InputMode of(BuildContext context) {
     final provider = context.dependOnInheritedWidgetOfExactType<_InputModeProvider>();
+    if (_debugMode && _debugOverride != InputMode.none) {
+      return _debugOverride;
+    }
     return provider?.mode ?? InputMode.pointer;
   }
 

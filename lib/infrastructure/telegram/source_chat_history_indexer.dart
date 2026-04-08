@@ -1,7 +1,7 @@
 import 'package:tdlib/td_api.dart' as td;
 
-import '../core/config/app_config.dart';
-import '../data/api/oxplayer_api_service.dart';
+import '../../core/config/app_config.dart';
+import '../api/oxplayer_api_service.dart';
 import 'tdlib_facade.dart';
 
 Map<String, dynamic>? _ingestItemFromMessage(td.Message m) {

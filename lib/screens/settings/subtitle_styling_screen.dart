@@ -3,7 +3,7 @@ import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:flex_color_picker/flex_color_picker.dart';
 import '../../focus/focusable_button.dart';
-import '../../focus/input_mode_tracker.dart';
+import '../../core/focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
 import '../../services/settings_service.dart';
 import '../../widgets/focused_scroll_scaffold.dart';
@@ -311,4 +311,5 @@ class _SubtitleStylingScreenState extends State<SubtitleStylingScreen> {
     );
   }
 }
+
 

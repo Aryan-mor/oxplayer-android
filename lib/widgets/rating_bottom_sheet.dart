@@ -4,7 +4,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/overlay_sheet.dart';
 import '../focus/dpad_navigator.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import '../i18n/strings.g.dart';
 
 class RatingBottomSheet extends StatefulWidget {
@@ -185,4 +185,5 @@ class _RatingBottomSheetState extends State<RatingBottomSheet> {
     });
   }
 }
+
 

@@ -10,7 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../focus/focus_memory_tracker.dart';
-import '../../focus/input_mode_tracker.dart';
+import '../../core/focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
 import '../main_screen.dart';
 import '../../mixins/refreshable.dart';
@@ -703,4 +703,5 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
     );
   }
 }
+
 

@@ -7,11 +7,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/focus/section_focus_coordinator.dart';
 import '../../core/layout/section_container.dart';
+import '../../core/layout/app_layout.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/theme/oxplayer_button.dart';
-import '../../data/models/user_chat_dtos.dart';
+import '../../widgets/oxplayer_button.dart';
+import '../../models/user_chat_dtos.dart';
 import '../../providers.dart';
-import '../../telegram/source_chat_history_indexer.dart';
+import '../../infrastructure/telegram/source_chat_history_indexer.dart';
 import '../../widgets/library_media_poster.dart';
 import '../../widgets/telegram_file_playback_actions.dart';
 import 'source_chat_media_models.dart';

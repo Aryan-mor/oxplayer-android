@@ -15,7 +15,7 @@ import '../utils/dialogs.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/platform_detector.dart';
 import '../utils/video_player_navigation.dart';
-import '../main.dart';
+import '../router.dart';
 import '../mixins/refreshable.dart';
 import '../widgets/overlay_sheet.dart';
 import '../mixins/tab_visibility_aware.dart';
@@ -425,7 +425,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
       _setupCompanionRemote();
     }
 
-    routeObserver.subscribe(this, ModalRoute.of(context) as PageRoute);
+    routeObserver.subscribe(this, ModalRoute.of(context)!);
   }
 
   void _setupCompanionRemote() {

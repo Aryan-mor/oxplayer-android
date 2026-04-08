@@ -8,7 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/debug/app_debug_log.dart';
 import 'core/debug/debug_log_fab.dart';
 import 'core/debug/layout_probe.dart';
-import 'core/theme/app_theme.dart';
+import 'core/theme/app_colors.dart';
+import 'core/theme/mono_theme.dart';
 import 'core/oxplayer/oxplayer_screen_wrapper.dart';
 import 'core/update/app_update_layer.dart';
 import 'core/update/app_update_notifier.dart';
@@ -91,8 +92,8 @@ class _OxplayerAppState extends ConsumerState<OxplayerApp> {
     final router = ref.watch(goRouterProvider);
     return MaterialApp.router(
       title: 'OXPlayer',
-      theme: buildOxplayerTheme(),
-      darkTheme: buildOxplayerTheme(),
+      theme: monoTheme(dark: false),
+      darkTheme: monoTheme(dark: true),
       themeMode: ThemeMode.dark,
       routerConfig: router,
       builder: (context, child) {

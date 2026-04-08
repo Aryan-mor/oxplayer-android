@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../debug/app_debug_log.dart';
-import '../theme/app_theme.dart';
-import '../theme/oxplayer_button.dart';
+import '../theme/app_colors.dart';
+import '../../widgets/oxplayer_button.dart';
 import 'android_package_info.dart';
 import 'apk_downloader.dart';
 import 'apk_installer.dart';

@@ -2,15 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../adapters/plezy_layout_adapters.dart';
 import '../../core/focus/focusable_wrapper.dart';
 import '../../core/focus/input_mode_tracker.dart';
-import '../../core/focus/section_focus_coordinator.dart';
-import '../../data/models/app_media.dart';
+import '../../models/app_media.dart';
 import '../../providers.dart';
 import '../../widgets/library_media_poster.dart';
 import '../../widgets/telegram_file_playback_actions.dart';
-import '../../widgets/hub_section.dart';
 import 'detail_presentation_adapter.dart';
 
 class SingleItemScreen extends ConsumerStatefulWidget {
@@ -30,7 +27,6 @@ class SingleItemScreen extends ConsumerStatefulWidget {
 class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _backFocus = FocusNode(debugLabel: 'detail_back');
-  final SectionFocusCoordinator _playbackCoordinator = SectionFocusCoordinator();
   AppMediaAggregate? _aggregate;
   bool _loading = true;
   String _error = '';
@@ -50,7 +46,6 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
   void dispose() {
     _scrollController.dispose();
     _backFocus.dispose();
-    _playbackCoordinator.dispose();
     super.dispose();
   }
 
@@ -215,51 +210,69 @@ class _SingleItemScreenState extends ConsumerState<SingleItemScreen> {
         child: Text('No files indexed yet.'),
       );
     }
-    final items = aggregate.files
-        .map(
-          (f) => AppMediaAggregate(
-            media: AppMedia(
-              id: f.id,
-              title: (f.quality ?? '').isNotEmpty ? f.quality! : 'Default quality',
-              type: aggregate.media.type,
-              createdAt: DateTime.now(),
-              updatedAt: DateTime.now(),
-            ),
-            files: [f],
-          ),
-        )
-        .toList();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 6, 0, 0),
-      child: HubSection(
-        sectionId: 'detail_playback',
-        coordinator: _playbackCoordinator,
-        hub: PlezyLayoutAdapters.toHubSection(
-          hubKey: 'detail_playback',
-          title: 'Playback',
-          items: items,
-        ),
-        onItemTap: (item) {
-          final file = aggregate.files.firstWhere((f) => f.id == item.media.id);
-          showModalBottomSheet<void>(
-            context: context,
-            builder: (_) {
-              return SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: TelegramFilePlaybackActions(
-                    media: aggregate.media,
-                    file: file,
-                    downloadGlobalId: file.id,
-                    downloadTitle: aggregate.media.title,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Playback', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: aggregate.files.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final file = aggregate.files[index];
+              final label = (file.quality ?? '').isNotEmpty ? file.quality! : 'Default quality';
+              return FocusableWrapper(
+                onSelect: () => _openPlaybackActions(context, aggregate, file),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => _openPlaybackActions(context, aggregate, file),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Theme.of(context).colorScheme.outline),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.play_circle_outline_rounded),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
+                        const Icon(Icons.chevron_right_rounded),
+                      ],
+                    ),
                   ),
                 ),
               );
             },
-          );
-        },
+          ),
+        ],
       ),
     );
   }
+
+  void _openPlaybackActions(BuildContext context, AppMediaAggregate aggregate, AppMediaFile file) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (_) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: TelegramFilePlaybackActions(
+              media: aggregate.media,
+              file: file,
+              downloadGlobalId: file.id,
+              downloadTitle: aggregate.media.title,
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
+
 

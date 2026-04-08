@@ -1,4 +1,4 @@
-import '../../data/api/oxplayer_api_service.dart';
+import '../../infrastructure/api/oxplayer_api_service.dart';
 
 class ExploreSectionVm {
   const ExploreSectionVm({

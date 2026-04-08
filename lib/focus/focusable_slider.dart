@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'dpad_navigator.dart';
 import 'focusable_wrapper.dart';
-import 'input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 
 /// A D-pad friendly slider that uses LEFT/RIGHT to adjust value
 /// and lets UP/DOWN pass through for focus traversal.
@@ -84,4 +84,5 @@ class _FocusableSliderState extends State<FocusableSlider> {
     );
   }
 }
+
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../focus/focusable_chip_mixin.dart';
-import '../focus/input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 import 'focus_builders.dart';
 
 /// A focusable tab chip that shows a color change when focused or selected.
@@ -140,4 +140,5 @@ class _FocusableTabChipState extends State<FocusableTabChip> with FocusableChipS
     );
   }
 }
+
 

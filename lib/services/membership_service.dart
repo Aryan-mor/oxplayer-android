@@ -2,7 +2,7 @@ import 'package:tdlib/td_api.dart' as td;
 
 import '../core/config/app_config.dart';
 import '../core/debug/app_debug_log.dart';
-import '../telegram/tdlib_facade.dart';
+import '../infrastructure/telegram/tdlib_facade.dart';
 
 void _memLog(String m) =>
     AppDebugLog.instance.log(m, category: AppDebugLogCategory.membership);

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'focus_theme.dart';
 import 'focusable_wrapper.dart';
-import 'input_mode_tracker.dart';
+import '../core/focus/input_mode_tracker.dart';
 
 /// A focusable button wrapper for D-pad navigation on TV.
 ///
@@ -93,4 +93,5 @@ class _FocusableButtonState extends State<FocusableButton> {
     );
   }
 }
+
 

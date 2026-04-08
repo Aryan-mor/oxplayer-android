@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/theme/app_theme.dart';
-import '../core/theme/oxplayer_button.dart';
+import '../widgets/oxplayer_button.dart';
 import '../core/update/android_package_info.dart';
 import 'external_player.dart';
 

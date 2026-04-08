@@ -12,10 +12,8 @@ import '../../services/update_service.dart';
 import '../../utils/app_logger.dart';
 import '../../focus/focusable_button.dart';
 import '../../utils/dialogs.dart';
-import '../../utils/provider_extensions.dart';
 import '../../utils/platform_detector.dart';
 import '../../utils/video_player_navigation.dart';
-import '../../main.dart';
 import '../../mixins/refreshable.dart';
 import '../../widgets/overlay_sheet.dart';
 import '../../mixins/tab_visibility_aware.dart';
@@ -46,6 +44,7 @@ import '../../screens/settings/settings_screen.dart';
 import '../../screens/profile/profile_switch_screen.dart';
 import '../../services/watch_next_service.dart';
 import '../../watch_together/watch_together.dart';
+import '../../router.dart';
 
 /// Provides access to the main screen's focus control.
 class HomeScreenFocusScope extends InheritedWidget {
@@ -106,6 +105,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
 
   OfflineModeProvider? _offlineModeProvider;
   MultiServerProvider? _multiServerProvider;
+  UserProfileProvider? _userProfileProvider;
+  WatchTogetherProvider? _watchTogetherProvider;
+  CompanionRemoteProvider? _companionRemoteProvider;
   bool _lastHasLiveTv = false;
 
   /// Whether a reconnection attempt is in progress
@@ -153,24 +155,32 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
     }
     _screens = _buildScreens(_isOffline);
 
-    // Set up Watch Together callbacks immediately (must be synchronous to catch early messages)
+    // Set up Watch Next deep links immediately.
+    // Watch Together callbacks are attached in didChangeDependencies once provider scope is available.
     if (!_isOffline) {
-      _setupWatchTogetherCallback();
       _setupWatchNextDeepLink();
     }
 
     // Set up data invalidation callback for profile switching (skip in offline mode)
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+
       if (!_isOffline) {
         // Initialize UserProfileProvider to ensure it's ready after sign-in
-        final userProfileProvider = context.userProfile;
+        final userProfileProvider = _userProfileProvider;
+        if (userProfileProvider == null) {
+          appLogger.w('UserProfileProvider not found; skipping profile initialization in HomeScreen');
+          return;
+        }
         await userProfileProvider.initialize();
+        if (!mounted) return;
 
         // Set up data invalidation callback for profile switching
         userProfileProvider.setDataInvalidationCallback(_invalidateAllScreens);
 
         // Ensure first login (or any unset profile state) requires explicit selection.
         await _promptForInitialProfileSelection(userProfileProvider);
+        if (!mounted) return;
       }
 
       // Focus content initially (replaces autofocus which caused focus stealing issues)
@@ -302,8 +312,13 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
 
   /// Set up the Watch Together navigation callback for guests
   void _setupWatchTogetherCallback() {
+    final watchTogether = _watchTogetherProvider;
+    if (watchTogether == null) {
+      appLogger.w('Could not set up Watch Together callback: WatchTogetherProvider not found in scope');
+      return;
+    }
+
     try {
-      final watchTogether = context.read<WatchTogetherProvider>();
       watchTogether.onMediaSwitched = (ratingKey, serverId, mediaTitle) async {
         appLogger.d('WatchTogether: Media switch received - navigating to $mediaTitle');
         await _navigateToWatchTogetherMedia(ratingKey, serverId);
@@ -399,6 +414,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
   void didChangeDependencies() {
     super.didChangeDependencies();
 
+    _userProfileProvider = context.read<UserProfileProvider?>();
+    _watchTogetherProvider = context.read<WatchTogetherProvider?>();
+    _companionRemoteProvider = context.read<CompanionRemoteProvider?>();
+
     // Listen for offline/online transitions to refresh navigation & screens
     // Note: We don't call _handleOfflineStatusChanged() immediately because
     // widget.isOfflineMode (from SetupScreen navigation) is authoritative for
@@ -412,11 +431,15 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
     }
 
     // Listen for Live TV / DVR availability changes
-    final multiServer = context.read<MultiServerProvider>();
-    if (multiServer != _multiServerProvider) {
+    final multiServer = context.read<MultiServerProvider?>();
+    if (multiServer != null && multiServer != _multiServerProvider) {
       _multiServerProvider?.removeListener(_handleLiveTvChanged);
       _multiServerProvider = multiServer;
       _multiServerProvider!.addListener(_handleLiveTvChanged);
+    }
+
+    if (!_isOffline) {
+      _setupWatchTogetherCallback();
     }
 
     // Wire up Companion Remote command routing (host devices only, once)
@@ -425,11 +448,15 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
       _setupCompanionRemote();
     }
 
-    routeObserver.subscribe(this, ModalRoute.of(context) as PageRoute);
+    routeObserver.subscribe(this, ModalRoute.of(context)!);
   }
 
   void _setupCompanionRemote() {
-    final companionRemote = context.read<CompanionRemoteProvider>();
+    final companionRemote = _companionRemoteProvider;
+    if (companionRemote == null) {
+      appLogger.w('CompanionRemoteProvider not found; companion remote setup skipped');
+      return;
+    }
     companionRemote.onCommandReceived = (command) {
       if (mounted) {
         CompanionRemoteReceiver.instance.handleCommand(command, context);
@@ -518,7 +545,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
     if (!settingsService.getRequireProfileSelectionOnOpen()) return;
     if (!mounted) return;
 
-    final userProfileProvider = context.read<UserProfileProvider>();
+    final userProfileProvider = _userProfileProvider ?? context.read<UserProfileProvider?>();
+    if (userProfileProvider == null) return;
     if (!userProfileProvider.hasMultipleUsers) return;
 
     _isShowingProfileSelection = true;
@@ -591,6 +619,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
   }
 
   void _handleOfflineStatusChanged() {
+    if (!mounted) return;
+
     final newOffline = _offlineModeProvider?.isOffline ?? widget.isOfflineMode;
 
     if (newOffline == _isOffline) return;
@@ -635,7 +665,11 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WindowListener
 
     // Ensure profile provider is initialized when coming back online
     if (!_isOffline) {
-      final userProfileProvider = context.userProfile;
+      final userProfileProvider = _userProfileProvider;
+      if (userProfileProvider == null) {
+        appLogger.w('UserProfileProvider not found; skipping online profile re-initialization');
+        return;
+      }
       userProfileProvider.initialize().then((_) {
         userProfileProvider.setDataInvalidationCallback(_invalidateAllScreens);
       });
