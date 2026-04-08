@@ -4,10 +4,10 @@ project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "oxplayer")
+set(BINARY_NAME "plezy")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "com.example.oxplayer")
+set(APPLICATION_ID "com.edde746.plezy")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -49,6 +49,17 @@ endfunction()
 # Flutter library and tool build rules.
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
+
+# Fetch simdutf for SIMD-accelerated UTF-8 validation.
+# mpv strings are not guaranteed to be valid UTF-8; invalid bytes sent through
+# Flutter's StandardMessageCodec cause FormatException crashes.
+include(FetchContent)
+FetchContent_Declare(
+  simdutf
+  URL https://github.com/simdutf/simdutf/releases/download/v6.4.2/singleheader.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(simdutf)
 
 # System-level dependencies.
 find_package(PkgConfig REQUIRED)
