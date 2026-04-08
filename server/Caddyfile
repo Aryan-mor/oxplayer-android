@@ -1,0 +1,7 @@
+ice.plezy.app {
+	reverse_proxy relay:8080
+}
+
+bugs.plezy.app {
+	reverse_proxy glitchtip:8000
+}
