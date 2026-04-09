@@ -112,7 +112,7 @@ def get_file_mappings() -> list[str]:
     """Get file mappings for fpm."""
     mappings = [
         f"{BUILD_DIR}/=/opt/plezy/",
-        f"{SCRIPT_DIR}/com.edde746.plezy.desktop=/usr/share/applications/com.edde746.plezy.desktop",
+        f"{SCRIPT_DIR}/de.aryanmo.oxplayer.desktop=/usr/share/applications/de.aryanmo.oxplayer.desktop",
         f"{SCRIPT_DIR}/plezy.sh=/usr/bin/plezy",
     ]
 

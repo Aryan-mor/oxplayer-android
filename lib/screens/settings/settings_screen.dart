@@ -57,6 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
   static const _kCheckForUpdates = 'check_for_updates';
   static const _kAbout = 'about';
   static const _kWatchTogetherRelay = 'watch_together_relay';
+  static const _kSimulateTvMode = 'simulate_tv_mode';
 
   KeyboardShortcutsService? _keyboardService;
   late final bool _keyboardShortcutsSupported = KeyboardShortcutsService.isPlatformSupported();
@@ -66,6 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
   bool _enableDebugLogging = false;
   bool _downloadOnWifiOnly = false;
   bool _videoPlayerNavigationEnabled = false;
+  bool _simulateTvMode = false;
   String? _customRelayUrl;
 
   // Update checking state
@@ -123,6 +125,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
       _downloadOnWifiOnly = _settingsService.getDownloadOnWifiOnly();
       _videoPlayerNavigationEnabled = _settingsService.getVideoPlayerNavigationEnabled();
       _customRelayUrl = _settingsService.getCustomRelayUrl();
+      _simulateTvMode = _settingsService.getSimulateTvMode();
       _isLoading = false;
     });
   }
@@ -371,6 +374,21 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
               showSnackBar(context, 'Blocking main thread...');
               final end = DateTime.now().add(const Duration(seconds: 10));
               while (DateTime.now().isBefore(end)) {}
+            },
+          ),
+        if (kDebugMode)
+          SwitchListTile(
+            focusNode: _focusTracker.get(_kSimulateTvMode),
+            secondary: const AppIcon(Symbols.tv_rounded, fill: 1),
+            title: const Text('Simulate TV Mode'),
+            subtitle: const Text('Force TV layout on tablet/phone (restart required)'),
+            value: _simulateTvMode,
+            onChanged: (value) async {
+              setState(() => _simulateTvMode = value);
+              await _settingsService.setSimulateTvMode(value);
+              TvDetectionService.setTvOverride(value);
+              if (!mounted) return;
+              showSnackBar(context, value ? 'TV mode enabled — restart to apply fully' : 'TV mode disabled — restart to apply fully');
             },
           ),
       ],

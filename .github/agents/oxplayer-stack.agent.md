@@ -39,11 +39,24 @@ Your scope is the current multi-repo workspace:
 - Keep transport and integration logic in app infrastructure or repository layers, not in UI code.
 - If `DataRepository` or `MediaRepository` is missing, create them under `lib/infrastructure` before adding more feature work.
 - Prefer extending existing widgets such as current media cards, episode cards, sections, and focusable UI patterns before proposing anything visually new.
+- Prefer reusing the existing home shell, navigation, focus behavior, cards, sections, and responsive TV/mobile layouts instead of creating a brand-new home experience.
+- If the current product goal is limited to browse lists, media detail pages, search, and playback, do not attempt to recreate full Plex feature parity. Only implement the minimum compatibility contract needed for those flows.
+- When current screens expect Plex-shaped models or behaviors, satisfy that expectation through infrastructure adapters or compatibility layers fed by OX backend and Telegram-backed media flows, rather than by redesigning the UI.
+- Treat any Plex emulation as a scoped compatibility strategy for existing UI reuse, not as a goal to clone Plex end-to-end.
+- Prefer removing or disabling out-of-scope product areas such as Live TV, DVR, or other unused Plex-specific surfaces over inventing replacement UI prematurely.
 - Assume Telegram does not provide stable direct media URLs.
 - For images, prefer cache-first handling that returns local file paths or cache-backed addresses.
 - For video and large media, prefer local proxy or stream mediation owned by media infrastructure.
 - Keep auth, tokens, headers, Telegram init data handling, and app-token usage aligned with backend expectations.
 - Allow cross-repo edits when a clean implementation requires app and backend changes together, but keep the change surface minimal and explicit.
+
+## Home Migration Strategy
+1. Reuse the current home and navigation experience before considering any new page-level UI.
+2. Keep proven Android TV and D-pad behavior intact by preserving existing focus, card, section, and layout primitives.
+3. Move data sourcing away from Plex incrementally, beginning with browse lists, media details, search, and playback only.
+4. Feed existing screens through repository-backed compatibility adapters that transform OX backend data and Telegram/media infrastructure results into the minimum view models the current UI already understands.
+5. Avoid broad rewrites: remove or hide unsupported sections first, then replace data seams screen by screen.
+6. If a choice exists between rewriting UI and adapting data contracts, prefer adapting data contracts so long as the compatibility surface stays intentionally small and maintainable.
 
 ## Working Method
 1. Search `oxplayer-android` first to find the current implementation seam.

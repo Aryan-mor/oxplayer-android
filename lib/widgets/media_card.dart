@@ -132,6 +132,14 @@ class MediaCardState extends State<MediaCard> {
       return;
     }
 
+    if (widget.item is PlexMetadata) {
+      final metadata = widget.item as PlexMetadata;
+      if (metadata.key?.startsWith('ox-preview:') == true) {
+        showAppSnackBar(context, 'Home preview is visible. Detail/playback is not wired yet.');
+        return;
+      }
+    }
+
     final result = await navigateToMediaItem(
       context,
       widget.item,
@@ -665,13 +673,17 @@ Widget _buildPosterImage(
         item.shouldHideSpoiler &&
         episodePosterMode == EpisodePosterMode.episodeThumbnail;
     posterUrl = item.posterThumb(mode: episodePosterMode, mixedHubContext: mixedHubContext);
+    final canUseDirectExternalImage = posterUrl != null &&
+        (posterUrl.startsWith('http://') || posterUrl.startsWith('https://')) &&
+        item.serverId == null;
+    final imageClient = canUseDirectExternalImage || isOffline || item.serverId == null ? null : context.getClientWithFallback(item.serverId);
 
     Widget image;
 
     // Use thumb image type for 16:9 content (episodes, or movies in mixed hubs)
     if (item.usesWideAspectRatio(episodePosterMode, mixedHubContext: mixedHubContext)) {
       image = PlexOptimizedImage.thumb(
-        client: isOffline ? null : context.getClientWithFallback(item.serverId),
+        client: imageClient,
         imagePath: posterUrl,
         width: knownWidth ?? double.infinity,
         height: knownHeight ?? double.infinity,
@@ -680,7 +692,7 @@ Widget _buildPosterImage(
       );
     } else {
       image = PlexOptimizedImage.poster(
-        client: isOffline ? null : context.getClientWithFallback(item.serverId),
+        client: imageClient,
         imagePath: posterUrl,
         width: knownWidth ?? double.infinity,
         height: knownHeight ?? double.infinity,
@@ -885,6 +897,7 @@ class _MediaCardHelpers {
 /// Whether this metadata item has a clickable title that navigates somewhere.
 /// Episodes/seasons navigate to their parent show; movies navigate to their detail page.
 bool _hasClickableTitle(PlexMetadata metadata) {
+  if (metadata.key?.startsWith('ox-preview:') == true) return false;
   if (metadata.isEpisode) return metadata.grandparentRatingKey != null;
   if (metadata.isSeason) return metadata.parentRatingKey != null;
   if (metadata.isMovie) return true;

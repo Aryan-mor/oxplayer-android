@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../focus/focusable_button.dart';
 import '../i18n/strings.g.dart';
 import '../infrastructure/data_repository.dart';
-import '../infrastructure/telegram/tdlib_facade.dart';
+import '../providers/auth_notifier.dart';
+import '../services/auth_debug_service.dart';
 import '../theme/mono_tokens.dart';
 import '../utils/platform_detector.dart';
 
@@ -20,19 +22,23 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  static const String _sessionStatusMessage = 'Securing session with OXPlayer API...';
+  static const String _sessionStatusMessage = 'Signing into OXPlayer Cloud...';
+  static const String _telegramWaitingMessage = 'Waiting for Telegram authentication...';
 
   DataRepository? _dataRepository;
-  Future<TelegramAuthResult>? _loginAttempt;
+  Future<void>? _authorizationAttempt;
+  bool _backendBridgeCompleted = false;
 
   StreamSubscription<String?>? _qrSub;
   StreamSubscription<TdlibCloudPasswordChallenge?>? _cloudPasswordSub;
   StreamSubscription<TdlibSmsCodeChallenge?>? _smsCodeSub;
   StreamSubscription<bool>? _waitPhoneSub;
   StreamSubscription<String?>? _functionErrorSub;
+  StreamSubscription<int>? _authenticatedUserSub;
 
   bool _isInitializing = true;
   bool _isAuthenticating = false;
+  bool _isCloudSigningIn = false;
   bool _passwordSubmitting = false;
   bool _phoneSubmitting = false;
   bool _codeSubmitting = false;
@@ -69,6 +75,13 @@ class _AuthScreenState extends State<AuthScreen> {
       setState(() {
         _isInitializing = false;
       });
+
+      AuthDebugService.instance.reset();
+      final restored = await repository.tryRestoreExistingTelegramSession();
+      if (restored) {
+        await _resumeExistingTelegramSession(skipAuthorization: true);
+        return;
+      }
 
       if (PlatformDetector.isTV()) {
         await _startQrAuthentication();
@@ -113,40 +126,118 @@ class _AuthScreenState extends State<AuthScreen> {
 
     _functionErrorSub = repository.functionErrors.listen((message) {
       if (!mounted || message == null || message.isEmpty) return;
+      authDebugError('Telegram error: $message');
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    });
+
+    _authenticatedUserSub = repository.authenticatedUserId.listen((_) {
+      authDebugSuccess('Telegram user authenticated.', completeStatus: AuthDebugStatusKey.telegramAuthenticated);
+      unawaited(_bridgeTelegramSessionToBackend());
     });
   }
 
-  Future<void> _ensureLoginAttemptStarted() async {
+  Future<void> _ensureAuthorizationStarted() async {
     final repository = _dataRepository;
-    if (repository == null || _loginAttempt != null) return;
+    if (repository == null || _authorizationAttempt != null) return;
 
     setState(() {
       _isAuthenticating = true;
+      _isCloudSigningIn = false;
       _errorMessage = null;
       _successMessage = null;
     });
 
-    final attempt = repository.loginWithTelegram();
-    _loginAttempt = attempt;
+    AuthDebugService.instance.reset();
+    authDebugInfo('Starting a fresh Telegram sign-in flow...');
 
-    attempt.then((_) {
+    final attempt = repository.beginTelegramAuthorization();
+    _authorizationAttempt = attempt;
+
+    attempt.catchError((Object error) {
       if (!mounted) return;
       setState(() {
         _isAuthenticating = false;
-        _loginAttempt = null;
-        _successMessage = 'Signed in with Telegram.';
-        _errorMessage = null;
-      });
-    }).catchError((Object error) {
-      if (!mounted) return;
-      setState(() {
-        _isAuthenticating = false;
-        _loginAttempt = null;
+        _isCloudSigningIn = false;
+        _authorizationAttempt = null;
         _successMessage = null;
         _errorMessage = error.toString();
       });
     });
+  }
+
+  Future<void> _bridgeTelegramSessionToBackend() async {
+    final repository = _dataRepository;
+    if (repository == null || _isCloudSigningIn || _backendBridgeCompleted) return;
+
+    final authNotifier = context.read<AuthNotifier>();
+    if (authNotifier.apiAccessToken != null && authNotifier.apiAccessToken!.isNotEmpty) {
+      _backendBridgeCompleted = true;
+      return;
+    }
+
+    setState(() {
+      _isCloudSigningIn = true;
+      _isAuthenticating = true;
+      _errorMessage = null;
+    });
+    authDebugInfo('Starting OXPlayer backend auth bridge...');
+
+    try {
+      final result = await repository.authenticateWithTelegram();
+      if (!mounted) return;
+
+      await authNotifier.persistTelegramBackendSession(result);
+      authDebugSuccess('Backend session persisted and app auth state updated.');
+      _backendBridgeCompleted = true;
+
+      if (!mounted) return;
+      setState(() {
+        _isAuthenticating = false;
+        _isCloudSigningIn = false;
+        _authorizationAttempt = null;
+        _successMessage = 'Signed in with Telegram.';
+        _errorMessage = null;
+      });
+    } catch (error) {
+      authDebugError('Backend auth bridge failed: $error');
+      if (!mounted) return;
+      setState(() {
+        _isAuthenticating = false;
+        _isCloudSigningIn = false;
+        _authorizationAttempt = null;
+        _successMessage = null;
+        _errorMessage = error.toString();
+      });
+    }
+  }
+
+  Future<void> _resumeExistingTelegramSession({bool skipAuthorization = false}) async {
+    final repository = _dataRepository;
+    if (repository == null || _backendBridgeCompleted) return;
+
+    setState(() {
+      _isAuthenticating = true;
+      _isCloudSigningIn = false;
+      _errorMessage = null;
+      _successMessage = null;
+    });
+    authDebugInfo('Resuming previous Telegram session...');
+
+    try {
+      if (!skipAuthorization) {
+        await repository.beginTelegramAuthorization();
+      }
+      await _bridgeTelegramSessionToBackend();
+    } catch (error) {
+      authDebugError('Failed to resume previous Telegram session: $error');
+      if (!mounted) return;
+      setState(() {
+        _isAuthenticating = false;
+        _isCloudSigningIn = false;
+        _authorizationAttempt = null;
+        _errorMessage = error.toString();
+      });
+    }
   }
 
   Future<void> _startQrAuthentication() async {
@@ -160,14 +251,14 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      await _ensureLoginAttemptStarted();
-      await repository.waitForLoginMethodChoice();
+      await _ensureAuthorizationStarted();
       await repository.startQrLogin();
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _isAuthenticating = false;
-        _loginAttempt = null;
+        _isCloudSigningIn = false;
+        _authorizationAttempt = null;
         _errorMessage = error.toString();
       });
     }
@@ -183,7 +274,7 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      await _ensureLoginAttemptStarted();
+      await _ensureAuthorizationStarted();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -271,7 +362,9 @@ class _AuthScreenState extends State<AuthScreen> {
 
     setState(() {
       _isAuthenticating = false;
-      _loginAttempt = null;
+      _isCloudSigningIn = false;
+      _authorizationAttempt = null;
+      _backendBridgeCompleted = false;
       _errorMessage = null;
       _successMessage = null;
       _qrPayload = null;
@@ -291,36 +384,46 @@ class _AuthScreenState extends State<AuthScreen> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Text(
+          'Sign in with Telegram',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 16),
         if (isTV) ...[
           FocusableButton(
             autofocus: true,
             onPressed: _startQrAuthentication,
-            child: ElevatedButton(
+            child: ElevatedButton.icon(
               onPressed: _startQrAuthentication,
               style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-              child: const Text('Sign in with QR code'),
+              icon: const Icon(Icons.qr_code_2),
+              label: const Text('With QR code'),
             ),
           ),
           const SizedBox(height: 12),
           FocusableButton(
             onPressed: _startPhoneAuthentication,
-            child: OutlinedButton(
+            child: OutlinedButton.icon(
               onPressed: _startPhoneAuthentication,
               style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-              child: const Text('Sign in with phone number'),
+              icon: const Icon(Icons.phone_iphone),
+              label: const Text('With phone number'),
             ),
           ),
         ] else ...[
-          ElevatedButton(
+          ElevatedButton.icon(
             onPressed: _startQrAuthentication,
             style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-            child: const Text('Sign in with Telegram'),
+            icon: const Icon(Icons.qr_code_2),
+            label: const Text('With QR code'),
           ),
           const SizedBox(height: 12),
-          OutlinedButton(
+          OutlinedButton.icon(
             onPressed: _startPhoneAuthentication,
             style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-            child: const Text('Use phone number'),
+            icon: const Icon(Icons.phone_iphone),
+            label: const Text('With phone number'),
           ),
         ],
         if (_successMessage != null) ...[
@@ -511,15 +614,16 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _buildProgressState() {
-    return const Column(
+    final message = _isCloudSigningIn ? _sessionStatusMessage : _telegramWaitingMessage;
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        CircularProgressIndicator(),
-        SizedBox(height: 16),
+        const CircularProgressIndicator(),
+        const SizedBox(height: 16),
         Text(
-          _sessionStatusMessage,
+          message,
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.grey),
+          style: const TextStyle(color: Colors.grey),
         ),
       ],
     );
@@ -581,6 +685,7 @@ class _AuthScreenState extends State<AuthScreen> {
     unawaited(_smsCodeSub?.cancel());
     unawaited(_waitPhoneSub?.cancel());
     unawaited(_functionErrorSub?.cancel());
+    unawaited(_authenticatedUserSub?.cancel());
     unawaited(_dataRepository?.dispose());
     _passwordController.dispose();
     _phoneController.dispose();

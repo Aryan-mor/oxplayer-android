@@ -9,8 +9,10 @@ import 'package:window_manager/window_manager.dart';
 import 'package:provider/provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'screens/main_screen.dart';
-import 'screens/auth_screen.dart';
+import 'infrastructure/data_repository.dart';
+import 'providers/auth_notifier.dart';
 import 'services/storage_service.dart';
+import 'router.dart';
 import 'services/macos_window_service.dart';
 import 'services/fullscreen_state_manager.dart';
 import 'services/settings_service.dart';
@@ -51,7 +53,9 @@ import 'focus/key_event_utils.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'utils/navigation_transitions.dart';
 import 'utils/log_redaction_manager.dart';
+import 'utils/navigation_keys.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'widgets/auth_debug_fab.dart';
 
 const bool _enableSentry = bool.fromEnvironment('ENABLE_SENTRY', defaultValue: false);
 const String gitCommit = String.fromEnvironment('GIT_COMMIT');
@@ -141,6 +145,11 @@ Future<void> _bootstrapApp() async {
 
   // Wait for all parallel services to complete
   await Future.wait(futures);
+
+  // In debug builds: apply the TV-mode simulation override persisted in settings.
+  if (kDebugMode && settings.getSimulateTvMode()) {
+    TvDetectionService.setTvOverride(true);
+  }
 
   // Initialize logger level based on debug setting
   final debugEnabled = settings.getEnableDebugLogging();
@@ -459,6 +468,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         ),
         // Existing providers
         ChangeNotifierProvider(create: (context) => UserProfileProvider()),
+        ChangeNotifierProvider(create: (context) => AuthNotifier()),
         ChangeNotifierProvider(create: (context) => ThemeProvider()),
         ChangeNotifierProvider(create: (context) => SettingsProvider(), lazy: true),
         ChangeNotifierProvider(create: (context) => HiddenLibrariesProvider(), lazy: true),
@@ -475,16 +485,22 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
               child: MaterialApp(
                 title: t.app.title,
                 debugShowCheckedModeBanner: false,
+                navigatorKey: rootNavigatorKey,
                 theme: themeProvider.lightTheme,
                 darkTheme: themeProvider.darkTheme,
                 themeMode: themeProvider.materialThemeMode,
                 navigatorObservers: [routeObserver, BackKeySuppressorObserver()],
-                home: const OrientationAwareSetup(),
+                home: const AppRouter(),
                 builder: (context, child) => ScaffoldMessenger(
                   key: rootScaffoldMessengerKey,
                   child: Scaffold(
                     backgroundColor: Colors.transparent,
-                    body: child,
+                    body: Stack(
+                      children: [
+                        child ?? const SizedBox.shrink(),
+                        const AuthDebugFab(),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -548,6 +564,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
     final storage = await StorageService.getInstance();
     final registry = ServerRegistry(storage);
+    final authNotifier = context.read<AuthNotifier>();
 
     // Check network connectivity early to fast-path airplane mode.
     // Timeout guards against connectivity_plus hanging on some Android TV devices after force-close.
@@ -566,6 +583,44 @@ class _SetupScreenState extends State<SetupScreen> {
 
     Sentry.addBreadcrumb(Breadcrumb(message: 'Network check done: hasNetwork=$hasNetwork', category: 'setup'));
 
+    var oxBootstrapReady = false;
+    if (hasNetwork && authNotifier.apiAccessToken != null && authNotifier.apiAccessToken!.isNotEmpty) {
+      DataRepository? repository;
+      try {
+        _setStatus('Validating Telegram session...');
+        repository = await DataRepository.create();
+        final bootstrap = await repository.bootstrapConnectedSession(
+          requireTelegramSession:
+              authNotifier.hasTelegramSession && !authNotifier.telegramSessionValidatedInProcess,
+        );
+        oxBootstrapReady = true;
+        if (bootstrap.telegramReady) {
+          authNotifier.markTelegramSessionValidatedInProcess();
+        }
+        _setStatus(
+          bootstrap.telegramReady
+              ? 'Connected to Telegram and OXPlayer API.'
+            : 'Connected to server.',
+        );
+      } on OxBootstrapUnauthorized {
+        await authNotifier.clearSession();
+        if (mounted) {
+          Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+        }
+        return;
+      } on TdlibInteractiveLoginRequired {
+        await authNotifier.clearSession();
+        if (mounted) {
+          Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+        }
+        return;
+      } catch (e, stackTrace) {
+        appLogger.w('Failed to validate OX bootstrap session, continuing with offline fallback', error: e, stackTrace: stackTrace);
+      } finally {
+        await repository?.dispose();
+      }
+    }
+
     if (hasNetwork) {
       _setStatus(t.common.refreshingServers);
 
@@ -574,11 +629,18 @@ class _SetupScreenState extends State<SetupScreen> {
       // redirect to AuthScreen so the user can re-authenticate.
       final refreshResult = await registry.refreshServersFromApi();
       if (refreshResult == ServerRefreshResult.authError) {
-        await storage.clearCredentials();
-        if (mounted) {
-          Navigator.pushReplacement(context, fadeRoute(const AuthScreen()));
+        if (oxBootstrapReady) {
+          appLogger.w('Plex token rejected while OX bootstrap is valid; continuing without Plex server connections.');
+          await registry.clearAllServers();
+        } else {
+          await storage.clearCredentials();
+          if (mounted) {
+            await context.read<AuthNotifier>().clearSession();
+            if (!mounted) return;
+            Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -589,7 +651,23 @@ class _SetupScreenState extends State<SetupScreen> {
 
     if (servers.isEmpty) {
       if (mounted) {
-        Navigator.pushReplacement(context, fadeRoute(const AuthScreen()));
+        if (oxBootstrapReady) {
+          await context.read<DownloadProvider>().ensureInitialized();
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            fadeRoute(
+              const MainScreen(
+                isOfflineMode: true,
+                showReconnectAction: false,
+                offlineStatusLabel: 'Connected to server',
+                enableOxDiscoverFallback: true,
+              ),
+            ),
+          );
+        } else {
+          Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+        }
       }
       return;
     }
@@ -650,7 +728,19 @@ class _SetupScreenState extends State<SetupScreen> {
         _setStatus(t.common.startingOfflineMode);
         await context.read<DownloadProvider>().ensureInitialized();
         if (!mounted) return;
-        Navigator.pushReplacement(context, fadeRoute(const MainScreen(isOfflineMode: true)));
+        Navigator.pushReplacement(
+          context,
+          fadeRoute(
+            oxBootstrapReady
+                ? const MainScreen(
+                    isOfflineMode: true,
+                    showReconnectAction: false,
+                    offlineStatusLabel: 'Connected to server',
+                    enableOxDiscoverFallback: true,
+                  )
+                : const MainScreen(isOfflineMode: true),
+          ),
+        );
       }
     } catch (e, stackTrace) {
       appLogger.e('Error during multi-server connection', error: e, stackTrace: stackTrace);
@@ -659,7 +749,19 @@ class _SetupScreenState extends State<SetupScreen> {
         _setStatus(t.common.startingOfflineMode);
         await context.read<DownloadProvider>().ensureInitialized();
         if (!mounted) return;
-        Navigator.pushReplacement(context, fadeRoute(const MainScreen(isOfflineMode: true)));
+        Navigator.pushReplacement(
+          context,
+          fadeRoute(
+            oxBootstrapReady
+                ? const MainScreen(
+                    isOfflineMode: true,
+                    showReconnectAction: false,
+                    offlineStatusLabel: 'Connected to server',
+                    enableOxDiscoverFallback: true,
+                  )
+                : const MainScreen(isOfflineMode: true),
+          ),
+        );
       }
     }
   }

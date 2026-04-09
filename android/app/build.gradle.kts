@@ -69,7 +69,7 @@ val downloadLibdovi by tasks.registering {
 }
 
 android {
-    namespace = "com.edde746.plezy"
+    namespace = "de.aryanmo.oxplayer"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -83,7 +83,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.edde746.plezy"
+        applicationId = "de.aryanmo.oxplayer"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 25  // Fire OS 6.x (API 25); overrides libmpv-android's minSdk=26
@@ -130,7 +130,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Debug builds get a distinct app name and ID suffix so they can
+            // coexist alongside the production / release install on the same device.
+            applicationIdSuffix = ".debug"
+            resValue("string", "app_name", "OXPlayer Debug")
+        }
         release {
+            resValue("string", "app_name", "OXPlayer")
             // Only use release signing if key.properties exists (not in CI/CD)
             val keystorePropertiesFile = rootProject.file("key.properties")
             if (keystorePropertiesFile.exists()) {

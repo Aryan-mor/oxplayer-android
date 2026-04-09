@@ -112,6 +112,7 @@ class SettingsService extends BaseSharedPreferencesService {
   static const String _keyMatchRefreshRate = 'match_refresh_rate';
   static const String _keyMatchDynamicRange = 'match_dynamic_range';
   static const String _keyDisplaySwitchDelay = 'display_switch_delay';
+  static const String _keySimulateTvMode = 'debug_simulate_tv_mode';
 
   SettingsService._();
 
@@ -914,6 +915,15 @@ class SettingsService extends BaseSharedPreferencesService {
 
   String? getCustomRelayUrl() {
     return prefs.getString(_keyCustomRelayUrl);
+  }
+
+  // Debug: simulate TV mode on non-TV devices (debug builds only)
+  Future<void> setSimulateTvMode(bool value) async {
+    await prefs.setBool(_keySimulateTvMode, value);
+  }
+
+  bool getSimulateTvMode() {
+    return prefs.getBool(_keySimulateTvMode) ?? false;
   }
 
   // Download on WiFi Only

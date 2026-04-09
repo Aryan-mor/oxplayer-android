@@ -37,6 +37,19 @@ class TvDetectionService {
 
   /// Synchronous access after initialization (returns false if not initialized)
   static bool isTVSync() => _instance?._isTV ?? false;
+
+  /// Override the TV detection result at runtime (debug use only).
+  ///
+  /// Calling this with [value] = `true` makes the entire app behave as if it
+  /// is running on Android TV — side nav, D-pad focus, TV-optimised layouts.
+  /// Calling with `false` reverts to the real hardware result.
+  static void setTvOverride(bool value) {
+    if (_instance == null) {
+      _instance = TvDetectionService._();
+      _instance!._initialized = true;
+    }
+    _instance!._isTV = value;
+  }
 }
 
 /// Utility class for platform detection

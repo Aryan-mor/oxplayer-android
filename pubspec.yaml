@@ -62,6 +62,7 @@ dependencies:
       path: packages/flutter
       ref: build/fetch-native-zip
   dio_http2_adapter: ^2.7.0
+  video_thumbnail: ^0.5.6
   auto_updater:
     git:
       url: https://github.com/edde746/auto_updater
