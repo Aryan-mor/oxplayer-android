@@ -22,14 +22,14 @@ cask "plezy" do
                    sudo: false
   end
 
-  uninstall quit: "com.edde746.plezy"
+  uninstall quit: "de.aryanmo.oxplayer"
 
   zap trash: [
-    "~/Library/Application Support/com.edde746.plezy",
-    "~/Library/Caches/com.edde746.plezy",
-    "~/Library/HTTPStorages/com.edde746.plezy",
-    "~/Library/Preferences/com.edde746.plezy.plist",
-    "~/Library/Saved Application State/com.edde746.plezy.savedState",
-    "~/Library/WebKit/com.edde746.plezy",
+    "~/Library/Application Support/de.aryanmo.oxplayer",
+    "~/Library/Caches/de.aryanmo.oxplayer",
+    "~/Library/HTTPStorages/de.aryanmo.oxplayer",
+    "~/Library/Preferences/de.aryanmo.oxplayer.plist",
+    "~/Library/Saved Application State/de.aryanmo.oxplayer.savedState",
+    "~/Library/WebKit/de.aryanmo.oxplayer",
   ]
 end

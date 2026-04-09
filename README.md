@@ -9,12 +9,12 @@ A modern Plex client for desktop and mobile. Built with Flutter for native perfo
   <img src="assets/screenshots/macos-home.png" alt="Plezy macOS Home Screen" width="800" />
 </p>
 
-*More screenshots in the [screenshots folder](assets/screenshots/#readme)*
+_More screenshots in the [screenshots folder](assets/screenshots/#readme)_
 
 ## Download
 
 <a href='https://apps.apple.com/us/app/id6754315964'><img height='60' alt='Download on the App Store' src='./assets/app-store-badge.png'/></a>
-<a href='https://play.google.com/store/apps/details?id=com.edde746.plezy'><img height='60' alt='Get it on Google Play' src='./assets/play-store-badge.png'/></a>
+<a href='https://play.google.com/store/apps/details?id=de.aryanmo.oxplayer'><img height='60' alt='Get it on Google Play' src='./assets/play-store-badge.png'/></a>
 <a href='https://www.amazon.com/gp/product/B0GK65CVS1'><img height='60' alt='Available at the Amazon App Store' src='./assets/amazon-badge.png'/></a>
 
 - [Windows (x64, arm64)](https://github.com/edde746/plezy/releases/latest/download/plezy-windows-installer.exe)
@@ -38,16 +38,19 @@ A modern Plex client for desktop and mobile. Built with Flutter for native perfo
 ## Features
 
 ### 🔐 Authentication
+
 - Sign in with Plex
 - Automatic server discovery and smart connection selection
 - Persistent sessions with auto-login
 
 ### 📚 Media Browsing
+
 - Browse libraries with rich metadata
 - Advanced search across all media
 - Collections and playlists
 
 ### 🎬 Playback
+
 - Wide codec support (HEVC, AV1, VP9, and more)
 - HDR and Dolby Vision (not Linux)
 - Full ASS/SSA subtitle support
@@ -56,22 +59,26 @@ A modern Plex client for desktop and mobile. Built with Flutter for native perfo
 - Auto-play next episode
 
 ### 📺 Live TV & DVR
+
 - EPG guide grid
 - Channel tuning
 - DVR recording rules and scheduled recordings
 - Multi-server DVR support
 
 ### 📥 Downloads
+
 - Download media for offline viewing
 - Background downloads with queue management
 
 ### 👥 Watch Together
+
 - Synchronized playback with friends
 - Real-time play/pause and seek sync
 
 ## Building from Source
 
 ### Prerequisites
+
 - Flutter SDK 3.8.1+
 - A Plex account with server access
 

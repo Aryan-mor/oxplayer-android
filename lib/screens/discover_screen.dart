@@ -12,15 +12,19 @@ import '../focus/key_event_utils.dart';
 import '../utils/global_key_utils.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../services/plex_client.dart';
+import '../infrastructure/data_repository.dart';
+import '../infrastructure/media_repository.dart';
 import '../utils/plex_image_helper.dart';
 import '../widgets/plex_optimized_image.dart' show blurArtwork;
 import '../models/plex_metadata.dart';
 import '../utils/content_utils.dart';
 import '../models/plex_hub.dart';
 import '../providers/multi_server_provider.dart';
+import '../providers/auth_notifier.dart';
 import '../providers/hidden_libraries_provider.dart';
 import '../providers/libraries_provider.dart';
 import '../providers/playback_state_provider.dart';
+import '../router.dart';
 import 'profile/user_avatar_widget.dart';
 import '../widgets/hub_section.dart';
 import 'profile/profile_switch_screen.dart';
@@ -40,7 +44,6 @@ import '../utils/layout_constants.dart';
 import '../utils/platform_detector.dart';
 import '../theme/mono_tokens.dart';
 import '../services/watch_next_service.dart';
-import 'auth_screen.dart';
 import 'libraries/state_messages.dart';
 import 'main_screen.dart';
 import '../watch_together/watch_together.dart';
@@ -86,6 +89,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   bool _isAutoScrollPaused = false;
   bool _isTabVisible = true;
   HiddenLibrariesProvider? _hiddenLibrariesProvider;
+  /// Resolved local file paths for general_video thumbnails, keyed by mediaId.
+  final Map<String, String> _videoThumbnails = {};
+  final Set<String> _videoThumbnailRetryQueued = <String>{};
   Set<String> _lastSeenHiddenKeys = {};
 
   // WatchStateAware: watch on-deck items and their parent shows/seasons
@@ -458,6 +464,11 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final multiServerProvider = Provider.of<MultiServerProvider>(context, listen: false);
 
       if (!multiServerProvider.hasConnectedServers) {
+        final loadedOxFallback = await _loadOxFallbackContent();
+        if (loadedOxFallback) {
+          appLogger.d('Discover content loaded from OX fallback');
+          return;
+        }
         throw Exception('No servers available');
       }
 
@@ -465,6 +476,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final hiddenLibrariesProvider = Provider.of<HiddenLibrariesProvider>(context, listen: false);
       await hiddenLibrariesProvider.ensureInitialized();
       _lastSeenHiddenKeys = Set.of(hiddenLibrariesProvider.hiddenLibraryKeys);
+      if (!mounted) return;
 
       // Get settings for hub mode preference (ensure initialized before accessing)
       final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
@@ -581,6 +593,194 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         _areHubsLoading = false;
       });
     }
+  }
+
+  Future<bool> _loadOxFallbackContent() async {
+    try {
+      final repository = await DataRepository.create();
+      final mediaRepository = MediaRepository(dataRepository: repository);
+      final sections = await repository.fetchOxDiscoverSections(limitPerKind: 20);
+      if (!mounted) return true;
+
+      // Collect general_video items that need Telegram thumbnail resolution.
+      final videoItemsForThumbnails = <OxLibraryMediaItem>[];
+
+      final hubs = <PlexHub>[];
+      for (var index = 0; index < sections.length; index++) {
+        final section = sections[index];
+        final librarySectionId = index + 1;
+
+        if (section.id == 'videos') {
+          for (final item in section.items) {
+            if (item.thumbnailSourceChatId != null && item.thumbnailSourceMessageId != null) {
+              videoItemsForThumbnails.add(item);
+            }
+          }
+        }
+
+        final items = section.items
+            .map((item) => _mapOxItemToPreviewMetadata(item, librarySectionId: librarySectionId))
+            .toList(growable: false);
+        if (items.isEmpty) continue;
+        hubs.add(
+          PlexHub(
+            hubKey: 'ox:${section.id}',
+            title: section.title,
+            type: 'hub',
+            size: items.length,
+            more: false,
+            items: items,
+            librarySectionID: librarySectionId,
+          ),
+        );
+      }
+
+      setState(() {
+        _onDeck = const <PlexMetadata>[];
+        _hubs = hubs;
+        _isLoading = false;
+        _areHubsLoading = false;
+        _errorMessage = null;
+        _updateHubKeys();
+      });
+
+      // Resolve Telegram thumbnails in the background after the initial render.
+      if (videoItemsForThumbnails.isNotEmpty) {
+        unawaited(_resolveVideoThumbnails(mediaRepository, videoItemsForThumbnails));
+      }
+
+      return true;
+    } catch (error, stackTrace) {
+      appLogger.w('Failed to load OX discover fallback', error: error, stackTrace: stackTrace);
+      return false;
+    }
+  }
+
+  /// Resolves Telegram thumbnails for [general_video] items in the background.
+  ///
+  /// For each item, downloads the thumbnail via [MediaRepository], caches it
+  /// locally, and updates the matching hub card so the image appears without a
+  /// full reload.
+  Future<void> _resolveVideoThumbnails(
+    MediaRepository mediaRepository,
+    List<OxLibraryMediaItem> items,
+  ) async {
+    for (final item in items) {
+      if (!mounted) return;
+      final localPath = await mediaRepository.fetchVideoThumbnail(item);
+      if (localPath == null) {
+        _scheduleVideoThumbnailRetry(mediaRepository, item);
+        continue;
+      }
+      if (!mounted) continue;
+
+      // Update the resolved thumbnail and rebuild the matching hub item.
+      setState(() {
+        _videoThumbnails[item.globalId] = localPath;
+        _hubs = _hubs.map((hub) {
+          if (hub.hubKey != 'ox:videos') return hub;
+          final updatedItems = hub.items.map((meta) {
+            if (meta.ratingKey != item.globalId) return meta;
+            return meta.copyWith(thumb: localPath, art: localPath);
+          }).toList(growable: false);
+          return PlexHub(
+            hubKey: hub.hubKey,
+            title: hub.title,
+            type: hub.type,
+            hubIdentifier: hub.hubIdentifier,
+            size: hub.size,
+            more: hub.more,
+            items: updatedItems,
+            serverId: hub.serverId,
+            serverName: hub.serverName,
+            librarySectionID: hub.librarySectionID,
+          );
+        }).toList(growable: false);
+      });
+    }
+  }
+
+  void _scheduleVideoThumbnailRetry(
+    MediaRepository mediaRepository,
+    OxLibraryMediaItem item,
+  ) {
+    if (_videoThumbnails.containsKey(item.globalId)) return;
+    if (_videoThumbnailRetryQueued.contains(item.globalId)) return;
+
+    _videoThumbnailRetryQueued.add(item.globalId);
+    Future<void>.delayed(const Duration(seconds: 2), () async {
+      _videoThumbnailRetryQueued.remove(item.globalId);
+      if (!mounted || _videoThumbnails.containsKey(item.globalId)) return;
+
+      final localPath = await mediaRepository.fetchVideoThumbnail(item);
+      if (localPath == null || !mounted) return;
+
+      setState(() {
+        _videoThumbnails[item.globalId] = localPath;
+        _hubs = _hubs.map((hub) {
+          if (hub.hubKey != 'ox:videos') return hub;
+          final updatedItems = hub.items.map((meta) {
+            if (meta.ratingKey != item.globalId) return meta;
+            return meta.copyWith(thumb: localPath, art: localPath);
+          }).toList(growable: false);
+          return PlexHub(
+            hubKey: hub.hubKey,
+            title: hub.title,
+            type: hub.type,
+            hubIdentifier: hub.hubIdentifier,
+            size: hub.size,
+            more: hub.more,
+            items: updatedItems,
+            serverId: hub.serverId,
+            serverName: hub.serverName,
+            librarySectionID: hub.librarySectionID,
+          );
+        }).toList(growable: false);
+      });
+    });
+  }
+
+  PlexMetadata _mapOxItemToPreviewMetadata(OxLibraryMediaItem item, {required int librarySectionId}) {
+    final kind = item.kind.toLowerCase();
+    final type = switch (kind) {
+      'movie' => 'movie',
+      'series' => 'show',
+      'general_video' => 'movie',
+      _ => 'movie',
+    };
+
+    // general_video items have no TMDB poster; use the Telegram-resolved local path if available.
+    final String? posterUrl;
+    if (kind == 'general_video') {
+      posterUrl = _videoThumbnails[item.globalId];
+    } else {
+      posterUrl = _buildTmdbPosterUrl(item.posterPath);
+    }
+
+    return PlexMetadata(
+      ratingKey: item.globalId,
+      key: 'ox-preview:${item.globalId}',
+      type: type,
+      title: item.title,
+      summary: item.overview,
+      rating: item.voteAverage,
+      thumb: posterUrl,
+      art: posterUrl,
+      duration: 0,
+      addedAt: item.createdAt.millisecondsSinceEpoch ~/ 1000,
+      updatedAt: item.createdAt.millisecondsSinceEpoch ~/ 1000,
+      librarySectionID: librarySectionId,
+    );
+  }
+
+  String? _buildTmdbPosterUrl(String? posterPath) {
+    final trimmed = posterPath?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    final normalized = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+    return 'https://image.tmdb.org/t/p/w500$normalized';
   }
 
   /// Resolve the library globalKey for a hub (for sorting by library order).
@@ -796,17 +996,18 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final multiServerProvider = context.read<MultiServerProvider>();
       final hiddenLibrariesProvider = context.read<HiddenLibrariesProvider>();
       final playbackStateProvider = context.read<PlaybackStateProvider>();
+      final authNotifier = context.read<AuthNotifier>();
+      final navigator = Navigator.of(context);
 
       // Clear all user data and provider states
       await userProfileProvider.logout();
+      await authNotifier.clearSession();
       multiServerProvider.clearAllConnections();
       await hiddenLibrariesProvider.refresh();
       playbackStateProvider.clearShuffle();
 
       if (mounted) {
-        Navigator.of(
-          context,
-        ).pushAndRemoveUntil(MaterialPageRoute(builder: (context) => const AuthScreen()), (route) => false);
+        navigator.pushAndRemoveUntil(MaterialPageRoute(builder: (context) => const AppRouter()), (route) => false);
       }
     }
   }

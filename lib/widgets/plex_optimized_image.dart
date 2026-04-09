@@ -261,13 +261,31 @@ class PlexOptimizedImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Check for local file first
+    // Check for local file first (localFilePath takes priority)
     if (localFilePath != null) {
       final file = File(localFilePath!);
       if (file.existsSync()) {
         return blurArtwork(
           Image.file(
             file,
+            width: width,
+            height: height,
+            fit: fit,
+            filterQuality: filterQuality,
+            alignment: alignment,
+            errorBuilder: (context, error, stackTrace) => _buildErrorWidget(context, error),
+          ),
+        );
+      }
+    }
+
+    // Treat imagePath as a local absolute file path when it starts with '/'.
+    if (imagePath != null && imagePath!.startsWith('/')) {
+      final localFile = File(imagePath!);
+      if (localFile.existsSync()) {
+        return blurArtwork(
+          Image.file(
+            localFile,
             width: width,
             height: height,
             fit: fit,

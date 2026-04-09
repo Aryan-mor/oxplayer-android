@@ -131,9 +131,11 @@ class SideNavigationRail extends StatefulWidget {
   final NavigationTabId selectedTab;
   final String? selectedLibraryKey;
   final bool isOfflineMode;
+  final bool enableOxDiscoverFallback;
   final bool isSidebarFocused;
   final bool alwaysExpanded;
   final bool isReconnecting;
+  final String? offlineStatusLabel;
   final ValueChanged<NavigationTabId> onDestinationSelected;
   final ValueChanged<String> onLibrarySelected;
 
@@ -148,9 +150,11 @@ class SideNavigationRail extends StatefulWidget {
     required this.selectedTab,
     this.selectedLibraryKey,
     this.isOfflineMode = false,
+    this.enableOxDiscoverFallback = false,
     this.isSidebarFocused = false,
     this.alwaysExpanded = false,
     this.isReconnecting = false,
+    this.offlineStatusLabel,
     required this.onDestinationSelected,
     required this.onLibrarySelected,
     this.onNavigateToContent,
@@ -265,9 +269,11 @@ class SideNavigationRailState extends State<SideNavigationRail> {
   /// Ordered list of focusable keys matching visual top-to-bottom order.
   List<String> _buildFocusOrder(List<PlexLibrary> visibleLibraries, {required bool hasLiveTv}) {
     return [
-      if (widget.isOfflineMode && widget.onReconnect != null) _kReconnect,
-      if (!widget.isOfflineMode) ...[
+      if (widget.isOfflineMode) _kReconnect,
+      if (!widget.isOfflineMode || widget.enableOxDiscoverFallback) ...[
         _kHome,
+      ],
+      if (!widget.isOfflineMode) ...[
         _kLibraries,
         if (_librariesExpanded) ...visibleLibraries.map((lib) => lib.globalKey),
         if (hasLiveTv) 'liveTv',
@@ -415,14 +421,12 @@ class SideNavigationRailState extends State<SideNavigationRail> {
                           clipBehavior: Clip.hardEdge,
                           children: [
                             // Reconnect button when offline
-                            if (widget.isOfflineMode && widget.onReconnect != null) ...[
+                            if (widget.isOfflineMode) ...[
                               _buildReconnectItem(isCollapsed: isCollapsed),
                               const SizedBox(height: 8),
                             ],
 
-                            // In online mode, show full navigation
-                            if (!widget.isOfflineMode) ...[
-                              // Home
+                            if (!widget.isOfflineMode || widget.enableOxDiscoverFallback) ...[
                               _buildNavItem(
                                 icon: Symbols.home_rounded,
                                 selectedIcon: Symbols.home_rounded,
@@ -435,7 +439,10 @@ class SideNavigationRailState extends State<SideNavigationRail> {
                               ),
 
                               const SizedBox(height: 8),
+                            ],
 
+                            // In online mode, show full navigation
+                            if (!widget.isOfflineMode) ...[
                               // Libraries section
                               _buildLibrariesSection(visibleLibraries, t, isCollapsed: isCollapsed),
 
@@ -551,13 +558,16 @@ class SideNavigationRailState extends State<SideNavigationRail> {
   Widget _buildReconnectItem({required bool isCollapsed}) {
     final t = tokens(context);
     final isFocused = _focusTracker.isFocused(_kReconnect);
+    final showReconnectAction = widget.onReconnect != null;
 
     return NavigationRailItem(
-      icon: widget.isReconnecting ? Symbols.sync_rounded : Symbols.wifi_rounded,
-      label: widget.isReconnecting
+      icon: showReconnectAction
+          ? (widget.isReconnecting ? Symbols.sync_rounded : Symbols.wifi_rounded)
+          : Symbols.cloud_done_rounded,
+      label: showReconnectAction && widget.isReconnecting
           ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: t.text))
           : Text(
-              Translations.of(context).common.reconnect,
+              showReconnectAction ? Translations.of(context).common.reconnect : (widget.offlineStatusLabel ?? 'Connected to server'),
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w400, color: t.textMuted),
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
@@ -565,8 +575,7 @@ class SideNavigationRailState extends State<SideNavigationRail> {
       isSelected: false,
       isFocused: isFocused,
       isCollapsed: isCollapsed,
-      // ignore: no-empty-block - no-op tap handler while reconnecting
-      onTap: widget.isReconnecting ? () {} : () => widget.onReconnect?.call(),
+      onTap: showReconnectAction ? (widget.isReconnecting ? () {} : () => widget.onReconnect?.call()) : () {},
       focusNode: _focusTracker.get(_kReconnect),
       onNavigateRight: widget.onNavigateToContent,
     );

@@ -13,6 +13,7 @@ import 'package:tdlib/tdlib.dart';
 import 'package:tdlib/src/tdapi/tdapi.dart' show convertToObject;
 import 'package:tdlib/src/tdclient/platform_interfaces/td_native_plugin_real.dart' as td_native;
 
+import '../../services/auth_debug_service.dart';
 import 'tdlib_facade.dart';
 import 'tdlib_json_sanitize.dart';
 
@@ -20,11 +21,8 @@ void _tdlog(String message) {
   debugPrint(message);
 }
 
-const _kGetMeExtra = 'oxplayer_session';
 const _kDownloadConnectionsCount = 16;
 const _kMaxGetMeRetries = 2;
-
-bool _extraMatchesGetMe(dynamic extra) => extra == _kGetMeExtra || extra?.toString() == _kGetMeExtra;
 
 class TelegramTdlibFacade implements TdlibFacade {
   static TelegramTdlibFacade? _nativeClientOwner;
@@ -43,7 +41,11 @@ class TelegramTdlibFacade implements TdlibFacade {
   Completer<void>? _closeHandshakeCompleter;
   Isolate? _receiveIsolate;
   ReceivePort? _receiveMainPort;
+  ReceivePort? _receiveExitPort;
   StreamSubscription<dynamic>? _receiveSub;
+  StreamSubscription<dynamic>? _receiveExitSub;
+  SendPort? _receiveControlPort;
+  Completer<void>? _receiveExitCompleter;
   bool _paramsSent = false;
   bool _transportTuningApplied = false;
   int? _pendingApiId;
@@ -265,7 +267,16 @@ class TelegramTdlibFacade implements TdlibFacade {
     final id = _clientId!;
 
     final port = ReceivePort();
+    final exitPort = ReceivePort();
     _receiveMainPort = port;
+    _receiveExitPort = exitPort;
+    _receiveExitCompleter = Completer<void>();
+    _receiveExitSub = exitPort.listen((_) {
+      final completer = _receiveExitCompleter;
+      if (completer != null && !completer.isCompleted) {
+        completer.complete();
+      }
+    });
 
     try {
       _receiveIsolate = await Isolate.spawn(
@@ -278,12 +289,19 @@ class TelegramTdlibFacade implements TdlibFacade {
       debugPrint('TDLib receive isolate spawn failed: $error\n$stackTrace');
       _receiveLoopRunning = false;
       port.close();
+      await _receiveExitSub?.cancel();
+      _receiveExitSub = null;
+      exitPort.close();
+      _receiveExitPort = null;
+      _receiveExitCompleter = null;
       _receiveMainPort = null;
       return;
     }
 
+    _receiveIsolate?.addOnExitListener(exitPort.sendPort);
+
     if (!_receiveLoopRunning || _clientId != id) {
-      _receiveIsolate?.kill();
+      await _stopReceiveIsolate(forceKill: true);
       _receiveIsolate = null;
       port.close();
       _receiveMainPort = null;
@@ -292,6 +310,10 @@ class TelegramTdlibFacade implements TdlibFacade {
 
     _receiveSub = port.listen((message) {
       if (!_receiveLoopRunning || _clientId != id) return;
+      if (message is SendPort) {
+        _receiveControlPort = message;
+        return;
+      }
       if (message is Map && message['_tdReceiveIsolateError'] != null) {
         _tdlog('TDLib receive isolate error: ${message['_tdReceiveIsolateError']}');
         return;
@@ -384,21 +406,18 @@ class TelegramTdlibFacade implements TdlibFacade {
 
   void _handleSessionUser(td.TdObject obj) {
     late final td.User user;
-    dynamic extra;
     if (obj is td.UpdateUser) {
       user = obj.user;
-      extra = obj.extra;
     } else if (obj is td.User) {
       user = obj;
-      extra = obj.extra;
     } else {
       return;
     }
 
-    final byExtra = _extraMatchesGetMe(extra);
     final byFallback = _awaitingGetMeAfterReady && user.id != 0;
-    if (!byExtra && !byFallback) return;
+    if (!byFallback) return;
     _awaitingGetMeAfterReady = false;
+    authDebugSuccess('TDLib returned authenticated user details.');
     unawaited(_finalizeAuthenticatedSession(user));
   }
 
@@ -439,6 +458,7 @@ class TelegramTdlibFacade implements TdlibFacade {
     final state = obj.authorizationState;
 
     if (state is td.AuthorizationStateWaitTdlibParameters) {
+      authDebugDedup('tdlib_auth_state', AuthDebugLevel.info, 'TDLib auth state: WaitTdlibParameters.');
       if (_paramsSent || _clientId == null) return;
       final apiId = _pendingApiId;
       final apiHash = _pendingApiHash;
@@ -469,6 +489,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       );
       _applyTransportTuning();
     } else if (state is td.AuthorizationStateWaitPhoneNumber) {
+      authDebugDedup('tdlib_auth_state', AuthDebugLevel.info, 'TDLib auth state: WaitPhoneNumber.');
       _failEnsureAuthorizedIfPending('WaitPhoneNumber');
       unawaited(_invokeRequiresInteractiveLogin());
       if (!_authWaitPhoneNumber.isClosed) {
@@ -478,6 +499,7 @@ class TelegramTdlibFacade implements TdlibFacade {
         _smsCodeChallenge.add(null);
       }
     } else if (state is td.AuthorizationStateWaitCode) {
+      authDebugDedup('tdlib_auth_state', AuthDebugLevel.info, 'TDLib auth state: WaitCode.');
       _failEnsureAuthorizedIfPending('WaitCode');
       unawaited(_invokeRequiresInteractiveLogin());
       if (!_authWaitPhoneNumber.isClosed) {
@@ -499,6 +521,7 @@ class TelegramTdlibFacade implements TdlibFacade {
         );
       }
     } else if (state is td.AuthorizationStateWaitOtherDeviceConfirmation) {
+      authDebugDedup('tdlib_auth_state', AuthDebugLevel.info, 'TDLib auth state: WaitOtherDeviceConfirmation (QR ready).');
       _failEnsureAuthorizedIfPending('WaitOtherDeviceConfirmation');
       unawaited(_invokeRequiresInteractiveLogin());
       if (!_authWaitPhoneNumber.isClosed) {
@@ -514,6 +537,7 @@ class TelegramTdlibFacade implements TdlibFacade {
         _qrPayload.add(state.link);
       }
     } else if (state is td.AuthorizationStateReady) {
+      authDebugDedup('tdlib_auth_state', AuthDebugLevel.success, 'TDLib auth state: Ready. Requesting GetMe...');
       if (_authCompleter.isCompleted) {
         _authCompleter = Completer<void>();
       }
@@ -532,6 +556,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       _getMeRetryCount = 0;
       _requestGetMe();
     } else if (state is td.AuthorizationStateWaitPassword) {
+      authDebugDedup('tdlib_auth_state', AuthDebugLevel.info, 'TDLib auth state: WaitPassword.');
       if (!_authWaitPhoneNumber.isClosed) {
         _authWaitPhoneNumber.add(false);
       }
@@ -545,6 +570,7 @@ class TelegramTdlibFacade implements TdlibFacade {
         _cloudPassword.add(TdlibCloudPasswordChallenge(hint: state.passwordHint));
       }
     } else if (state is td.AuthorizationStateClosed) {
+      authDebugDedup('tdlib_auth_state', AuthDebugLevel.error, 'TDLib auth state: Closed.');
       final completer = _closeHandshakeCompleter;
       if (completer != null && !completer.isCompleted) {
         completer.complete();
@@ -553,10 +579,54 @@ class TelegramTdlibFacade implements TdlibFacade {
   }
 
   void _requestGetMe() {
-    final id = _clientId;
-    if (id == null) return;
     _awaitingGetMeAfterReady = true;
-    tdJsonClientSend(id, const td.GetMe(), _kGetMeExtra);
+    authDebugDedup('tdlib_get_me', AuthDebugLevel.info, 'TDLib requesting GetMe for authenticated user details.');
+    unawaited(() async {
+      try {
+        final result = await send(const td.GetMe());
+        if (result is! td.User) {
+          _awaitingGetMeAfterReady = false;
+          if (!_functionErrors.isClosed) {
+            _functionErrors.add('TDLib GetMe returned ${result.runtimeType} instead of User.');
+          }
+          authDebugError('TDLib GetMe returned ${result.runtimeType} instead of User.');
+          return;
+        }
+        if (!_awaitingGetMeAfterReady) {
+          return;
+        }
+        _awaitingGetMeAfterReady = false;
+        authDebugSuccess('TDLib returned authenticated user details.');
+        await _finalizeAuthenticatedSession(result);
+      } catch (error) {
+        if (_isInteractiveAuthErrorObject(error)) {
+          _awaitingGetMeAfterReady = false;
+          _failEnsureAuthorizedIfPending('GetMeInteractiveError');
+          unawaited(_invokeRequiresInteractiveLogin());
+          authDebugError('TDLib GetMe requires interactive authentication again: $error');
+          return;
+        }
+        if (_getMeRetryCount < _kMaxGetMeRetries) {
+          _getMeRetryCount += 1;
+          authDebugError('TDLib GetMe failed, retrying (${_getMeRetryCount}/$_kMaxGetMeRetries): $error');
+          Future<void>.delayed(const Duration(milliseconds: 350), _requestGetMe);
+          return;
+        }
+        _awaitingGetMeAfterReady = false;
+        if (!_functionErrors.isClosed) {
+          _functionErrors.add('TDLib GetMe failed: $error');
+        }
+        authDebugError('TDLib GetMe failed after retries: $error');
+        if (!_authCompleter.isCompleted) {
+          _authCompleter.completeError(error);
+        }
+      }
+    }());
+  }
+
+  bool _isInteractiveAuthErrorObject(Object error) {
+    if (error is! td.TdError) return false;
+    return _isInteractiveAuthError(error);
   }
 
   void _failEnsureAuthorizedIfPending(String reason) {
@@ -603,8 +673,7 @@ class TelegramTdlibFacade implements TdlibFacade {
       _receiveLoopRunning = false;
       await _receiveSub?.cancel();
       _receiveSub = null;
-      _receiveIsolate?.kill(priority: Isolate.immediate);
-      _receiveIsolate = null;
+      await _stopReceiveIsolate(forceKill: true);
       _receiveMainPort?.close();
       _receiveMainPort = null;
       return;
@@ -634,8 +703,7 @@ class TelegramTdlibFacade implements TdlibFacade {
     _receiveLoopRunning = false;
     await _receiveSub?.cancel();
     _receiveSub = null;
-    _receiveIsolate?.kill(priority: Isolate.immediate);
-    _receiveIsolate = null;
+  await _stopReceiveIsolate();
     _receiveMainPort?.close();
     _receiveMainPort = null;
     await Future<void>.delayed(const Duration(milliseconds: 350));
@@ -658,6 +726,48 @@ class TelegramTdlibFacade implements TdlibFacade {
       _tdlog('TDLib destroy error: $error');
     }
     await Future<void>.delayed(const Duration(milliseconds: 120));
+  }
+
+  Future<void> _stopReceiveIsolate({bool forceKill = false}) async {
+    final isolate = _receiveIsolate;
+    final controlPort = _receiveControlPort;
+    final exitFuture = _receiveExitCompleter?.future;
+
+    if (isolate == null) {
+      await _receiveExitSub?.cancel();
+      _receiveExitSub = null;
+      _receiveExitPort?.close();
+      _receiveExitPort = null;
+      _receiveExitCompleter = null;
+      _receiveControlPort = null;
+      return;
+    }
+
+    if (!forceKill && controlPort != null) {
+      try {
+        controlPort.send('stop');
+      } catch (_) {}
+    }
+
+    try {
+      if (exitFuture != null) {
+        await exitFuture.timeout(const Duration(seconds: 2));
+      } else if (forceKill) {
+        isolate.kill(priority: Isolate.immediate);
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+    } catch (_) {
+      isolate.kill(priority: Isolate.immediate);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+
+    await _receiveExitSub?.cancel();
+    _receiveExitSub = null;
+    _receiveExitPort?.close();
+    _receiveExitPort = null;
+    _receiveExitCompleter = null;
+    _receiveControlPort = null;
+    _receiveIsolate = null;
   }
 
   @override
@@ -699,6 +809,8 @@ void tdlibReceiveIsolateMain(List<Object?> message) {
   final clientId = message[0]! as int;
   final sendPort = message[1]! as SendPort;
   final libPath = message.length > 2 ? message[2] as String? : null;
+  final controlPort = ReceivePort();
+  var shouldStop = false;
 
   td_native.TdNativePlugin.registerWith();
   if (libPath != null) {
@@ -707,7 +819,15 @@ void tdlibReceiveIsolateMain(List<Object?> message) {
     TdPlugin.instance = td_native.TdNativePlugin(ffi.DynamicLibrary.process());
   }
 
-  while (true) {
+  sendPort.send(controlPort.sendPort);
+  controlPort.listen((message) {
+    if (message == 'stop') {
+      shouldStop = true;
+      controlPort.close();
+    }
+  });
+
+  while (!shouldStop) {
     try {
       final jsonStr = TdPlugin.instance.tdJsonClientReceive(clientId, 1.0);
       if (jsonStr != null) {

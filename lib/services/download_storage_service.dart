@@ -153,6 +153,29 @@ class DownloadStorageService {
     return artworkDir;
   }
 
+  /// Cached Telegram video thumbnails for [general_video] library items (JPEG by media id).
+  /// Uses the same storage policy as [getArtworkDirectory]: custom download folder parent
+  /// on Android file paths, otherwise app documents `video_thumbnails/`.
+  Future<Directory> getVideoThumbnailsDirectory() async {
+    if (_customDownloadPath != null && _customPathType == 'file') {
+      final customDir = Directory(_customDownloadPath!);
+      final parent = customDir.parent;
+      final thumbsDir = Directory(path.join(parent.path, 'video_thumbnails'));
+      try {
+        if (await isDirectoryWritable(thumbsDir)) {
+          return thumbsDir;
+        }
+      } catch (_) {
+        // Fall through to default
+      }
+    }
+
+    final baseDir = await _getBaseAppDir();
+    return _ensureDirectoryExists(
+      Directory(path.join(baseDir.path, 'video_thumbnails')),
+    );
+  }
+
   /// Get artwork file path from Plex thumb path (synchronous, requires initialization)
   /// Returns path to cached artwork file using hash of the thumb URL
   /// Example: artwork/a1b2c3d4e5f6.jpg

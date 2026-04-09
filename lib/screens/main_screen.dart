@@ -1,3 +1,4 @@
+import 'dart:async' show Timer, unawaited;
 import 'dart:io' show Platform, exit;
 
 import 'package:flutter/material.dart';
@@ -16,6 +17,10 @@ import '../utils/provider_extensions.dart';
 import '../utils/platform_detector.dart';
 import '../utils/video_player_navigation.dart';
 import '../main.dart';
+import '../providers/auth_notifier.dart';
+import '../router.dart';
+import '../services/ox_api_session_recovery.dart';
+import '../utils/navigation_transitions.dart';
 import '../mixins/refreshable.dart';
 import '../widgets/overlay_sheet.dart';
 import '../mixins/tab_visibility_aware.dart';
@@ -76,8 +81,23 @@ class MainScreenFocusScope extends InheritedWidget {
 class MainScreen extends StatefulWidget {
   final PlexClient? client;
   final bool isOfflineMode;
+  final bool showReconnectAction;
+  final String? offlineStatusLabel;
+  final bool enableOxDiscoverFallback;
 
-  const MainScreen({super.key, this.client, this.isOfflineMode = false});
+  /// When true (e.g. OX API bootstrap failed while Telegram session exists), the app
+  /// periodically retries bootstrap / Telegram token exchange in the background.
+  final bool pendingOxApiRecovery;
+
+  const MainScreen({
+    super.key,
+    this.client,
+    this.isOfflineMode = false,
+    this.showReconnectAction = true,
+    this.offlineStatusLabel,
+    this.enableOxDiscoverFallback = false,
+    this.pendingOxApiRecovery = false,
+  });
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -111,6 +131,8 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
   /// Whether a reconnection attempt is in progress
   bool _isReconnecting = false;
 
+  Timer? _oxApiRecoveryTimer;
+
   /// Prevents double-pushing the profile selection screen
   bool _isShowingProfileSelection = false;
 
@@ -140,9 +162,10 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
       windowManager.setPreventClose(true);
     }
 
-    _currentTab = _isOffline ? NavigationTabId.downloads : NavigationTabId.discover;
-    _lastOnlineTabId = _isOffline ? null : NavigationTabId.discover;
-    _autoSwitchedToDownloads = _isOffline;
+    final startOnDiscover = !_isOffline || widget.enableOxDiscoverFallback;
+    _currentTab = startOnDiscover ? NavigationTabId.discover : NavigationTabId.downloads;
+    _lastOnlineTabId = startOnDiscover ? NavigationTabId.discover : null;
+    _autoSwitchedToDownloads = _isOffline && !widget.enableOxDiscoverFallback;
 
     // Synchronize _lastHasLiveTv with provider before building screens
     // so _buildScreens and _hasLiveTv getter agree from the start.
@@ -181,7 +204,39 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
 
       // Check for updates on startup
       _checkForUpdatesOnStartup();
+
+      if (widget.pendingOxApiRecovery) {
+        unawaited(_attemptOxApiRecoveryOnce());
+        _oxApiRecoveryTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+          unawaited(_attemptOxApiRecoveryOnce());
+        });
+      }
     });
+  }
+
+  Future<void> _attemptOxApiRecoveryOnce() async {
+    if (!mounted || !widget.pendingOxApiRecovery) return;
+
+    final auth = context.read<AuthNotifier>();
+    final outcome = await OxApiSessionRecovery.tryRecoverSession(auth);
+    if (!mounted) return;
+
+    switch (outcome) {
+      case OxApiRecoveryOutcome.recovered:
+        _oxApiRecoveryTimer?.cancel();
+        _oxApiRecoveryTimer = null;
+        Navigator.pushReplacement(context, fadeRoute(const OrientationAwareSetup()));
+        return;
+      case OxApiRecoveryOutcome.hardFailure:
+        _oxApiRecoveryTimer?.cancel();
+        _oxApiRecoveryTimer = null;
+        await auth.clearSession();
+        if (!mounted) return;
+        Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+        return;
+      case OxApiRecoveryOutcome.transientFailure:
+        return;
+    }
   }
 
   Future<void> _promptForInitialProfileSelection(UserProfileProvider userProfileProvider) async {
@@ -468,6 +523,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
 
   @override
   void dispose() {
+    _oxApiRecoveryTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     routeObserver.unsubscribe(this);
     if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
@@ -503,6 +559,9 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && widget.pendingOxApiRecovery) {
+      unawaited(_attemptOxApiRecoveryOnce());
+    }
     if (state == AppLifecycleState.resumed && !_isOffline && !_isShowingProfileSelection) {
       // Only show profile selection on resume for mobile platforms.
       // On desktop, "resumed" fires on every window focus gain (alt-tab, click),
@@ -568,15 +627,35 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
   void _triggerReconnect() {
     if (_isReconnecting) return;
     setState(() => _isReconnecting = true);
+    unawaited(_runReconnect());
+  }
 
-    final serverManager = context.read<MultiServerProvider>().serverManager;
-    serverManager.checkServerHealth();
-    serverManager.reconnectOfflineServers().whenComplete(() {
-      // Give a moment for status updates to propagate
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) setState(() => _isReconnecting = false);
-      });
-    });
+  Future<void> _runReconnect() async {
+    try {
+      if (widget.pendingOxApiRecovery) {
+        final auth = context.read<AuthNotifier>();
+        final oxOutcome = await OxApiSessionRecovery.tryRecoverSession(auth);
+        if (!mounted) return;
+        if (oxOutcome == OxApiRecoveryOutcome.recovered) {
+          Navigator.pushReplacement(context, fadeRoute(const OrientationAwareSetup()));
+          return;
+        }
+        if (oxOutcome == OxApiRecoveryOutcome.hardFailure) {
+          await auth.clearSession();
+          if (!mounted) return;
+          Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+          return;
+        }
+      }
+
+      final serverManager = context.read<MultiServerProvider>().serverManager;
+      serverManager.checkServerHealth();
+      await serverManager.reconnectOfflineServers();
+    } finally {
+      if (mounted) {
+        setState(() => _isReconnecting = false);
+      }
+    }
   }
 
   void _handleLiveTvChanged() {
@@ -870,7 +949,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
     }
 
     // Discover: always refresh content (even on re-selection)
-    if (!_isOffline && tab == NavigationTabId.discover) {
+    if ((!_isOffline || widget.enableOxDiscoverFallback) && tab == NavigationTabId.discover) {
       _onDiscoverBecameVisible();
     }
 
@@ -904,6 +983,13 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
 
   /// Get navigation tabs filtered by offline mode
   List<NavigationTab> _getVisibleTabs(bool isOffline) {
+    if (isOffline && widget.enableOxDiscoverFallback) {
+      return allNavigationTabs.where((tab) {
+        return tab.id == NavigationTabId.discover ||
+            tab.id == NavigationTabId.downloads ||
+            tab.id == NavigationTabId.settings;
+      }).toList(growable: false);
+    }
     return NavigationTab.getVisibleTabs(isOffline: isOffline, hasLiveTv: _hasLiveTv);
   }
 
@@ -985,9 +1071,11 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
                               selectedTab: _currentTab,
                               selectedLibraryKey: _selectedLibraryGlobalKey,
                               isOfflineMode: _isOffline,
+                              enableOxDiscoverFallback: widget.enableOxDiscoverFallback,
                               isSidebarFocused: _isSidebarFocused,
                               alwaysExpanded: alwaysExpanded,
                               isReconnecting: _isReconnecting,
+                              offlineStatusLabel: widget.offlineStatusLabel,
                               onDestinationSelected: (tab) {
                                 _selectTab(tab);
                                 _focusContent();
@@ -997,7 +1085,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
                                 _focusContent();
                               },
                               onNavigateToContent: _focusContent,
-                              onReconnect: _triggerReconnect,
+                              onReconnect: widget.showReconnectAction ? _triggerReconnect : null,
                             ),
                           ),
                         ),
@@ -1023,13 +1111,13 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
               Material(
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: InkWell(
-                  onTap: _isReconnecting ? null : _triggerReconnect,
+                  onTap: widget.showReconnectAction && !_isReconnecting ? _triggerReconnect : null,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        if (_isReconnecting)
+                        if (widget.showReconnectAction && _isReconnecting)
                           SizedBox(
                             width: 16,
                             height: 16,
@@ -1038,11 +1126,13 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
                               color: Theme.of(context).colorScheme.primary,
                             ),
                           )
+                        else if (widget.showReconnectAction)
+                          Icon(Symbols.wifi_rounded, size: 18, color: Theme.of(context).colorScheme.primary)
                         else
-                          Icon(Symbols.wifi_rounded, size: 18, color: Theme.of(context).colorScheme.primary),
+                          Icon(Symbols.cloud_done_rounded, size: 18, color: Theme.of(context).colorScheme.primary),
                         const SizedBox(width: 8),
                         Text(
-                          t.common.reconnect,
+                          widget.showReconnectAction ? t.common.reconnect : (widget.offlineStatusLabel ?? 'Connected to server'),
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
