@@ -13,7 +13,6 @@ enum LogType {
   backend,
   tdlib,
   telegramThumbnail,
-  locatorVerification,
 }
 
 extension LogTypePresentation on LogType {
@@ -23,7 +22,6 @@ extension LogTypePresentation on LogType {
     LogType.backend => 'Backend',
     LogType.tdlib => 'TDLib',
     LogType.telegramThumbnail => 'Telegram Thumbnail',
-    LogType.locatorVerification => 'Locator Verification',
   };
 }
 

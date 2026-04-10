@@ -231,7 +231,7 @@ class MainActivity : FlutterActivity() {
                             grantRead = true
                         } else {
                             val path = if (filePath.startsWith("file://")) filePath.removePrefix("file://") else filePath
-                            uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", File(path))
+                            uri = FileProvider.getUriForFile(this, "${applicationContext.packageName}.fileprovider", File(path))
                             grantRead = true
                         }
 

@@ -56,6 +56,9 @@ import '../utils/watch_state_notifier.dart';
 import '../utils/deletion_notifier.dart';
 import '../widgets/episode_card.dart';
 import '../widgets/focusable_tab_chip.dart';
+import '../infrastructure/data_repository.dart';
+import '../infrastructure/media_repository.dart';
+import '../services/external_player_service.dart';
 
 class MediaDetailScreen extends StatefulWidget {
   final PlexMetadata metadata;
@@ -425,6 +428,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     final playButtonIcon = AppIcon(_getPlayButtonIcon(metadata), fill: 1, size: 20);
 
     Future<void> onPlayPressed() async {
+      if (_isOxLibraryMetadata(metadata)) {
+        await _playOxViaSystemPlayer(metadata);
+        return;
+      }
+
       // For TV shows, play the OnDeck episode if available
       // Otherwise, play the first episode of the first season
       if (metadata.isShow) {
@@ -877,6 +885,56 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         ],
       ),
     );
+  }
+
+  bool _isOxLibraryMetadata(PlexMetadata metadata) {
+    return metadata.key?.startsWith('ox-library:') == true;
+  }
+
+  Future<void> _playOxViaSystemPlayer(PlexMetadata metadata) async {
+    try {
+      final repository = await DataRepository.create();
+      final mediaRepository = MediaRepository(dataRepository: repository);
+      final detail = await mediaRepository.fetchLibraryMediaDetail(metadata.ratingKey);
+      if (!mounted) return;
+
+      var selectedFile = mediaRepository.selectPreferredFile(detail);
+      if (selectedFile == null) {
+        showErrorSnackBar(context, t.messages.fileInfoNotAvailable);
+        return;
+      }
+
+      String? playbackPath = await mediaRepository.resolveFilePathForSystemPlayback(selectedFile);
+
+      // Legacy-like fallback: trigger provider recovery, refresh locator, retry once.
+      if ((playbackPath == null || playbackPath.isEmpty)) {
+        final recovered = await mediaRepository.requestMediaRecovery(selectedFile.id);
+        if (recovered) {
+          final refreshedDetail = await mediaRepository.fetchLibraryMediaDetail(metadata.ratingKey);
+          final refreshedFile = refreshedDetail.files.where((f) => f.id == selectedFile!.id).firstOrNull ??
+              mediaRepository.selectPreferredFile(refreshedDetail);
+          if (refreshedFile != null) {
+            selectedFile = refreshedFile;
+            playbackPath = await mediaRepository.resolveFilePathForSystemPlayback(selectedFile);
+          }
+        }
+      }
+
+      if (!mounted) return;
+
+      if (playbackPath == null || playbackPath.isEmpty) {
+        showErrorSnackBar(context, t.externalPlayer.launchFailed);
+        return;
+      }
+
+      final videoUrl = playbackPath.contains('://') ? playbackPath : 'file://$playbackPath';
+      await ExternalPlayerService.launchSystemDefault(context: context, videoUrl: videoUrl);
+    } catch (error) {
+      appLogger.e('Failed to start OX system playback', error: error);
+      if (mounted) {
+        showErrorSnackBar(context, t.externalPlayer.launchFailed);
+      }
+    }
   }
 
   /// Build a metadata chip with optional leading icon or widget
