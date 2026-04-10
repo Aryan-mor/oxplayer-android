@@ -1379,6 +1379,17 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
   /// Start playback for offline/downloaded content
   Future<PlaybackInitializationResult> _startOfflinePlayback() async {
+    final directPlaybackData = widget.playbackData;
+    if (directPlaybackData?.hasValidVideoUrl ?? false) {
+      return PlaybackInitializationResult(
+        availableVersions: directPlaybackData?.availableVersions ?? const [],
+        videoUrl: directPlaybackData!.videoUrl,
+        mediaInfo: directPlaybackData.mediaInfo,
+        externalSubtitles: const [],
+        isOffline: true,
+      );
+    }
+
     final downloadProvider = context.read<DownloadProvider>();
 
     // Debug: log metadata info

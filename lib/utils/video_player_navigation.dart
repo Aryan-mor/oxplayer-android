@@ -140,6 +140,40 @@ Future<bool?> navigateToVideoPlayer(
   return usePushReplacement ? navigator.pushReplacement<bool, bool>(route) : navigator.push<bool>(route);
 }
 
+Future<bool?> navigateToInternalVideoPlayerForUrl(
+  BuildContext context, {
+  required PlexMetadata metadata,
+  required String videoUrl,
+  bool usePushReplacement = false,
+}) async {
+  final navigator = Navigator.of(context);
+  final normalizedUrl = videoUrl.contains('://') ? videoUrl : 'file://$videoUrl';
+
+  if (!usePushReplacement && VideoPlayerScreenState.activeRatingKey == metadata.ratingKey) {
+    appLogger.d(
+      'Video player already active for ${metadata.ratingKey} (direct URL), skipping duplicate navigation',
+    );
+    return null;
+  }
+
+  final route = PageRouteBuilder<bool>(
+    settings: const RouteSettings(name: kVideoPlayerRouteName),
+    pageBuilder: (context, animation, secondaryAnimation) => VideoPlayerScreen(
+      metadata: metadata,
+      isOffline: true,
+      playbackData: PlexVideoPlaybackData(
+        videoUrl: normalizedUrl,
+        mediaInfo: null,
+        availableVersions: const [],
+      ),
+    ),
+    transitionDuration: Duration.zero,
+    reverseTransitionDuration: Duration.zero,
+  );
+
+  return usePushReplacement ? navigator.pushReplacement<bool, bool>(route) : navigator.push<bool>(route);
+}
+
 /// Navigates to the video player and optionally refreshes content when returning.
 ///
 /// This helper consolidates the common pattern of:

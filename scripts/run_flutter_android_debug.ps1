@@ -53,7 +53,7 @@ function Get-ConnectedDevices {
 function Select-TargetDevice {
     param([string]$RequestedDeviceId)
 
-    $devices = Get-ConnectedDevices
+    $devices = @(Get-ConnectedDevices)
     if (-not $devices -or $devices.Count -eq 0) {
         throw 'No Android devices are connected.'
     }

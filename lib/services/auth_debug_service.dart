@@ -13,6 +13,8 @@ enum LogType {
   backend,
   tdlib,
   telegramThumbnail,
+  locator,
+  playMedia,
 }
 
 extension LogTypePresentation on LogType {
@@ -22,6 +24,8 @@ extension LogTypePresentation on LogType {
     LogType.backend => 'Backend',
     LogType.tdlib => 'TDLib',
     LogType.telegramThumbnail => 'Telegram Thumbnail',
+    LogType.locator => 'Locator',
+    LogType.playMedia => 'Play Media',
   };
 }
 
@@ -264,4 +268,32 @@ void authDebugError(String message) {
 
 void authDebugDedup(String key, AuthDebugLevel level, String message, {AuthDebugStatusKey? completeStatus}) {
   debugLogDedup(key, level, message, completeStatus: completeStatus, type: LogType.auth);
+}
+
+void playMediaDebugInfo(String message) {
+  debugLogInfo(message, type: LogType.playMedia);
+}
+
+void playMediaDebugSuccess(String message) {
+  debugLogSuccess(message, type: LogType.playMedia);
+}
+
+void playMediaDebugError(String message) {
+  debugLogError(message, type: LogType.playMedia);
+}
+
+void locatorDebugInfo(String message) {
+  debugLogInfo(message, type: LogType.locator);
+}
+
+void locatorDebugSuccess(String message) {
+  debugLogSuccess(message, type: LogType.locator);
+}
+
+void locatorDebugError(String message) {
+  debugLogError(message, type: LogType.locator);
+}
+
+void playMediaDebugDedup(String key, AuthDebugLevel level, String message) {
+  debugLogDedup(key, level, message, type: LogType.playMedia);
 }

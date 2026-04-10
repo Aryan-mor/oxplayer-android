@@ -58,7 +58,7 @@ import '../widgets/episode_card.dart';
 import '../widgets/focusable_tab_chip.dart';
 import '../infrastructure/data_repository.dart';
 import '../infrastructure/media_repository.dart';
-import '../services/external_player_service.dart';
+import '../services/auth_debug_service.dart';
 
 class MediaDetailScreen extends StatefulWidget {
   final PlexMetadata metadata;
@@ -86,6 +86,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   PlexMetadata? _onDeckEpisode;
   PlexVideoPlaybackData? _playbackData;
   bool _isLoadingMetadata = true;
+  bool _isStartingPrimaryPlayback = false;
   List<PlexMetadata>? _extras;
   late final ScrollController _scrollController;
   final ScrollController _extrasScrollController = ScrollController();
@@ -425,51 +426,64 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   /// Build action buttons row (play, shuffle, download, mark watched)
   Widget _buildActionButtons(PlexMetadata metadata) {
     final playButtonLabel = _getPlayButtonLabel(metadata);
-    final playButtonIcon = AppIcon(_getPlayButtonIcon(metadata), fill: 1, size: 20);
+    final playButtonIcon = _isStartingPrimaryPlayback
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : AppIcon(_getPlayButtonIcon(metadata), fill: 1, size: 20);
 
     Future<void> onPlayPressed() async {
-      if (_isOxLibraryMetadata(metadata)) {
-        await _playOxViaSystemPlayer(metadata);
-        return;
-      }
+      if (_isStartingPrimaryPlayback) return;
+      setStateIfMounted(() => _isStartingPrimaryPlayback = true);
+      try {
+        if (_isOxLibraryMetadata(metadata)) {
+          await _playOxViaSystemPlayer(metadata);
+          return;
+        }
 
-      // For TV shows, play the OnDeck episode if available
-      // Otherwise, play the first episode of the first season
-      if (metadata.isShow) {
-        if (_onDeckEpisode != null) {
-          appLogger.d('Playing on deck episode: ${_onDeckEpisode!.title}');
-          await navigateToVideoPlayerWithRefresh(
-            context,
-            metadata: _onDeckEpisode!,
-            isOffline: widget.isOffline,
-            onRefresh: _loadFullMetadata,
-          );
+        if (metadata.isShow) {
+          if (_onDeckEpisode != null) {
+            appLogger.d('Playing on deck episode: ${_onDeckEpisode!.title}');
+            unawaited(
+              navigateToVideoPlayerWithRefresh(
+                context,
+                metadata: _onDeckEpisode!,
+                isOffline: widget.isOffline,
+                onRefresh: _loadFullMetadata,
+              ),
+            );
+          } else {
+            await _playFirstEpisode();
+          }
+        } else if (metadata.isSeason) {
+          if (_episodes.isNotEmpty) {
+            unawaited(
+              navigateToVideoPlayerWithRefresh(
+                context,
+                metadata: _episodes.first,
+                isOffline: widget.isOffline,
+                onRefresh: _loadFullMetadata,
+              ),
+            );
+          } else {
+            await _playFirstEpisode();
+          }
         } else {
-          // No on deck episode, fetch first episode of first season
-          await _playFirstEpisode();
-        }
-      } else if (metadata.isSeason) {
-        // For seasons, play the first episode
-        if (_episodes.isNotEmpty) {
-          await navigateToVideoPlayerWithRefresh(
-            context,
-            metadata: _episodes.first,
-            isOffline: widget.isOffline,
-            onRefresh: _loadFullMetadata,
+          appLogger.d('Playing: ${metadata.title}');
+          unawaited(
+            navigateToVideoPlayerWithRefresh(
+              context,
+              metadata: metadata,
+              isOffline: widget.isOffline,
+              onRefresh: _loadFullMetadata,
+              playbackData: _playbackData,
+            ),
           );
-        } else {
-          await _playFirstEpisode();
         }
-      } else {
-        appLogger.d('Playing: ${metadata.title}');
-        // For movies or episodes, play directly
-        await navigateToVideoPlayerWithRefresh(
-          context,
-          metadata: metadata,
-          isOffline: widget.isOffline,
-          onRefresh: _loadFullMetadata,
-          playbackData: _playbackData,
-        );
+      } finally {
+        setStateIfMounted(() => _isStartingPrimaryPlayback = false);
       }
     }
 
@@ -527,7 +541,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
             child: FilledButton(
               focusNode: _playButtonFocusNode,
               autofocus: isKeyboardMode,
-              onPressed: onPlayPressed,
+                onPressed: _isStartingPrimaryPlayback ? null : onPlayPressed,
               style: actionButtonStyle(padding: const EdgeInsets.symmetric(horizontal: 16)),
               child: playButtonLabel.isNotEmpty
                   ? Row(
@@ -892,45 +906,72 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   }
 
   Future<void> _playOxViaSystemPlayer(PlexMetadata metadata) async {
+    MediaRepository? mediaRepository;
     try {
+      playMediaDebugInfo('Starting OX internal playback for metadata=${metadata.ratingKey} title=${metadata.title}');
       final repository = await DataRepository.create();
-      final mediaRepository = MediaRepository(dataRepository: repository);
+      mediaRepository = MediaRepository(dataRepository: repository);
       final detail = await mediaRepository.fetchLibraryMediaDetail(metadata.ratingKey);
       if (!mounted) return;
 
       var selectedFile = mediaRepository.selectPreferredFile(detail);
       if (selectedFile == null) {
+        playMediaDebugError('No playable OX file found for metadata=${metadata.ratingKey}');
         showErrorSnackBar(context, t.messages.fileInfoNotAvailable);
         return;
       }
 
-      String? playbackPath = await mediaRepository.resolveFilePathForSystemPlayback(selectedFile);
+      playMediaDebugInfo(
+        'Selected OX file id=${selectedFile.id} canStream=${selectedFile.canStream} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
+      );
+
+      Uri? streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
 
       // Legacy-like fallback: trigger provider recovery, refresh locator, retry once.
-      if ((playbackPath == null || playbackPath.isEmpty)) {
+      if (streamUrl == null) {
+        playMediaDebugInfo('Initial stream URL resolution failed for file=${selectedFile.id}. Requesting media recovery.');
         final recovered = await mediaRepository.requestMediaRecovery(selectedFile.id);
+        playMediaDebugInfo('Media recovery result for file=${selectedFile.id}: recovered=$recovered');
         if (recovered) {
           final refreshedDetail = await mediaRepository.fetchLibraryMediaDetail(metadata.ratingKey);
           final refreshedFile = refreshedDetail.files.where((f) => f.id == selectedFile!.id).firstOrNull ??
               mediaRepository.selectPreferredFile(refreshedDetail);
           if (refreshedFile != null) {
             selectedFile = refreshedFile;
-            playbackPath = await mediaRepository.resolveFilePathForSystemPlayback(selectedFile);
+            playMediaDebugInfo(
+              'Retrying stream URL resolution with refreshed file id=${selectedFile.id} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
+            );
+            streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
           }
         }
       }
 
       if (!mounted) return;
 
-      if (playbackPath == null || playbackPath.isEmpty) {
+      if (streamUrl == null) {
+        playMediaDebugError('Playback stream URL is still empty for metadata=${metadata.ratingKey} file=${selectedFile.id}');
+        await mediaRepository.releaseInternalPlaybackSession(reason: 'stream_url_unavailable');
         showErrorSnackBar(context, t.externalPlayer.launchFailed);
         return;
       }
 
-      final videoUrl = playbackPath.contains('://') ? playbackPath : 'file://$playbackPath';
-      await ExternalPlayerService.launchSystemDefault(context: context, videoUrl: videoUrl);
+      final videoUrl = streamUrl.toString();
+      playMediaDebugSuccess('Resolved internal playback URL for file=${selectedFile.id}: $videoUrl');
+      final playbackFuture = navigateToInternalVideoPlayerForUrl(
+        context,
+        metadata: metadata,
+        videoUrl: videoUrl,
+      );
+      playbackFuture.whenComplete(() async {
+        await mediaRepository?.releaseInternalPlaybackSession(reason: 'video_player_closed');
+      });
+      unawaited(playbackFuture);
     } catch (error) {
-      appLogger.e('Failed to start OX system playback', error: error);
+      appLogger.e('Failed to start OX internal playback', error: error);
+      playMediaDebugError('Failed to start OX internal playback for metadata=${metadata.ratingKey}: $error');
+      if (mediaRepository != null) {
+        unawaited(mediaRepository.releaseInternalPlaybackSession(reason: 'playback_launch_failed'));
+      }
       if (mounted) {
         showErrorSnackBar(context, t.externalPlayer.launchFailed);
       }
@@ -2107,11 +2148,13 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       );
       if (mounted) {
         appLogger.d('Playing first episode: ${episodeWithServerId.title}');
-        await navigateToVideoPlayerWithRefresh(
-          context,
-          metadata: episodeWithServerId,
-          isOffline: widget.isOffline,
-          onRefresh: _loadFullMetadata,
+        unawaited(
+          navigateToVideoPlayerWithRefresh(
+            context,
+            metadata: episodeWithServerId,
+            isOffline: widget.isOffline,
+            onRefresh: _loadFullMetadata,
+          ),
         );
       }
     } catch (e) {

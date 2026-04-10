@@ -33,6 +33,33 @@ class MediaRepository {
     );
   }
 
+  Future<String?> resolveFilePathForInternalPlayback(OxLibraryMediaDetailFile file) {
+    return dataRepository.resolveOxMediaFilePathForPlayback(
+      mediaId: file.id,
+      fileUniqueId: file.fileUniqueId,
+      locatorType: file.locatorType,
+      locatorChatId: file.locatorChatId,
+      locatorMessageId: file.locatorMessageId,
+      locatorRemoteFileId: file.locatorRemoteFileId,
+      allowQuickStart: false,
+    );
+  }
+
+  Future<Uri?> resolveStreamUrlForInternalPlayback(OxLibraryMediaDetailFile file) {
+    return dataRepository.resolveOxMediaStreamUrlForPlayback(
+      mediaId: file.id,
+      fileUniqueId: file.fileUniqueId,
+      locatorType: file.locatorType,
+      locatorChatId: file.locatorChatId,
+      locatorMessageId: file.locatorMessageId,
+      locatorRemoteFileId: file.locatorRemoteFileId,
+    );
+  }
+
+  Future<int> releaseInternalPlaybackSession({String? reason}) {
+    return dataRepository.releaseOxMediaPlaybackSession(reason: reason);
+  }
+
   Future<bool> requestMediaRecovery(String mediaId) {
     return dataRepository.requestOxMediaRecovery(mediaId);
   }

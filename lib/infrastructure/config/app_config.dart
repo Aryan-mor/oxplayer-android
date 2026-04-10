@@ -8,6 +8,7 @@ class AppConfig {
     required this.apiBaseUrl,
     required this.telegramWebAppShortName,
     required this.telegramWebAppUrl,
+    required this.subdlApiKey,
   });
 
   final String telegramApiId;
@@ -16,6 +17,7 @@ class AppConfig {
   final String apiBaseUrl;
   final String telegramWebAppShortName;
   final String telegramWebAppUrl;
+  final String subdlApiKey;
 
   static Future<AppConfig> load() async {
     if (!dotenv.isInitialized) {
@@ -42,6 +44,7 @@ class AppConfig {
         'OXPLAYER_TELEGRAM_WEBAPP_URL',
         'TV_APP_WEBAPP_URL',
       ),
+      subdlApiKey: value('SUBDL_API_KEY'),
     );
   }
 

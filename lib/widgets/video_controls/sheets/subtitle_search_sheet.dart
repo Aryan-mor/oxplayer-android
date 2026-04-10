@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:oxplayer/infrastructure/config/app_config.dart';
+import 'package:oxplayer/infrastructure/subtitles/subdl_service.dart';
+import 'package:oxplayer/mpv/mpv.dart';
 
 import '../../../i18n/strings.g.dart';
-import '../../../models/plex_subtitle_search_result.dart';
+import '../../../models/plex_metadata.dart';
 import '../../../utils/language_codes.dart';
-import '../../../utils/provider_extensions.dart';
 import '../../../utils/snackbar_helper.dart';
 import '../../../widgets/app_icon.dart';
 import '../../../widgets/focusable_list_tile.dart';
@@ -17,15 +19,19 @@ import 'base_video_control_sheet.dart';
 class SubtitleSearchSheet extends StatefulWidget {
   final String ratingKey;
   final String serverId;
+  final PlexMetadata metadata;
   final String? mediaTitle;
   final Future<void> Function()? onSubtitleDownloaded;
+  final Future<void> Function(SubtitleTrack track)? onExternalSubtitleReady;
 
   const SubtitleSearchSheet({
     super.key,
     required this.ratingKey,
     required this.serverId,
+    required this.metadata,
     this.mediaTitle,
     this.onSubtitleDownloaded,
+    this.onExternalSubtitleReady,
   });
 
   @override
@@ -38,7 +44,7 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
   final _titleController = TextEditingController();
   Timer? _debounceTimer;
 
-  List<PlexSubtitleSearchResult>? _results;
+  List<SubdlSearchResult>? _results;
   bool _isSearching = false;
   String? _error;
   String? _downloadingKey;
@@ -77,12 +83,17 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
     });
 
     try {
-      final client = context.getClientForServer(widget.serverId);
+      final config = await AppConfig.load();
+      if (config.subdlApiKey.isEmpty) {
+        throw Exception('SUBDL_API_KEY is not configured.');
+      }
+
       final title = _titleController.text.trim();
-      final results = await client.searchSubtitles(
-        widget.ratingKey,
-        language: _languageCode,
-        title: title.isEmpty ? null : title,
+      final results = await SubdlService().search(
+        apiKey: config.subdlApiKey,
+        metadata: widget.metadata,
+        languageCode: _languageCode,
+        titleOverride: title.isEmpty ? null : title,
       );
       if (!mounted) return;
       setState(() {
@@ -112,34 +123,31 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
     _search();
   }
 
-  Future<void> _downloadSubtitle(PlexSubtitleSearchResult result) async {
+  Future<void> _downloadSubdlSubtitle(SubdlSearchResult result) async {
     if (_downloadingKey != null) return;
-    setState(() => _downloadingKey = result.key);
+    setState(() => _downloadingKey = result.rawDownload);
 
     try {
-      final client = context.getClientForServer(widget.serverId);
-      final success = await client.downloadSubtitle(
-        widget.ratingKey,
-        key: result.key,
-        codec: result.codec ?? 'srt',
-        language: result.languageCode ?? _languageCode,
-        hearingImpaired: result.hearingImpaired,
-        forced: result.forced,
-        providerTitle: result.providerTitle ?? '',
+      final downloaded = await SubdlService().downloadAndExtract(
+        rawDownload: result.rawDownload,
+        displayLabel: result.displayLabel,
+        languageCode: result.languageCode,
       );
 
       if (!mounted) return;
 
-      if (success) {
-        await widget.onSubtitleDownloaded?.call();
-        if (!mounted) return;
-        showSuccessSnackBar(context, t.videoControls.subtitleDownloaded);
-        OverlaySheetController.of(context).close();
-      } else {
-        showErrorSnackBar(context, t.videoControls.subtitleDownloadFailed);
-        setState(() => _downloadingKey = null);
-      }
-    } catch (e) {
+      await widget.onExternalSubtitleReady?.call(
+        SubtitleTrack.uri(
+          downloaded.file.uri.toString(),
+          title: downloaded.displayLabel,
+          language: downloaded.languageCode?.toLowerCase(),
+        ),
+      );
+      if (!mounted) return;
+
+      showSuccessSnackBar(context, t.videoControls.subtitleDownloaded);
+      OverlaySheetController.of(context).close();
+    } catch (_) {
       if (!mounted) return;
       showErrorSnackBar(context, t.videoControls.subtitleDownloadFailed);
       setState(() => _downloadingKey = null);
@@ -243,7 +251,8 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
       itemCount: _results!.length,
       itemBuilder: (context, index) {
         final result = _results![index];
-        final isDownloading = _downloadingKey == result.key;
+        final downloadKey = result.rawDownload;
+        final isDownloading = _downloadingKey == downloadKey;
         final colorScheme = Theme.of(context).colorScheme;
 
         Widget? trailing;
@@ -254,41 +263,26 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
             child: CircularProgressIndicator(strokeWidth: 2),
           );
         } else {
-          final trailingChildren = <Widget>[];
-          if (result.perfectMatch) {
-            trailingChildren.add(
-              const AppIcon(Symbols.star_rounded, fill: 1, color: Color(0xFFCC7B19), size: 16),
-            );
-          }
-          if (result.score != null) {
-            trailingChildren.add(Text(
-              result.score!.toInt().toString(),
-              style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
-            ));
-          }
-          if (trailingChildren.isNotEmpty) {
-            trailing = Row(
-              mainAxisSize: MainAxisSize.min,
-              spacing: 4,
-              children: trailingChildren,
-            );
-          }
+          trailing = Text(
+            result.languageCode?.toUpperCase() ?? 'SUBDL',
+            style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+          );
         }
 
         return FocusableListTile(
           title: Text(
-            result.title ?? result.displayTitle ?? 'Unknown',
+            result.displayLabel,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           subtitle: Text(
-            result.displayTitle ?? '',
+            'SubDL',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: colorScheme.onSurfaceVariant),
           ),
           trailing: trailing,
-          onTap: isDownloading ? null : () => _downloadSubtitle(result),
+          onTap: isDownloading ? null : () => _downloadSubdlSubtitle(result),
         );
       },
     );

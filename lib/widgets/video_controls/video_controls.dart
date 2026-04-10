@@ -1154,9 +1154,11 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       subtitlesVisible: _subtitlesVisible,
       showQueueButton: playbackState.isQueueActive,
       onQueueItemSelected: playbackState.isQueueActive ? _onQueueItemSelected : null,
+      metadata: widget.metadata,
       ratingKey: widget.metadata.ratingKey,
       mediaTitle: widget.metadata.title,
       onSubtitleDownloaded: _onSubtitleDownloaded,
+      onExternalSubtitleReady: _onExternalSubtitleReady,
     );
   }
 
@@ -2460,6 +2462,29 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     } catch (e) {
       appLogger.w('Failed to refresh subtitles after download', error: e);
     }
+  }
+
+  Future<void> _onExternalSubtitleReady(SubtitleTrack track) async {
+    final uri = track.uri;
+    if (uri == null || uri.isEmpty) {
+      return;
+    }
+
+    final existingTrack = widget.player.state.tracks.subtitle.firstWhere(
+      (subtitle) => subtitle.uri == uri,
+      orElse: () => SubtitleTrack.off,
+    );
+    if (existingTrack.id != 'no') {
+      await widget.player.selectSubtitleTrack(existingTrack);
+      return;
+    }
+
+    await widget.player.addSubtitleTrack(
+      uri: uri,
+      title: track.title,
+      language: track.language,
+      select: true,
+    );
   }
 
   Future<void> _switchMediaVersion(int newMediaIndex) async {
