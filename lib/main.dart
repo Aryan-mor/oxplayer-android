@@ -584,6 +584,7 @@ class _SetupScreenState extends State<SetupScreen> {
     Sentry.addBreadcrumb(Breadcrumb(message: 'Network check done: hasNetwork=$hasNetwork', category: 'setup'));
 
     var oxBootstrapReady = false;
+    var pendingOxApiRecovery = false;
     if (hasNetwork && authNotifier.apiAccessToken != null && authNotifier.apiAccessToken!.isNotEmpty) {
       DataRepository? repository;
       try {
@@ -615,6 +616,7 @@ class _SetupScreenState extends State<SetupScreen> {
         }
         return;
       } catch (e, stackTrace) {
+        pendingOxApiRecovery = true;
         appLogger.w('Failed to validate OX bootstrap session, continuing with offline fallback', error: e, stackTrace: stackTrace);
       } finally {
         await repository?.dispose();
@@ -662,6 +664,18 @@ class _SetupScreenState extends State<SetupScreen> {
                 showReconnectAction: false,
                 offlineStatusLabel: 'Connected to server',
                 enableOxDiscoverFallback: true,
+              ),
+            ),
+          );
+        } else if (pendingOxApiRecovery) {
+          await context.read<DownloadProvider>().ensureInitialized();
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            fadeRoute(
+              const MainScreen(
+                isOfflineMode: true,
+                pendingOxApiRecovery: true,
               ),
             ),
           );
@@ -738,7 +752,10 @@ class _SetupScreenState extends State<SetupScreen> {
                     offlineStatusLabel: 'Connected to server',
                     enableOxDiscoverFallback: true,
                   )
-                : const MainScreen(isOfflineMode: true),
+                : MainScreen(
+                    isOfflineMode: true,
+                    pendingOxApiRecovery: pendingOxApiRecovery,
+                  ),
           ),
         );
       }
@@ -759,7 +776,10 @@ class _SetupScreenState extends State<SetupScreen> {
                     offlineStatusLabel: 'Connected to server',
                     enableOxDiscoverFallback: true,
                   )
-                : const MainScreen(isOfflineMode: true),
+                : MainScreen(
+                    isOfflineMode: true,
+                    pendingOxApiRecovery: pendingOxApiRecovery,
+                  ),
           ),
         );
       }

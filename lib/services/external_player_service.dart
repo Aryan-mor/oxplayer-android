@@ -14,6 +14,30 @@ import 'settings_service.dart';
 const _externalPlayerChannel = MethodChannel('com.plezy/external_player');
 
 class ExternalPlayerService {
+  /// Force launch using system default external player, ignoring app preference.
+  static Future<bool> launchSystemDefault({
+    required BuildContext context,
+    required String videoUrl,
+  }) async {
+    try {
+      if (Platform.isAndroid && context.mounted) {
+        return _launchAndroidNative(videoUrl, KnownPlayers.systemDefault, context);
+      }
+
+      final launched = await KnownPlayers.systemDefault.launch(videoUrl);
+      if (!launched && context.mounted) {
+        showErrorSnackBar(context, t.externalPlayer.launchFailed);
+      }
+      return launched;
+    } catch (e) {
+      appLogger.e('Failed to launch system default player', error: e);
+      if (context.mounted) {
+        showErrorSnackBar(context, t.externalPlayer.launchFailed);
+      }
+      return false;
+    }
+  }
+
   /// Launch an external player with either a pre-resolved [videoUrl] (e.g. local
   /// file path for downloaded content) or by fetching the streaming URL from [client].
   static Future<bool> launch({

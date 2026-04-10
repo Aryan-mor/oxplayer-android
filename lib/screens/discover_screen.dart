@@ -612,7 +612,11 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
         if (section.id == 'videos') {
           for (final item in section.items) {
-            if (item.thumbnailSourceChatId != null && item.thumbnailSourceMessageId != null) {
+            final hasDirectLocator = item.locatorRemoteFileId != null ||
+                (item.locatorChatId != null && item.locatorMessageId != null);
+            final hasSourceMessage = item.thumbnailSourceChatId != null &&
+                item.thumbnailSourceMessageId != null;
+            if (hasDirectLocator || hasSourceMessage) {
               videoItemsForThumbnails.add(item);
             }
           }

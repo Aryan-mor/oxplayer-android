@@ -93,18 +93,42 @@ class OxBootstrapCapabilities {
   final int libraryItemCount;
 }
 
+class OxRequiredDialogMapping {
+  const OxRequiredDialogMapping({
+    required this.key,
+    required this.botUsername,
+    required this.isReady,
+    this.mappingId,
+    this.tdlibChatId,
+    this.botApiChatId,
+    this.botUserId,
+    this.mappingSource,
+  });
+
+  final String key;
+  final String botUsername;
+  final bool isReady;
+  final String? mappingId;
+  final String? tdlibChatId;
+  final String? botApiChatId;
+  final String? botUserId;
+  final String? mappingSource;
+}
+
 class OxBootstrapResult {
   const OxBootstrapResult({
     required this.telegramReady,
     required this.user,
     required this.session,
     required this.capabilities,
+    required this.requiredDialogMappings,
   });
 
   final bool telegramReady;
   final OxBootstrapUser user;
   final OxBootstrapSession session;
   final OxBootstrapCapabilities capabilities;
+  final List<OxRequiredDialogMapping> requiredDialogMappings;
 }
 
 class OxLibraryMediaItem {
@@ -120,9 +144,7 @@ class OxLibraryMediaItem {
     this.locatorType,
     this.locatorChatId,
     this.locatorMessageId,
-    this.locatorBotUsername,
     this.locatorRemoteFileId,
-    this.verificationStatus,
     this.thumbnailSourceChatId,
     this.thumbnailSourceMessageId,
   });
@@ -138,9 +160,7 @@ class OxLibraryMediaItem {
   final String? locatorType;
   final int? locatorChatId;
   final int? locatorMessageId;
-  final String? locatorBotUsername;
   final String? locatorRemoteFileId;
-  final String? verificationStatus;
   /// For general_video: Telegram chat ID of the source message (for thumbnail resolution via TDLib).
   final int? thumbnailSourceChatId;
   /// For general_video: Telegram message ID of the source message (for thumbnail resolution via TDLib).
@@ -159,6 +179,115 @@ class OxDiscoverSection {
   final List<OxLibraryMediaItem> items;
 }
 
+class OxLibraryGenre {
+  const OxLibraryGenre({required this.id, required this.title});
+
+  final String id;
+  final String title;
+}
+
+class OxLibraryMediaDetailMedia {
+  const OxLibraryMediaDetailMedia({
+    required this.id,
+    required this.title,
+    required this.type,
+    required this.genres,
+    required this.createdAt,
+    required this.updatedAt,
+    this.imdbId,
+    this.tmdbId,
+    this.releaseYear,
+    this.originalLanguage,
+    this.posterPath,
+    this.summary,
+    this.voteAverage,
+    this.rawDetails,
+  });
+
+  final String id;
+  final String? imdbId;
+  final String? tmdbId;
+  final String title;
+  final String type;
+  final int? releaseYear;
+  final String? originalLanguage;
+  final String? posterPath;
+  final String? summary;
+  final double? voteAverage;
+  final String? rawDetails;
+  final List<OxLibraryGenre> genres;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+class OxLibraryMediaDetailFile {
+  const OxLibraryMediaDetailFile({
+    required this.id,
+    required this.mediaId,
+    required this.fileUniqueId,
+    required this.createdAt,
+    required this.updatedAt,
+    this.sourceId,
+    this.sourceChatId,
+    this.sourceName,
+    this.videoLanguage,
+    this.quality,
+    this.size,
+    this.versionTag,
+    this.language,
+    this.subtitleMentioned,
+    this.subtitlePresentation,
+    this.subtitleLanguage,
+    this.captionText,
+    this.canStream,
+    this.season,
+    this.episode,
+    this.telegramFileId,
+    this.locatorType,
+    this.locatorChatId,
+    this.locatorMessageId,
+    this.locatorRemoteFileId,
+  });
+
+  final String id;
+  final String mediaId;
+  final String? sourceId;
+  final int? sourceChatId;
+  final String? sourceName;
+  final String fileUniqueId;
+  final String? videoLanguage;
+  final String? quality;
+  final int? size;
+  final String? versionTag;
+  final String? language;
+  final bool? subtitleMentioned;
+  final String? subtitlePresentation;
+  final String? subtitleLanguage;
+  final String? captionText;
+  final bool? canStream;
+  final int? season;
+  final int? episode;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final String? telegramFileId;
+  final String? locatorType;
+  final int? locatorChatId;
+  final int? locatorMessageId;
+  final String? locatorRemoteFileId;
+}
+
+class OxLibraryMediaDetail {
+  const OxLibraryMediaDetail({
+    required this.media,
+    required this.files,
+    required this.currentUserHasAccess,
+  });
+
+  final OxLibraryMediaDetailMedia media;
+  final List<OxLibraryMediaDetailFile> files;
+  final bool currentUserHasAccess;
+}
+
 class _ThumbnailMessageLookupResult {
   const _ThumbnailMessageLookupResult({
     required this.message,
@@ -171,20 +300,6 @@ class _ThumbnailMessageLookupResult {
   final String? failureReason;
   final int? resolvedChatId;
   final int? resolvedMessageId;
-}
-
-class _VerifiedLocatorResult {
-  const _VerifiedLocatorResult({
-    required this.locatorType,
-    required this.locatorMessageId,
-    this.locatorChatId,
-    this.locatorBotUsername,
-  });
-
-  final String locatorType;
-  final int locatorMessageId;
-  final int? locatorChatId;
-  final String? locatorBotUsername;
 }
 
 class DataRepository {
@@ -208,8 +323,6 @@ class DataRepository {
   final TdlibFacade _tdlib;
 
   bool _tdlibInitialized = false;
-  bool _locatorVerifySyncInFlight = false;
-  DateTime? _lastLocatorVerifySyncAt;
   final Set<String> _thumbnailRecoveryInFlight = <String>{};
   final Map<String, DateTime> _lastThumbnailRecoveryRequestAt = <String, DateTime>{};
 
@@ -367,6 +480,14 @@ class DataRepository {
     final user = Map<String, dynamic>.from(data['user'] as Map? ?? <String, dynamic>{});
     final session = Map<String, dynamic>.from(data['session'] as Map? ?? <String, dynamic>{});
     final capabilities = Map<String, dynamic>.from(data['capabilities'] as Map? ?? <String, dynamic>{});
+    final requiredDialogMappings = _parseRequiredDialogMappings(data['requiredDialogMappings']);
+
+    if (requireTelegramSession && requiredDialogMappings.isNotEmpty) {
+      final ensuredMappings = await _ensureRequiredDialogMappings(requiredDialogMappings);
+      for (var index = 0; index < requiredDialogMappings.length; index += 1) {
+        requiredDialogMappings[index] = ensuredMappings[index];
+      }
+    }
 
     authDebugSuccess('OXPlayer bootstrap session validated.');
 
@@ -391,12 +512,102 @@ class DataRepository {
         hasLibraryMedia: capabilities['hasLibraryMedia'] == true,
         libraryItemCount: (capabilities['libraryItemCount'] as num?)?.toInt() ?? 0,
       ),
+      requiredDialogMappings: requiredDialogMappings,
     );
   }
 
   Future<void> startQrLogin() async {
     authDebugInfo('Requesting QR login from TDLib...');
     await _tdlib.startQrLogin();
+  }
+
+  List<OxRequiredDialogMapping> _parseRequiredDialogMappings(Object? raw) {
+    if (raw is! List) {
+      return <OxRequiredDialogMapping>[];
+    }
+
+    return raw.whereType<Map>().map((entry) {
+      final item = Map<String, dynamic>.from(entry);
+      return OxRequiredDialogMapping(
+        key: _readOptionalTrimmed(item['key']) ?? '',
+        botUsername: _readOptionalTrimmed(item['botUsername']) ?? '',
+        isReady: item['isReady'] == true,
+        mappingId: _readOptionalTrimmed(item['mappingId']),
+        tdlibChatId: _readOptionalTrimmed(item['tdlibChatId']),
+        botApiChatId: _readOptionalTrimmed(item['botApiChatId']),
+        botUserId: _readOptionalTrimmed(item['botUserId']),
+        mappingSource: _readOptionalTrimmed(item['mappingSource']),
+      );
+    }).where((item) => item.botUsername.isNotEmpty).toList(growable: true);
+  }
+
+  Future<List<OxRequiredDialogMapping>> _ensureRequiredDialogMappings(
+    List<OxRequiredDialogMapping> mappings,
+  ) async {
+    if (mappings.isEmpty) {
+      return mappings;
+    }
+
+    final dio = _authorizedApiClient();
+    final resolved = <OxRequiredDialogMapping>[];
+
+    for (final mapping in mappings) {
+      if (mapping.isReady && (mapping.tdlibChatId ?? '').isNotEmpty) {
+        resolved.add(mapping);
+        continue;
+      }
+
+      final privateChat = await _openBotPrivateChat(mapping.botUsername);
+      if (privateChat == null) {
+        resolved.add(mapping);
+        continue;
+      }
+
+      final botUserId = privateChat.$2;
+      final chat = privateChat.$1;
+      try {
+        final response = await dio.post<Map<String, dynamic>>(
+          '/me/dialog-mappings/upsert',
+          data: <String, dynamic>{
+            'tdlibChatId': chat.id.toString(),
+            'botUserId': botUserId.toString(),
+            'botUsername': mapping.botUsername,
+            'title': chat.title,
+            'chatType': 'private',
+            'peerIsBot': true,
+            'mappingSource': 'merged',
+          },
+        );
+        final raw = Map<String, dynamic>.from(response.data ?? const <String, dynamic>{});
+        resolved.add(
+          OxRequiredDialogMapping(
+            key: mapping.key,
+            botUsername: mapping.botUsername,
+            isReady: true,
+            mappingId: _readOptionalTrimmed(raw['id']) ?? mapping.mappingId,
+            tdlibChatId: _readOptionalTrimmed(raw['tdlibChatId']) ?? chat.id.toString(),
+            botApiChatId: _readOptionalTrimmed(raw['botApiChatId']) ?? mapping.botApiChatId,
+            botUserId: _readOptionalTrimmed(raw['botUserId']) ?? botUserId.toString(),
+            mappingSource: _readOptionalTrimmed(raw['mappingSource']) ?? 'merged',
+          ),
+        );
+      } catch (_) {
+        resolved.add(
+          OxRequiredDialogMapping(
+            key: mapping.key,
+            botUsername: mapping.botUsername,
+            isReady: true,
+            mappingId: mapping.mappingId,
+            tdlibChatId: chat.id.toString(),
+            botApiChatId: mapping.botApiChatId,
+            botUserId: botUserId.toString(),
+            mappingSource: mapping.mappingSource ?? 'tdlib_only',
+          ),
+        );
+      }
+    }
+
+    return resolved;
   }
 
   Future<void> submitCloudPassword(String password) => _tdlib.submitCloudPassword(password);
@@ -429,112 +640,104 @@ class DataRepository {
       sections.add(OxDiscoverSection(id: 'videos', title: 'Videos', items: results[2]));
     }
 
-    // Fire-and-forget background sync for pending locator verification.
-    unawaited(_syncPendingLocatorVerificationCandidates(sections));
-
     return sections;
   }
 
-  Future<void> dispose() async {}
-
-  Future<void> _syncPendingLocatorVerificationCandidates(List<OxDiscoverSection> sections) async {
-    final now = DateTime.now();
-    if (_locatorVerifySyncInFlight) {
-      debugLogInfo(
-        'Locator verify scan skipped: previous scan is still running.',
-        type: LogType.locatorVerification,
-      );
-      return;
+  Future<OxLibraryMediaDetail> fetchOxLibraryMediaDetail(String globalId) async {
+    final trimmedId = globalId.trim();
+    if (trimmedId.isEmpty) {
+      throw ArgumentError.value(globalId, 'globalId', 'globalId cannot be empty');
     }
 
-    final last = _lastLocatorVerifySyncAt;
-    if (last != null && now.difference(last) < const Duration(seconds: 25)) {
-      return;
-    }
-
-    final candidates = <OxLibraryMediaItem>[];
-    final seen = <String>{};
-    for (final section in sections) {
-      for (final item in section.items) {
-        final mediaId = _extractMediaIdForLocatorVerification(item.globalId);
-        if (mediaId == null || seen.contains(mediaId)) continue;
-        final hasLocatorCandidate = item.locatorMessageId != null && item.locatorMessageId! > 0;
-        final hasSourceCandidate =
-            item.thumbnailSourceChatId != null &&
-            item.thumbnailSourceMessageId != null &&
-            item.thumbnailSourceMessageId! > 0;
-        if (!hasLocatorCandidate && !hasSourceCandidate) continue;
-        seen.add(mediaId);
-        candidates.add(item);
-      }
-    }
-
-    if (candidates.isEmpty) {
-      debugLogInfo(
-        'Locator verify scan completed: no candidates with locator metadata found.',
-        type: LogType.locatorVerification,
-      );
-      _lastLocatorVerifySyncAt = now;
-      return;
-    }
-
-    _locatorVerifySyncInFlight = true;
-    _lastLocatorVerifySyncAt = now;
-
-    debugLogInfo(
-      'Locator verify scan started: candidates=${candidates.length}.',
-      type: LogType.locatorVerification,
+    final dio = _authorizedApiClient();
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/library/media/${Uri.encodeComponent(trimmedId)}',
     );
 
-    var successCount = 0;
-    var attemptedCount = 0;
-    try {
-      for (final item in candidates.take(12)) {
-        final mediaId = _extractMediaIdForLocatorVerification(item.globalId);
-        if (mediaId == null) continue;
-        attemptedCount += 1;
-        final ok = await _trySyncResolvedLocatorVerification(
-          mediaId: mediaId,
-          fileUniqueId: item.fileUniqueId,
-          locatorType: item.locatorType,
-          locatorChatId: item.locatorChatId,
-          locatorMessageId: item.locatorMessageId,
-          locatorBotUsername: item.locatorBotUsername,
-          sourceChatId: item.thumbnailSourceChatId,
-          sourceMessageId: item.thumbnailSourceMessageId,
-          reason: 'discover_scan',
-        );
-        if (ok != null) {
-          successCount += 1;
-        } else if ((item.verificationStatus ?? '').trim().toLowerCase() == 'verified') {
-          debugLogInfo(
-            'Locator verify scan failed for verified locator $mediaId. Requesting provider recovery.',
-            type: LogType.locatorVerification,
-          );
-          unawaited(_requestThumbnailRecovery(mediaId, reason: 'locator_verify_scan_failed'));
-        }
-      }
+    final root = response.data;
+    if (root == null) {
+      throw StateError('Library detail response is empty for $trimmedId');
+    }
 
-      debugLogInfo(
-        'Locator verify scan finished: attempted=$attemptedCount success=$successCount.',
-        type: LogType.locatorVerification,
+    final mediaRaw = root['media'];
+    final filesRaw = root['files'];
+
+    if (mediaRaw is! Map || filesRaw is! List) {
+      throw StateError('Library detail response has unexpected shape for $trimmedId');
+    }
+
+    final media = _parseOxLibraryMediaDetailMedia(Map<String, dynamic>.from(mediaRaw));
+    final files = filesRaw
+        .whereType<Map>()
+        .map((raw) => _parseOxLibraryMediaDetailFile(Map<String, dynamic>.from(raw)))
+        .toList(growable: false);
+
+    return OxLibraryMediaDetail(
+      media: media,
+      files: files,
+      currentUserHasAccess: _readOptionalBool(root['currentUserHasAccess']) ?? false,
+    );
+  }
+
+  Future<bool> requestOxMediaRecovery(String mediaId) async {
+    final id = mediaId.trim();
+    if (id.isEmpty) return false;
+
+    try {
+      final dio = _authorizedApiClient();
+      final response = await dio.post<Map<String, dynamic>>(
+        '/me/recover-from-backup',
+        data: <String, dynamic>{'mediaFileId': id},
       );
-    } catch (error) {
-      debugLogError(
-        'Locator verify scan crashed: $error',
-        type: LogType.locatorVerification,
-      );
-    } finally {
-      _locatorVerifySyncInFlight = false;
+      final body = response.data ?? const <String, dynamic>{};
+      final ok = _readOptionalBool(body['ok']) ?? false;
+      if (ok) return true;
+
+      final status = _readOptionalTrimmed(body['status']);
+      return status == 'succeeded';
+    } catch (_) {
+      return false;
     }
   }
 
-  String? _extractMediaIdForLocatorVerification(String globalId) {
-    final value = globalId.trim();
-    if (value.isEmpty) return null;
-    if (value.startsWith('series:')) return null;
-    return value;
+  /// Resolves a playable local path for an OX media file via TDLib locator metadata.
+  ///
+  /// This prioritizes stable locator resolution, then waits for a readable file
+  /// prefix (stream-like start), and finally falls back to a full file download.
+  Future<String?> resolveOxMediaFilePathForPlayback({
+    required String mediaId,
+    required String? fileUniqueId,
+    required String? locatorType,
+    required int? locatorChatId,
+    required int? locatorMessageId,
+    required String? locatorRemoteFileId,
+  }) async {
+    final ready = await _ensureTdlibReadyForMediaPlayback();
+    if (!ready) {
+      return null;
+    }
+
+    final resolved = await resolveTelegramMediaFile(
+      tdlib: _tdlib,
+      mediaFileId: mediaId,
+      locatorType: locatorType,
+      locatorChatId: locatorChatId,
+      locatorMessageId: locatorMessageId,
+      locatorRemoteFileId: locatorRemoteFileId,
+    );
+    if (resolved == null) {
+      return null;
+    }
+
+    final quickStartPath = await _waitForReadableVideoPrefix(resolved.file.id);
+    if (quickStartPath != null && quickStartPath.isNotEmpty) {
+      return quickStartPath;
+    }
+
+    return _downloadTelegramFileFully(resolved.file.id);
   }
+
+  Future<void> dispose() async {}
 
   /// Fetches and caches the video thumbnail from Telegram for a [general_video]
   /// media item.
@@ -546,11 +749,9 @@ class DataRepository {
   Future<String?> fetchVideoThumbnail({
     required String mediaId,
     String? fileUniqueId,
-    String? verificationStatus,
     String? locatorType,
     int? locatorChatId,
     int? locatorMessageId,
-    String? locatorBotUsername,
     String? locatorRemoteFileId,
     int? chatId,
     int? messageId,
@@ -585,7 +786,6 @@ class DataRepository {
         locatorType: locatorType,
         locatorChatId: locatorChatId,
         locatorMessageId: locatorMessageId,
-        locatorBotUsername: locatorBotUsername,
         locatorRemoteFileId: locatorRemoteFileId,
       );
       if (directResolvedFile != null) {
@@ -602,116 +802,33 @@ class DataRepository {
         }
       }
 
-      var effectiveVerificationStatus = (verificationStatus ?? '').trim().toLowerCase();
-      var effectiveLocatorType = locatorType;
-      var effectiveLocatorChatId = locatorChatId;
-      var effectiveLocatorMessageId = locatorMessageId;
-      var effectiveLocatorBotUsername = locatorBotUsername;
-      if (effectiveVerificationStatus != 'verified') {
-        final verifiedLocator = await _trySyncResolvedLocatorVerification(
-          mediaId: mediaId,
-          fileUniqueId: fileUniqueId,
-          locatorType: locatorType,
-          locatorChatId: locatorChatId,
-          locatorMessageId: locatorMessageId,
-          locatorBotUsername: locatorBotUsername,
-          sourceChatId: chatId,
-          sourceMessageId: messageId,
-          reason: 'thumbnail_fetch',
-        );
-        if (verifiedLocator == null) {
-          debugLogInfo(
-            'Thumbnail skipped for $mediaId because locator is not verified yet. verificationStatus=$verificationStatus',
-            type: LogType.telegramThumbnail,
-          );
-          return null;
-        }
-
-        effectiveVerificationStatus = 'verified';
-        effectiveLocatorType = verifiedLocator.locatorType;
-        effectiveLocatorChatId = verifiedLocator.locatorChatId;
-        effectiveLocatorMessageId = verifiedLocator.locatorMessageId;
-        effectiveLocatorBotUsername = verifiedLocator.locatorBotUsername;
-        debugLogSuccess(
-          'Thumbnail verify succeeded inline for $mediaId; continuing with verified locator type=${verifiedLocator.locatorType} messageId=${verifiedLocator.locatorMessageId}.',
-          type: LogType.telegramThumbnail,
-        );
-      }
-
-      if (effectiveVerificationStatus == 'verified') {
-        final resolvedFile = await resolveTelegramMediaFile(
-          tdlib: _tdlib,
-          mediaFileId: mediaId,
-          locatorType: effectiveLocatorType,
-          locatorChatId: effectiveLocatorChatId,
-          locatorMessageId: effectiveLocatorMessageId,
-          locatorBotUsername: effectiveLocatorBotUsername,
-          locatorRemoteFileId: locatorRemoteFileId,
-        );
-        if (resolvedFile != null) {
-          final resolvedThumbPath = await _generateResolvedFileThumbnailToCache(
-            sourceFile: resolvedFile.file,
-            cachedFile: cachedFile,
-          );
-          if (resolvedThumbPath != null) {
-            debugLogSuccess(
-              'Generated thumbnail from verified resolved locator file for $mediaId at $resolvedThumbPath.',
-              type: LogType.telegramThumbnail,
-            );
-            return resolvedThumbPath;
-          }
-        }
-      }
-
-      final lookup = await _resolveVerifiedThumbnailMessage(
+      var message = await _resolveDirectThumbnailMessage(
         mediaId: mediaId,
         fileUniqueId: fileUniqueId,
-        locatorType: effectiveLocatorType,
-        locatorChatId: effectiveLocatorChatId,
-        locatorMessageId: effectiveLocatorMessageId,
-        locatorBotUsername: effectiveLocatorBotUsername,
+        locatorType: locatorType,
+        locatorChatId: locatorChatId,
+        locatorMessageId: locatorMessageId,
       );
-      var effectiveLookup = lookup;
-      var message = effectiveLookup.message;
-      if (message == null) {
-        final repairedLocator = await _trySyncResolvedLocatorVerification(
-          mediaId: mediaId,
+
+      if (message.message == null && chatId != null && messageId != null) {
+        message = await _resolveThumbnailMessage(
+          chatId: chatId,
+          messageId: messageId,
           fileUniqueId: fileUniqueId,
-          locatorType: effectiveLocatorType,
-          locatorChatId: effectiveLocatorChatId,
-          locatorMessageId: effectiveLocatorMessageId,
-          locatorBotUsername: effectiveLocatorBotUsername,
-          sourceChatId: chatId,
-          sourceMessageId: messageId,
-          reason: 'verified_locator_recheck',
         );
-        if (repairedLocator != null) {
-          effectiveLocatorType = repairedLocator.locatorType;
-          effectiveLocatorChatId = repairedLocator.locatorChatId;
-          effectiveLocatorMessageId = repairedLocator.locatorMessageId;
-          effectiveLocatorBotUsername = repairedLocator.locatorBotUsername;
-          effectiveLookup = await _resolveVerifiedThumbnailMessage(
-            mediaId: mediaId,
-            fileUniqueId: fileUniqueId,
-            locatorType: effectiveLocatorType,
-            locatorChatId: effectiveLocatorChatId,
-            locatorMessageId: effectiveLocatorMessageId,
-            locatorBotUsername: effectiveLocatorBotUsername,
-          );
-          message = effectiveLookup.message;
-        }
       }
-      if (message == null) {
+
+      if (message.message == null) {
         debugLogError(
-          effectiveLookup.failureReason ?? 'Could not resolve verified locator message for $mediaId.',
+          message.failureReason ?? 'Could not resolve direct locator message for $mediaId.',
           type: LogType.telegramThumbnail,
         );
-        unawaited(_requestThumbnailRecovery(mediaId, reason: 'verified_locator_message_missing'));
+        unawaited(_requestThumbnailRecovery(mediaId, reason: 'direct_locator_message_missing'));
         return null;
       }
 
       final directThumbPath = await _downloadMessageThumbnailToCache(
-        message: message,
+        message: message.message!,
         cachedFile: cachedFile,
       );
       if (directThumbPath != null) {
@@ -723,20 +840,20 @@ class DataRepository {
       }
 
       final generatedThumbPath = await _generateMessageThumbnailToCache(
-        message: message,
+        message: message.message!,
         cachedFile: cachedFile,
       );
       if (generatedThumbPath != null) {
         debugLogSuccess(
-          'Generated thumbnail from verified locator for $mediaId at $generatedThumbPath.',
+          'Generated thumbnail from direct Telegram message for $mediaId at $generatedThumbPath.',
           type: LogType.telegramThumbnail,
         );
       } else {
         debugLogError(
-          'Verified locator thumbnail generation failed for $mediaId. Requesting provider recovery.',
+          'Direct Telegram thumbnail generation failed for $mediaId. Requesting provider recovery.',
           type: LogType.telegramThumbnail,
         );
-        unawaited(_requestThumbnailRecovery(mediaId, reason: 'verified_locator_thumbnail_generation_failed'));
+        unawaited(_requestThumbnailRecovery(mediaId, reason: 'direct_thumbnail_generation_failed'));
       }
       return generatedThumbPath;
     } catch (error) {
@@ -749,255 +866,23 @@ class DataRepository {
     }
   }
 
-  Future<_VerifiedLocatorResult?> _trySyncResolvedLocatorVerification({
+  Future<_ThumbnailMessageLookupResult> _resolveDirectThumbnailMessage({
     required String mediaId,
     required String? fileUniqueId,
     required String? locatorType,
     required int? locatorChatId,
     required int? locatorMessageId,
-    required String? locatorBotUsername,
-    required int? sourceChatId,
-    required int? sourceMessageId,
-    required String reason,
-  }) async {
-    final messageId = locatorMessageId;
-    final fallbackMessageId = sourceMessageId;
-    if ((messageId == null || messageId <= 0) && (fallbackMessageId == null || fallbackMessageId <= 0)) {
-      debugLogInfo(
-        'Locator verify skipped for $mediaId: missing locatorMessageId and sourceMessageId. reason=$reason',
-        type: LogType.locatorVerification,
-      );
-      return null;
-    }
-
-    final type = (locatorType ?? '').trim();
-    final hasSupportedLocatorType =
-        type == 'CHAT_MESSAGE' || type == 'PRIVATE_USER_CHAT' || type == 'BOT_PRIVATE_RUNTIME';
-    if (!hasSupportedLocatorType && (sourceChatId == null || sourceMessageId == null)) {
-      debugLogInfo(
-        'Locator verify skipped for $mediaId: unsupported locatorType="$type" and no source fallback. reason=$reason',
-        type: LogType.locatorVerification,
-      );
-      return null;
-    }
-
-    var lookup = const _ThumbnailMessageLookupResult(message: null);
-    if (hasSupportedLocatorType && messageId != null && messageId > 0) {
-      lookup = await _resolveLocatorVerificationCandidate(
-        mediaId: mediaId,
-        fileUniqueId: fileUniqueId,
-        locatorType: type,
-        locatorChatId: locatorChatId,
-        locatorMessageId: messageId,
-        locatorBotUsername: locatorBotUsername,
-      );
-    }
-
-    if (lookup.message == null && sourceChatId != null && sourceMessageId != null) {
-      final sourceLookup = await _resolveThumbnailMessage(
-        chatId: sourceChatId,
-        messageId: sourceMessageId,
-        fileUniqueId: fileUniqueId,
-      );
-      if (sourceLookup.message != null) {
-        lookup = sourceLookup;
-        debugLogInfo(
-          'Locator verify fell back to source chat/message for $mediaId. chatId=${sourceLookup.resolvedChatId ?? sourceChatId} messageId=${sourceLookup.resolvedMessageId ?? sourceMessageId}.',
-          type: LogType.locatorVerification,
-        );
-      }
-    }
-
-    if (lookup.message == null) {
-      debugLogError(
-        lookup.failureReason ?? 'Locator verify failed for $mediaId before sync. reason=$reason',
-        type: LogType.locatorVerification,
-      );
-      return null;
-    }
-
-    final outboundType = 'CHAT_MESSAGE';
-    final outboundChatId = lookup.resolvedChatId;
-    final outboundMessageId = lookup.resolvedMessageId ?? lookup.message!.id;
-
-    final payload = <String, dynamic>{
-      'mediaFileId': mediaId,
-      'locatorType': outboundType,
-      'locatorMessageId': outboundMessageId,
-    };
-
-    if (outboundChatId == null) {
-      debugLogError(
-        'Locator verify skipped for $mediaId: resolved lookup has no chat id. reason=$reason',
-        type: LogType.locatorVerification,
-      );
-      return null;
-    }
-    payload['locatorChatId'] = outboundChatId;
-
-    try {
-      debugLogInfo(
-        'Locator verify start for $mediaId. type=$outboundType chatId=$outboundChatId messageId=$outboundMessageId reason=$reason',
-        type: LogType.locatorVerification,
-      );
-
-      final dio = _authorizedApiClient();
-      final response = await dio.post<Map<String, dynamic>>(
-        '/me/media-locator-sync',
-        data: payload,
-      );
-
-      final ok = response.data?['ok'] == true;
-      if (ok) {
-        debugLogSuccess(
-          'Locator verify success for $mediaId. type=$outboundType chatId=$outboundChatId messageId=$outboundMessageId',
-          type: LogType.locatorVerification,
-        );
-        return _VerifiedLocatorResult(
-          locatorType: outboundType,
-          locatorChatId: outboundChatId,
-          locatorMessageId: outboundMessageId,
-        );
-      }
-
-      debugLogError(
-        'Locator verify failed for $mediaId: API response missing ok=true.',
-        type: LogType.locatorVerification,
-      );
-      return null;
-    } on DioException catch (error) {
-      final code = error.response?.statusCode;
-      final body = error.response?.data;
-      debugLogError(
-        'Locator verify Dio error for $mediaId: status=$code body=$body error=${error.message}',
-        type: LogType.locatorVerification,
-      );
-      return null;
-    } catch (error) {
-      debugLogError(
-        'Locator verify unexpected error for $mediaId: $error',
-        type: LogType.locatorVerification,
-      );
-      return null;
-    }
-  }
-
-  Future<_ThumbnailMessageLookupResult> _resolveLocatorVerificationCandidate({
-    required String mediaId,
-    required String? fileUniqueId,
-    required String locatorType,
-    required int? locatorChatId,
-    required int locatorMessageId,
-    required String? locatorBotUsername,
-  }) async {
-    if (locatorType == 'CHAT_MESSAGE' && locatorChatId != null) {
-      final directLookup = await _resolveThumbnailMessage(
-        chatId: locatorChatId,
-        messageId: locatorMessageId,
-        exactChatIdOnly: false,
-        fileUniqueId: fileUniqueId,
-      );
-      if (directLookup.message != null) {
-        return directLookup;
-      }
-      if ((locatorBotUsername ?? '').trim().isNotEmpty) {
-        debugLogInfo(
-          'Locator verify direct chat lookup failed for $mediaId. Trying runtime private fallback with bot=$locatorBotUsername.',
-          type: LogType.locatorVerification,
-        );
-        final runtimeChatId = await _resolveBotPrivateChatId(locatorBotUsername);
-        if (runtimeChatId != null) {
-          final runtimeLookup = await _resolveThumbnailMessage(
-            chatId: runtimeChatId,
-            messageId: locatorMessageId,
-            exactChatIdOnly: true,
-            fileUniqueId: fileUniqueId,
-          );
-          if (runtimeLookup.message != null) {
-            return runtimeLookup;
-          }
-          return _ThumbnailMessageLookupResult(
-            message: null,
-            failureReason: runtimeLookup.failureReason ?? directLookup.failureReason,
-          );
-        }
-      }
-      return directLookup;
-    }
-
-    if (locatorType == 'PRIVATE_USER_CHAT') {
-      if (locatorChatId == null) {
-        return _ThumbnailMessageLookupResult(
-          message: null,
-          failureReason: 'Locator verify skipped for $mediaId: PRIVATE_USER_CHAT without locatorChatId.',
-        );
-      }
-
-      final resolvedPrivateChatId = await _resolvePrivateUserChatId(locatorChatId);
-      if (resolvedPrivateChatId == null) {
-        return _ThumbnailMessageLookupResult(
-          message: null,
-          failureReason: 'Locator verify skipped for $mediaId: could not resolve private chat id from userId=$locatorChatId.',
-        );
-      }
-
-      debugLogInfo(
-        'Locator verify normalized PRIVATE_USER_CHAT for $mediaId to CHAT_MESSAGE chatId=$resolvedPrivateChatId.',
-        type: LogType.locatorVerification,
-      );
-      return _resolveThumbnailMessage(
-        chatId: resolvedPrivateChatId,
-        messageId: locatorMessageId,
-        exactChatIdOnly: true,
-        fileUniqueId: fileUniqueId,
-      );
-    }
-
-    if (locatorType == 'BOT_PRIVATE_RUNTIME') {
-      final runtimeChatId = await _resolveBotPrivateChatId(locatorBotUsername);
-      if (runtimeChatId == null) {
-        return _ThumbnailMessageLookupResult(
-          message: null,
-          failureReason: 'Locator verify skipped for $mediaId: BOT_PRIVATE_RUNTIME could not resolve private chat.',
-        );
-      }
-
-      debugLogInfo(
-        'Locator verify normalized BOT_PRIVATE_RUNTIME for $mediaId to CHAT_MESSAGE chatId=$runtimeChatId.',
-        type: LogType.locatorVerification,
-      );
-      return _resolveThumbnailMessage(
-        chatId: runtimeChatId,
-        messageId: locatorMessageId,
-        exactChatIdOnly: true,
-        fileUniqueId: fileUniqueId,
-      );
-    }
-
-    return _ThumbnailMessageLookupResult(
-      message: null,
-      failureReason: 'Locator verify skipped for $mediaId: unsupported locatorType="$locatorType".',
-    );
-  }
-
-  Future<_ThumbnailMessageLookupResult> _resolveVerifiedThumbnailMessage({
-    required String mediaId,
-    required String? fileUniqueId,
-    required String? locatorType,
-    required int? locatorChatId,
-    required int? locatorMessageId,
-    required String? locatorBotUsername,
   }) async {
     if (locatorMessageId == null || locatorMessageId <= 0) {
       return _ThumbnailMessageLookupResult(
         message: null,
-        failureReason: 'Verified locator for $mediaId has no locatorMessageId.',
+        failureReason: 'Direct locator for $mediaId has no locatorMessageId.',
       );
     }
 
     if (locatorType == 'CHAT_MESSAGE' && locatorChatId != null) {
       debugLogInfo(
-        'Reading thumbnail from verified locator chat/message for $mediaId.',
+        'Reading thumbnail from direct locator chat/message for $mediaId.',
         type: LogType.telegramThumbnail,
       );
       return _resolveThumbnailMessage(
@@ -1008,51 +893,9 @@ class DataRepository {
       );
     }
 
-    if (locatorType == 'PRIVATE_USER_CHAT' && locatorChatId != null) {
-      final privateChatId = await _resolvePrivateUserChatId(locatorChatId);
-      if (privateChatId == null) {
-        return _ThumbnailMessageLookupResult(
-          message: null,
-          failureReason: 'Verified private-user locator for $mediaId could not create private chat.',
-        );
-      }
-
-      debugLogInfo(
-        'Reading thumbnail from verified private-user locator for $mediaId.',
-        type: LogType.telegramThumbnail,
-      );
-      return _resolveThumbnailMessage(
-        chatId: privateChatId,
-        messageId: locatorMessageId,
-        exactChatIdOnly: true,
-        fileUniqueId: fileUniqueId,
-      );
-    }
-
-    if (locatorType == 'BOT_PRIVATE_RUNTIME') {
-      final runtimeChatId = await _resolveBotPrivateChatId(locatorBotUsername);
-      if (runtimeChatId == null) {
-        return _ThumbnailMessageLookupResult(
-          message: null,
-          failureReason: 'Verified bot runtime locator for $mediaId could not resolve private chat.',
-        );
-      }
-
-      debugLogInfo(
-        'Reading thumbnail from verified bot runtime locator for $mediaId.',
-        type: LogType.telegramThumbnail,
-      );
-      return _resolveThumbnailMessage(
-        chatId: runtimeChatId,
-        messageId: locatorMessageId,
-        exactChatIdOnly: true,
-        fileUniqueId: fileUniqueId,
-      );
-    }
-
     return _ThumbnailMessageLookupResult(
       message: null,
-      failureReason: 'Verified locator for $mediaId has unsupported locatorType=$locatorType.',
+      failureReason: 'Direct locator for $mediaId has unsupported locatorType=$locatorType.',
     );
   }
 
@@ -1114,9 +957,7 @@ class DataRepository {
       _thumbnailRecoveryInFlight.remove(mediaId);
     }
   }
-
-
-  Future<int?> _resolveBotPrivateChatId(String? botUsername) async {
+  Future<(td.Chat, int)?> _openBotPrivateChat(String? botUsername) async {
     final cleaned = botUsername?.trim().replaceFirst(RegExp(r'^@'), '');
     if (cleaned == null || cleaned.isEmpty) return null;
 
@@ -1130,7 +971,7 @@ class DataRepository {
         try {
           await _tdlib.send(td.OpenChat(chatId: privateChat.id));
         } catch (_) {}
-        return privateChat.id;
+        return (privateChat, botUserId);
       }
     } catch (_) {
       return null;
@@ -1138,26 +979,6 @@ class DataRepository {
 
     return null;
   }
-
-  Future<int?> _resolvePrivateUserChatId(int userId) async {
-    if (userId <= 0) return null;
-    try {
-      final privateChat = await _tdlib.send(
-        td.CreatePrivateChat(userId: userId, force: false),
-      );
-      if (privateChat is td.Chat) {
-        try {
-          await _tdlib.send(td.OpenChat(chatId: privateChat.id));
-        } catch (_) {}
-        return privateChat.id;
-      }
-    } catch (_) {
-      return null;
-    }
-
-    return null;
-  }
-
   Future<_ThumbnailMessageLookupResult> _resolveThumbnailMessage({
     required int chatId,
     required int messageId,
@@ -1260,10 +1081,11 @@ class DataRepository {
     }
   }
 
-  Iterable<int> _candidateTelegramMessageIds(int messageId) sync* {
-    yield messageId;
-
+  Iterable<int> _candidateTelegramMessageIds(
+    int messageId,
+  ) sync* {
     final tdlibScaled = messageId * 1048576;
+    yield messageId;
     if (tdlibScaled != messageId) {
       yield tdlibScaled;
     }
@@ -1525,13 +1347,79 @@ class DataRepository {
         locatorType: _readOptionalTrimmed(item['locatorType']),
         locatorChatId: (item['locatorChatId'] as num?)?.toInt(),
         locatorMessageId: (item['locatorMessageId'] as num?)?.toInt(),
-        locatorBotUsername: _readOptionalTrimmed(item['locatorBotUsername']),
         locatorRemoteFileId: _readOptionalTrimmed(item['locatorRemoteFileId']),
-        verificationStatus: _readOptionalTrimmed(item['verificationStatus']),
         thumbnailSourceChatId: (item['thumbnailSourceChatId'] as num?)?.toInt(),
         thumbnailSourceMessageId: (item['thumbnailSourceMessageId'] as num?)?.toInt(),
       );
     }).where((item) => item.globalId.isNotEmpty).toList(growable: false);
+  }
+
+  OxLibraryMediaDetailMedia _parseOxLibraryMediaDetailMedia(Map<String, dynamic> raw) {
+    return OxLibraryMediaDetailMedia(
+      id: _readOptionalTrimmed(raw['id']) ?? '',
+      imdbId: _readOptionalTrimmed(raw['imdbId']),
+      tmdbId: _readOptionalTrimmed(raw['tmdbId']),
+      title: _readOptionalTrimmed(raw['title']) ?? 'Untitled',
+      type: _readOptionalTrimmed(raw['type']) ?? 'UNKNOWN',
+      releaseYear: _readOptionalInt(raw['releaseYear']),
+      originalLanguage: _readOptionalTrimmed(raw['originalLanguage']),
+      posterPath: _readOptionalTrimmed(raw['posterPath']),
+      summary: _readOptionalTrimmed(raw['summary']),
+      voteAverage: _readOptionalDouble(raw['voteAverage']),
+      rawDetails: _readOptionalTrimmed(raw['rawDetails']),
+      genres: _parseOxGenres(raw['genres']),
+      createdAt: _readDateTimeOrEpoch(raw['createdAt']),
+      updatedAt: _readDateTimeOrEpoch(raw['updatedAt']),
+    );
+  }
+
+  OxLibraryMediaDetailFile _parseOxLibraryMediaDetailFile(Map<String, dynamic> raw) {
+    return OxLibraryMediaDetailFile(
+      id: _readOptionalTrimmed(raw['id']) ?? '',
+      mediaId: _readOptionalTrimmed(raw['mediaId']) ?? '',
+      sourceId: _readOptionalTrimmed(raw['sourceId']),
+      sourceChatId: _readOptionalInt(raw['sourceChatId']),
+      sourceName: _readOptionalTrimmed(raw['sourceName']),
+      fileUniqueId: _readOptionalTrimmed(raw['fileUniqueId']) ?? '',
+      videoLanguage: _readOptionalTrimmed(raw['videoLanguage']),
+      quality: _readOptionalTrimmed(raw['quality']),
+      size: _readOptionalInt(raw['size']),
+      versionTag: _readOptionalTrimmed(raw['versionTag']),
+      language: _readOptionalTrimmed(raw['language']),
+      subtitleMentioned: _readOptionalBool(raw['subtitleMentioned']),
+      subtitlePresentation: _readOptionalTrimmed(raw['subtitlePresentation']),
+      subtitleLanguage: _readOptionalTrimmed(raw['subtitleLanguage']),
+      captionText: _readOptionalTrimmed(raw['captionText']),
+      canStream: _readOptionalBool(raw['canStream']),
+      season: _readOptionalInt(raw['season']),
+      episode: _readOptionalInt(raw['episode']),
+      createdAt: _readDateTimeOrEpoch(raw['createdAt']),
+      updatedAt: _readDateTimeOrEpoch(raw['updatedAt']),
+      telegramFileId: _readOptionalTrimmed(raw['telegramFileId']),
+      locatorType: _readOptionalTrimmed(raw['locatorType']),
+      locatorChatId: _readOptionalInt(raw['locatorChatId']),
+      locatorMessageId: _readOptionalInt(raw['locatorMessageId']),
+      locatorRemoteFileId: _readOptionalTrimmed(raw['locatorRemoteFileId']),
+    );
+  }
+
+  List<OxLibraryGenre> _parseOxGenres(Object? rawGenres) {
+    if (rawGenres is! List) {
+      return const <OxLibraryGenre>[];
+    }
+
+    return rawGenres.whereType<Map>().map((raw) {
+      final genre = Map<String, dynamic>.from(raw);
+      return OxLibraryGenre(
+        id: _readOptionalTrimmed(genre['id']) ?? '',
+        title: _readOptionalTrimmed(genre['title']) ?? '',
+      );
+    }).where((genre) => genre.id.isNotEmpty || genre.title.isNotEmpty).toList(growable: false);
+  }
+
+  DateTime _readDateTimeOrEpoch(Object? raw) {
+    final parsed = DateTime.tryParse(raw?.toString() ?? '');
+    return parsed ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
 
   Dio _authorizedApiClient() {
@@ -1546,6 +1434,27 @@ class DataRepository {
         headers: <String, String>{'Authorization': 'Bearer $accessToken'},
       ),
     );
+  }
+
+  Future<bool> _ensureTdlibReadyForMediaPlayback() async {
+    if (!_tdlibInitialized || !_tdlib.isInitialized) {
+      final apiId = int.tryParse(_config.telegramApiId) ?? 0;
+      if (!_config.hasTelegramKeys || apiId <= 0) {
+        return false;
+      }
+      try {
+        await _ensureTdlibInitialized(apiId: apiId);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    try {
+      await _tdlib.ensureAuthorized();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _ensureTdlibInitialized({required int apiId}) async {
@@ -1773,6 +1682,30 @@ class DataRepository {
       return null;
     }
     return text;
+  }
+
+  int? _readOptionalInt(Object? raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '');
+  }
+
+  double? _readOptionalDouble(Object? raw) {
+    if (raw is double) return raw;
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString() ?? '');
+  }
+
+  bool? _readOptionalBool(Object? raw) {
+    if (raw is bool) return raw;
+    if (raw is num) {
+      if (raw == 1) return true;
+      if (raw == 0) return false;
+    }
+    final text = raw?.toString().trim().toLowerCase();
+    if (text == 'true' || text == '1') return true;
+    if (text == 'false' || text == '0') return false;
+    return null;
   }
 }
 

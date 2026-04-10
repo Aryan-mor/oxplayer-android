@@ -11,6 +11,8 @@ import '../models/plex_playlist.dart';
 import '../providers/download_provider.dart';
 import '../services/download_storage_service.dart';
 import '../providers/settings_provider.dart';
+import '../infrastructure/data_repository.dart';
+import '../infrastructure/media_repository.dart';
 import '../screens/media_detail_screen.dart';
 import '../services/settings_service.dart';
 import '../utils/provider_extensions.dart';
@@ -135,7 +137,7 @@ class MediaCardState extends State<MediaCard> {
     if (widget.item is PlexMetadata) {
       final metadata = widget.item as PlexMetadata;
       if (metadata.key?.startsWith('ox-preview:') == true) {
-        showAppSnackBar(context, 'Home preview is visible. Detail/playback is not wired yet.');
+        await _openOxPreviewDetail(context, metadata);
         return;
       }
     }
@@ -160,6 +162,59 @@ class MediaCardState extends State<MediaCard> {
         // Item refresh already handled by onRefresh callback in helper
         break;
     }
+  }
+
+  Future<void> _openOxPreviewDetail(BuildContext context, PlexMetadata previewMetadata) async {
+    try {
+      final repository = await DataRepository.create();
+      final mediaRepository = MediaRepository(dataRepository: repository);
+      final detail = await mediaRepository.fetchLibraryMediaDetail(previewMetadata.ratingKey);
+      if (!context.mounted) return;
+
+      final mappedMetadata = _mapOxDetailToPlexMetadata(detail, fallback: previewMetadata);
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MediaDetailScreen(metadata: mappedMetadata),
+        ),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      showAppSnackBar(context, 'Failed to open detail page. Please try again.');
+    }
+  }
+
+  PlexMetadata _mapOxDetailToPlexMetadata(OxLibraryMediaDetail detail, {required PlexMetadata fallback}) {
+    final media = detail.media;
+    final normalizedType = switch (media.type.toUpperCase()) {
+      'MOVIE' => 'movie',
+      'SERIES' => 'show',
+      'GENERAL_VIDEO' => 'movie',
+      _ => fallback.type ?? 'movie',
+    };
+    final posterUrl = _resolvePosterUrl(media.posterPath) ?? fallback.thumb;
+
+    return fallback.copyWith(
+      ratingKey: media.id,
+      key: 'ox-library:${media.id}',
+      type: normalizedType,
+      title: media.title,
+      summary: media.summary,
+      rating: media.voteAverage,
+      year: media.releaseYear,
+      thumb: posterUrl,
+      art: posterUrl ?? fallback.art,
+    );
+  }
+
+  String? _resolvePosterUrl(String? posterPath) {
+    final value = posterPath?.trim();
+    if (value == null || value.isEmpty) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+    final normalized = value.startsWith('/') ? value : '/$value';
+    return 'https://image.tmdb.org/t/p/w500$normalized';
   }
 
   /// Get the local poster path for offline mode
