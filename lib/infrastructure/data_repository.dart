@@ -16,6 +16,7 @@ import '../services/storage_service.dart';
 import '../services/auth_debug_service.dart';
 import 'config/app_config.dart';
 import 'telegram/media_file_locator_resolver.dart';
+import 'telegram/telegram_range_playback.dart';
 import 'telegram/tdlib_controller.dart'
     if (dart.library.html) 'telegram/tdlib_controller_web.dart';
 import 'telegram/tdlib_facade.dart';
@@ -294,12 +295,30 @@ class _ThumbnailMessageLookupResult {
     this.failureReason,
     this.resolvedChatId,
     this.resolvedMessageId,
+    this.resolutionReason,
   });
 
   final td.Message? message;
   final String? failureReason;
   final int? resolvedChatId;
   final int? resolvedMessageId;
+  final String? resolutionReason;
+}
+
+class _ResolvedPlayableTelegramFile {
+  const _ResolvedPlayableTelegramFile({
+    required this.file,
+    this.locatorChatId,
+    this.locatorMessageId,
+    this.locatorType,
+    this.resolutionReason,
+  });
+
+  final td.File file;
+  final int? locatorChatId;
+  final int? locatorMessageId;
+  final String? locatorType;
+  final String? resolutionReason;
 }
 
 class DataRepository {
@@ -711,30 +730,122 @@ class DataRepository {
     required int? locatorChatId,
     required int? locatorMessageId,
     required String? locatorRemoteFileId,
+    bool allowQuickStart = true,
   }) async {
+    playMediaDebugInfo(
+      'Resolving OX playback path for mediaId=$mediaId locatorType=$locatorType locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId',
+    );
     final ready = await _ensureTdlibReadyForMediaPlayback();
     if (!ready) {
+      playMediaDebugError('TDLib is not ready for media playback for mediaId=$mediaId');
       return null;
     }
 
-    final resolved = await resolveTelegramMediaFile(
-      tdlib: _tdlib,
-      mediaFileId: mediaId,
+    final resolved = await _resolvePlayableTelegramFileFromLocator(
+      mediaId: mediaId,
+      fileUniqueId: fileUniqueId,
       locatorType: locatorType,
       locatorChatId: locatorChatId,
       locatorMessageId: locatorMessageId,
       locatorRemoteFileId: locatorRemoteFileId,
     );
     if (resolved == null) {
+      locatorDebugError(
+        'Telegram media locator failed for mediaId=$mediaId fileUniqueId=$fileUniqueId locatorType=$locatorType locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId locatorRemoteFileId=$locatorRemoteFileId',
+      );
       return null;
     }
 
-    final quickStartPath = await _waitForReadableVideoPrefix(resolved.file.id);
-    if (quickStartPath != null && quickStartPath.isNotEmpty) {
-      return quickStartPath;
+    locatorDebugSuccess(
+      'Telegram media locator resolved for mediaId=$mediaId fileId=${resolved.file.id} reason=${resolved.resolutionReason}',
+    );
+
+    if (allowQuickStart) {
+      final quickStartPath = await _waitForReadableVideoPrefix(resolved.file.id);
+      if (quickStartPath != null && quickStartPath.isNotEmpty) {
+        playMediaDebugSuccess(
+          'Quick-start playback path resolved for mediaId=$mediaId at $quickStartPath',
+        );
+        return quickStartPath;
+      }
+
+      playMediaDebugInfo(
+        'Quick-start path unavailable for mediaId=$mediaId. Falling back to full Telegram download for fileId=${resolved.file.id}',
+      );
+    } else {
+      playMediaDebugInfo(
+        'Quick-start playback disabled for mediaId=$mediaId. Waiting for full Telegram download for fileId=${resolved.file.id}',
+      );
+    }
+    final downloadedPath = await _downloadTelegramFileFully(resolved.file.id);
+    if (downloadedPath == null || downloadedPath.isEmpty) {
+      playMediaDebugError(
+        'Full Telegram download failed for mediaId=$mediaId fileId=${resolved.file.id}',
+      );
+      return null;
+    }
+    playMediaDebugSuccess(
+      'Full Telegram download resolved playback path for mediaId=$mediaId at $downloadedPath',
+    );
+    return downloadedPath;
+  }
+
+  Future<Uri?> resolveOxMediaStreamUrlForPlayback({
+    required String mediaId,
+    required String? fileUniqueId,
+    required String? locatorType,
+    required int? locatorChatId,
+    required int? locatorMessageId,
+    required String? locatorRemoteFileId,
+  }) async {
+    playMediaDebugInfo(
+      'Resolving OX stream URL for mediaId=$mediaId locatorType=$locatorType locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId',
+    );
+    final ready = await _ensureTdlibReadyForMediaPlayback();
+    if (!ready) {
+      playMediaDebugError('TDLib is not ready for range playback for mediaId=$mediaId');
+      return null;
     }
 
-    return _downloadTelegramFileFully(resolved.file.id);
+    final resolved = await _resolvePlayableTelegramFileFromLocator(
+      mediaId: mediaId,
+      fileUniqueId: fileUniqueId,
+      locatorType: locatorType,
+      locatorChatId: locatorChatId,
+      locatorMessageId: locatorMessageId,
+      locatorRemoteFileId: locatorRemoteFileId,
+    );
+    if (resolved == null) {
+      locatorDebugError(
+        'Telegram media locator failed for streaming mediaId=$mediaId fileUniqueId=$fileUniqueId locatorType=$locatorType locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId locatorRemoteFileId=$locatorRemoteFileId',
+      );
+      return null;
+    }
+
+    locatorDebugSuccess(
+      'Telegram media locator resolved for streaming mediaId=$mediaId fileId=${resolved.file.id} reason=${resolved.resolutionReason}',
+    );
+
+    final streamUrl = await TelegramRangePlayback.instance.openResolvedFile(
+      tdlib: _tdlib,
+      file: resolved.file,
+      onDiagnostic: locatorDebugInfo,
+    );
+    if (streamUrl == null) {
+      playMediaDebugError(
+        'Telegram range playback failed for mediaId=$mediaId fileId=${resolved.file.id} reason=${TelegramRangePlayback.instance.lastOpenFailureReason}',
+      );
+      return null;
+    }
+
+    playMediaDebugSuccess(
+      'Telegram range playback stream URL resolved for mediaId=$mediaId at $streamUrl',
+    );
+    return streamUrl;
+  }
+
+  Future<int> releaseOxMediaPlaybackSession({String? reason}) {
+    return TelegramRangePlayback.instance.releaseActiveCacheIfAny(reason: reason);
   }
 
   Future<void> dispose() async {}
@@ -783,10 +894,12 @@ class DataRepository {
       final directResolvedFile = await resolveTelegramMediaFile(
         tdlib: _tdlib,
         mediaFileId: mediaId,
+        fileUniqueId: fileUniqueId,
         locatorType: locatorType,
         locatorChatId: locatorChatId,
         locatorMessageId: locatorMessageId,
         locatorRemoteFileId: locatorRemoteFileId,
+        onDiagnostic: (message) => debugLogInfo(message, type: LogType.telegramThumbnail),
       );
       if (directResolvedFile != null) {
         final directResolvedThumbPath = await _generateResolvedFileThumbnailToCache(
@@ -890,6 +1003,7 @@ class DataRepository {
         messageId: locatorMessageId,
         exactChatIdOnly: false,
         fileUniqueId: fileUniqueId,
+        onDiagnostic: (message) => debugLogInfo(message, type: LogType.locator),
       );
     }
 
@@ -984,26 +1098,50 @@ class DataRepository {
     required int messageId,
     bool exactChatIdOnly = false,
     String? fileUniqueId,
+    void Function(String message)? onDiagnostic,
   }) async {
     String? lastFailureReason;
     final chatCandidates = _candidateTelegramChatIds(chatId, exactOnly: exactChatIdOnly)
         .toList(growable: false);
+    final messageCandidates = _candidateTelegramMessageIds(messageId).toList(growable: false);
+
+    onDiagnostic?.call(
+      'Stored locator direct lookup prepared for mediaFileId=n/a chatCandidates=$chatCandidates messageCandidates=$messageCandidates locatorRemoteFileId=n/a',
+    );
+
     for (final chatCandidate in chatCandidates) {
-      for (final messageCandidate in _candidateTelegramMessageIds(messageId)) {
+      for (final messageCandidate in messageCandidates) {
         try {
+          onDiagnostic?.call(
+            'Trying Telegram message lookup chatCandidate=$chatCandidate messageCandidate=$messageCandidate',
+          );
           final result = await _tdlib.send(
             td.GetMessage(chatId: chatCandidate, messageId: messageCandidate),
           );
           if (result is td.Message) {
+            final resolutionReason =
+                chatCandidate == chatId && messageCandidate == messageId
+                ? 'direct_chat_message_exact'
+                : 'direct_chat_message_candidate';
+            onDiagnostic?.call(
+              'Telegram message lookup succeeded for chatCandidate=$chatCandidate resolvedMessageId=${result.id} fileId=${_messagePlayableFileId(result)}',
+            );
             return _ThumbnailMessageLookupResult(
               message: result,
               resolvedChatId: chatCandidate,
               resolvedMessageId: result.id,
+              resolutionReason: resolutionReason,
             );
           }
         } on td.TdError catch (error) {
+          onDiagnostic?.call(
+            'Telegram message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: code=${error.code} message=${error.message}',
+          );
           lastFailureReason = 'Message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: code=${error.code} message=${error.message}';
         } catch (error) {
+          onDiagnostic?.call(
+            'Telegram message lookup crashed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: $error',
+          );
           lastFailureReason = 'Message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: $error';
         }
       }
@@ -1012,15 +1150,23 @@ class DataRepository {
     final trimmedFileUniqueId = fileUniqueId?.trim() ?? '';
     if (trimmedFileUniqueId.isNotEmpty) {
       for (final chatCandidate in chatCandidates) {
+        onDiagnostic?.call(
+          'Trying Telegram recent history fallback for chatCandidate=$chatCandidate fileUniqueId=$trimmedFileUniqueId',
+        );
         final historyMatch = await _findMessageInRecentHistoryByFileUniqueId(
           chatId: chatCandidate,
           fileUniqueId: trimmedFileUniqueId,
+          onDiagnostic: onDiagnostic,
         );
         if (historyMatch != null) {
           return historyMatch;
         }
       }
     }
+
+    onDiagnostic?.call(
+      'Stored locator direct lookup exhausted for mediaFileId=n/a requestedChatId=$chatId requestedMessageId=$messageId fileUniqueId=$fileUniqueId',
+    );
 
     return _ThumbnailMessageLookupResult(
       message: null,
@@ -1031,6 +1177,7 @@ class DataRepository {
   Future<_ThumbnailMessageLookupResult?> _findMessageInRecentHistoryByFileUniqueId({
     required int chatId,
     required String fileUniqueId,
+    void Function(String message)? onDiagnostic,
   }) async {
     try {
       final result = await _tdlib.send(
@@ -1046,13 +1193,123 @@ class DataRepository {
 
       for (final message in result.messages) {
         if (_messageFileUniqueId(message) != fileUniqueId) continue;
+        onDiagnostic?.call(
+          'Telegram recent history fallback matched chatCandidate=$chatId resolvedMessageId=${message.id} fileId=${_messagePlayableFileId(message)}',
+        );
         return _ThumbnailMessageLookupResult(
           message: message,
           resolvedChatId: chatId,
           resolvedMessageId: message.id,
+          resolutionReason: 'recent_history_file_unique_id',
         );
       }
-    } catch (_) {}
+      onDiagnostic?.call(
+        'Telegram recent history fallback found no matching fileUniqueId for chatCandidate=$chatId',
+      );
+    } on td.TdError catch (error) {
+      onDiagnostic?.call(
+        'Telegram recent history fallback failed for chatCandidate=$chatId: code=${error.code} message=${error.message}',
+      );
+    } catch (error) {
+      onDiagnostic?.call(
+        'Telegram recent history fallback crashed for chatCandidate=$chatId: $error',
+      );
+    }
+
+    return null;
+  }
+
+  Future<_ResolvedPlayableTelegramFile?> _resolvePlayableTelegramFileFromLocator({
+    required String mediaId,
+    required String? fileUniqueId,
+    required String? locatorType,
+    required int? locatorChatId,
+    required int? locatorMessageId,
+    required String? locatorRemoteFileId,
+  }) async {
+    if (locatorType == 'CHAT_MESSAGE' &&
+        locatorChatId != null &&
+        locatorMessageId != null) {
+      final lookup = await _resolveThumbnailMessage(
+        chatId: locatorChatId,
+        messageId: locatorMessageId,
+        exactChatIdOnly: false,
+        fileUniqueId: fileUniqueId,
+        onDiagnostic: (message) {
+          locatorDebugInfo(
+            message
+                .replaceFirst('mediaFileId=n/a', 'mediaFileId=$mediaId')
+                .replaceFirst('locatorRemoteFileId=n/a', 'locatorRemoteFileId=$locatorRemoteFileId'),
+          );
+        },
+      );
+      final message = lookup.message;
+      if (message != null) {
+        final file = _messagePlayableFile(message);
+        if (file != null) {
+          if (lookup.resolutionReason == 'recent_history_file_unique_id') {
+            locatorDebugInfo(
+              'Stored locator direct lookup did not resolve exact message for mediaFileId=$mediaId. History fallback recovered resolvedChatId=${lookup.resolvedChatId} resolvedMessageId=${lookup.resolvedMessageId} requestedChatId=$locatorChatId requestedMessageId=$locatorMessageId fileId=${file.id}',
+            );
+          } else if (lookup.resolvedMessageId != locatorMessageId ||
+              lookup.resolvedChatId != locatorChatId) {
+            locatorDebugInfo(
+              'Stored locator direct lookup resolved with alternate candidate for mediaFileId=$mediaId requestedChatId=$locatorChatId requestedMessageId=$locatorMessageId resolvedChatId=${lookup.resolvedChatId} resolvedMessageId=${lookup.resolvedMessageId} reason=${lookup.resolutionReason} fileId=${file.id}',
+            );
+          } else {
+            locatorDebugInfo(
+              'Stored locator direct lookup resolved exact message for mediaFileId=$mediaId chatId=$locatorChatId messageId=$locatorMessageId fileId=${file.id}',
+            );
+          }
+          return _ResolvedPlayableTelegramFile(
+            file: file,
+            locatorChatId: lookup.resolvedChatId ?? locatorChatId,
+            locatorMessageId: lookup.resolvedMessageId ?? locatorMessageId,
+            locatorType: 'CHAT_MESSAGE',
+            resolutionReason: lookup.resolutionReason,
+          );
+        }
+        locatorDebugError(
+          'Telegram message lookup resolved for mediaFileId=$mediaId but message ${message.id} had no playable file',
+        );
+      }
+    }
+
+    final trimmedLocatorRemote = locatorRemoteFileId?.trim() ?? '';
+    if (trimmedLocatorRemote.isNotEmpty) {
+      try {
+        locatorDebugInfo(
+          'Trying Telegram remote file fallback for mediaFileId=$mediaId remoteFileId=$trimmedLocatorRemote',
+        );
+        final remoteFile = await _tdlib.send(
+          td.GetRemoteFile(
+            remoteFileId: trimmedLocatorRemote,
+            fileType: null,
+          ),
+        );
+        if (remoteFile is td.File) {
+          locatorDebugInfo(
+            'Telegram remote file fallback succeeded for mediaFileId=$mediaId fileId=${remoteFile.id}',
+          );
+          return _ResolvedPlayableTelegramFile(
+            file: remoteFile,
+            locatorType: 'REMOTE_FILE_ID',
+            resolutionReason: 'get_remote_file_locator_remote',
+          );
+        }
+        locatorDebugInfo(
+          'Telegram remote file fallback returned ${remoteFile.runtimeType} for mediaFileId=$mediaId',
+        );
+      } on td.TdError catch (error) {
+        locatorDebugInfo(
+          'Telegram remote file fallback failed for mediaFileId=$mediaId: code=${error.code} message=${error.message}',
+        );
+      } catch (error) {
+        locatorDebugInfo(
+          'Telegram remote file fallback crashed for mediaFileId=$mediaId: $error',
+        );
+      }
+    }
 
     return null;
   }
@@ -1227,6 +1484,17 @@ class DataRepository {
     }
     if (content is td.MessageDocument) {
       return content.document.document.id;
+    }
+    return null;
+  }
+
+  td.File? _messagePlayableFile(td.Message message) {
+    final content = message.content;
+    if (content is td.MessageVideo) {
+      return content.video.video;
+    }
+    if (content is td.MessageDocument) {
+      return content.document.document;
     }
     return null;
   }

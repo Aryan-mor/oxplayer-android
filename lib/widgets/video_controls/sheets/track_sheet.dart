@@ -3,6 +3,7 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import '../../../mpv/mpv.dart';
 import '../../../i18n/strings.g.dart';
+import '../../../models/plex_metadata.dart';
 import '../../../utils/scroll_utils.dart';
 import '../../../utils/track_label_builder.dart';
 import '../../../widgets/app_icon.dart';
@@ -16,10 +17,12 @@ import '../helpers/track_selection_helper.dart';
 /// Combined bottom sheet for selecting audio and subtitle tracks side-by-side.
 class TrackSheet extends StatelessWidget {
   final Player player;
+  final PlexMetadata metadata;
   final String ratingKey;
   final String serverId;
   final String? mediaTitle;
   final Future<void> Function()? onSubtitleDownloaded;
+  final Future<void> Function(SubtitleTrack track)? onExternalSubtitleReady;
   final Function(AudioTrack)? onAudioTrackChanged;
   final Function(SubtitleTrack)? onSubtitleTrackChanged;
   final Function(SubtitleTrack)? onSecondarySubtitleTrackChanged;
@@ -27,10 +30,12 @@ class TrackSheet extends StatelessWidget {
   const TrackSheet({
     super.key,
     required this.player,
+    required this.metadata,
     this.ratingKey = '',
     this.serverId = '',
     this.mediaTitle,
     this.onSubtitleDownloaded,
+    this.onExternalSubtitleReady,
     this.onAudioTrackChanged,
     this.onSubtitleTrackChanged,
     this.onSecondarySubtitleTrackChanged,
@@ -99,10 +104,12 @@ class TrackSheet extends StatelessWidget {
                           tracks: subtitleTracks,
                           selection: selection,
                           player: player,
+                          metadata: metadata,
                           ratingKey: ratingKey,
                           serverId: serverId,
                           mediaTitle: mediaTitle,
                           onSubtitleDownloaded: onSubtitleDownloaded,
+                          onExternalSubtitleReady: onExternalSubtitleReady,
                           onTrackChanged: onSubtitleTrackChanged,
                           onSecondaryTrackChanged: onSecondarySubtitleTrackChanged,
                           supportsSecondary: supportsSecondary,
@@ -128,10 +135,12 @@ class TrackSheet extends StatelessWidget {
                 tracks: subtitleTracks,
                 selection: selection,
                 player: player,
+                metadata: metadata,
                 ratingKey: ratingKey,
                 serverId: serverId,
                 mediaTitle: mediaTitle,
                 onSubtitleDownloaded: onSubtitleDownloaded,
+                onExternalSubtitleReady: onExternalSubtitleReady,
                 onTrackChanged: onSubtitleTrackChanged,
                 onSecondaryTrackChanged: onSecondarySubtitleTrackChanged,
                 supportsSecondary: supportsSecondary,
@@ -226,10 +235,12 @@ class _SubtitleColumn extends StatefulWidget {
   final List<SubtitleTrack> tracks;
   final TrackSelection selection;
   final Player player;
+  final PlexMetadata metadata;
   final String ratingKey;
   final String serverId;
   final String? mediaTitle;
   final Future<void> Function()? onSubtitleDownloaded;
+  final Future<void> Function(SubtitleTrack track)? onExternalSubtitleReady;
   final Function(SubtitleTrack)? onTrackChanged;
   final Function(SubtitleTrack)? onSecondaryTrackChanged;
   final bool supportsSecondary;
@@ -239,10 +250,12 @@ class _SubtitleColumn extends StatefulWidget {
     required this.tracks,
     required this.selection,
     required this.player,
+    required this.metadata,
     this.ratingKey = '',
     this.serverId = '',
     this.mediaTitle,
     this.onSubtitleDownloaded,
+    this.onExternalSubtitleReady,
     this.onTrackChanged,
     this.onSecondaryTrackChanged,
     this.supportsSecondary = false,
@@ -395,8 +408,10 @@ class _SubtitleColumnState extends State<_SubtitleColumn> {
                 builder: (_) => SubtitleSearchSheet(
                   ratingKey: widget.ratingKey,
                   serverId: widget.serverId,
+                  metadata: widget.metadata,
                   mediaTitle: widget.mediaTitle,
                   onSubtitleDownloaded: widget.onSubtitleDownloaded,
+                  onExternalSubtitleReady: widget.onExternalSubtitleReady,
                 ),
               );
             },
