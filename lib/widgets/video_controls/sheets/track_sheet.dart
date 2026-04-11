@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../../../mpv/mpv.dart';
@@ -23,6 +24,7 @@ class TrackSheet extends StatelessWidget {
   final String? mediaTitle;
   final Future<void> Function()? onSubtitleDownloaded;
   final Future<void> Function(SubtitleTrack track)? onExternalSubtitleReady;
+  final Future<void> Function()? onSearchSubtitles;
   final Function(AudioTrack)? onAudioTrackChanged;
   final Function(SubtitleTrack)? onSubtitleTrackChanged;
   final Function(SubtitleTrack)? onSecondarySubtitleTrackChanged;
@@ -36,6 +38,7 @@ class TrackSheet extends StatelessWidget {
     this.mediaTitle,
     this.onSubtitleDownloaded,
     this.onExternalSubtitleReady,
+    this.onSearchSubtitles,
     this.onAudioTrackChanged,
     this.onSubtitleTrackChanged,
     this.onSecondarySubtitleTrackChanged,
@@ -110,6 +113,7 @@ class TrackSheet extends StatelessWidget {
                           mediaTitle: mediaTitle,
                           onSubtitleDownloaded: onSubtitleDownloaded,
                           onExternalSubtitleReady: onExternalSubtitleReady,
+                          onSearchSubtitles: onSearchSubtitles,
                           onTrackChanged: onSubtitleTrackChanged,
                           onSecondaryTrackChanged: onSecondarySubtitleTrackChanged,
                           supportsSecondary: supportsSecondary,
@@ -141,6 +145,7 @@ class TrackSheet extends StatelessWidget {
                 mediaTitle: mediaTitle,
                 onSubtitleDownloaded: onSubtitleDownloaded,
                 onExternalSubtitleReady: onExternalSubtitleReady,
+                onSearchSubtitles: onSearchSubtitles,
                 onTrackChanged: onSubtitleTrackChanged,
                 onSecondaryTrackChanged: onSecondarySubtitleTrackChanged,
                 supportsSecondary: supportsSecondary,
@@ -241,6 +246,7 @@ class _SubtitleColumn extends StatefulWidget {
   final String? mediaTitle;
   final Future<void> Function()? onSubtitleDownloaded;
   final Future<void> Function(SubtitleTrack track)? onExternalSubtitleReady;
+  final Future<void> Function()? onSearchSubtitles;
   final Function(SubtitleTrack)? onTrackChanged;
   final Function(SubtitleTrack)? onSecondaryTrackChanged;
   final bool supportsSecondary;
@@ -256,6 +262,7 @@ class _SubtitleColumn extends StatefulWidget {
     this.mediaTitle,
     this.onSubtitleDownloaded,
     this.onExternalSubtitleReady,
+    this.onSearchSubtitles,
     this.onTrackChanged,
     this.onSecondaryTrackChanged,
     this.supportsSecondary = false,
@@ -403,7 +410,13 @@ class _SubtitleColumnState extends State<_SubtitleColumn> {
           FocusableListTile(
             leading: const AppIcon(Symbols.search_rounded),
             title: Text(t.videoControls.searchSubtitles),
-            onTap: () {
+            onTap: () async {
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                OverlaySheetController.of(context).close();
+                await widget.onSearchSubtitles?.call();
+                return;
+              }
+
               OverlaySheetController.of(context).push(
                 builder: (_) => SubtitleSearchSheet(
                   ratingKey: widget.ratingKey,

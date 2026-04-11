@@ -37,15 +37,18 @@ import '../../screens/video_player_screen.dart';
 import '../../focus/key_event_utils.dart';
 import '../../services/keyboard_shortcuts_service.dart';
 import '../../services/settings_service.dart';
+import '../../services/auth_debug_service.dart';
 import '../../utils/platform_detector.dart';
 import '../../utils/plex_cache_parser.dart';
 import '../../utils/player_utils.dart';
 import '../../theme/mono_tokens.dart';
 import '../../utils/provider_extensions.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../infrastructure/subtitles/subdl_service.dart';
 import 'icons.dart';
 import '../../utils/app_logger.dart';
 import '../../i18n/strings.g.dart';
+import '../../focus/focusable_button.dart';
 import '../../focus/input_mode_tracker.dart';
 import 'models/track_controls_state.dart';
 import 'widgets/track_chapter_controls.dart';
@@ -316,8 +319,16 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
   bool _isLongPressing = false;
   // Subtitle visibility toggle state
   bool _subtitlesVisible = true;
+  List<SubdlSearchResult> _subtitleTrialResults = const [];
+  int _subtitleTrialIndex = 0;
+  bool _subtitleTrialLoading = false;
+  SubtitleTrack? _subtitleTrialBaselineTrack;
   // Skip marker button focus node (for TV D-pad navigation)
   late final FocusNode _skipMarkerFocusNode;
+  late final FocusNode _subtitleTrialPreviousFocusNode;
+  late final FocusNode _subtitleTrialCancelFocusNode;
+  late final FocusNode _subtitleTrialConfirmFocusNode;
+  late final FocusNode _subtitleTrialNextFocusNode;
   double? _rateBeforeLongPress;
   bool _showSpeedIndicator = false;
 
@@ -330,6 +341,10 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     super.initState();
     _focusNode = FocusNode();
     _skipMarkerFocusNode = FocusNode(debugLabel: 'SkipMarkerButton');
+    _subtitleTrialPreviousFocusNode = FocusNode(debugLabel: 'SubtitleTrialPrevious');
+    _subtitleTrialCancelFocusNode = FocusNode(debugLabel: 'SubtitleTrialCancel');
+    _subtitleTrialConfirmFocusNode = FocusNode(debugLabel: 'SubtitleTrialConfirm');
+    _subtitleTrialNextFocusNode = FocusNode(debugLabel: 'SubtitleTrialNext');
     _seekThrottle = throttle(
       (Duration pos) {
         unawaited(_seekToPosition(pos, notifyCompletion: false));
@@ -644,6 +659,136 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     widget.onSubtitleTrackChanged?.call(track);
   }
 
+  bool get _subtitleTrialActive => _subtitleTrialResults.isNotEmpty;
+
+  Future<void> _startSubtitleSearchTrial() async {
+    try {
+      playMediaDebugInfo('Subtitle trial search started from player controls.');
+      final results = await SubdlService().searchWithNativeUi(
+        metadata: widget.metadata,
+        preferredLanguageCode: WidgetsBinding.instance.platformDispatcher.locale.languageCode,
+        titleOverride: widget.metadata.title,
+      );
+      if (!mounted || results == null || results.isEmpty) {
+        return;
+      }
+      setState(() {
+        _showControls = true;
+        _subtitleTrialResults = results;
+        _subtitleTrialIndex = 0;
+        _subtitleTrialLoading = true;
+        _subtitleTrialBaselineTrack ??= widget.player.state.track.subtitle;
+      });
+      _hideTimer?.cancel();
+      playMediaDebugSuccess('Subtitle trial search returned ${results.length} results.');
+      await _applySubtitleTrialAtCurrentIndex();
+      if (!mounted) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _subtitleTrialConfirmFocusNode.requestFocus();
+        }
+      });
+    } catch (error, stackTrace) {
+      appLogger.e('Subtitle trial search failed', error: error, stackTrace: stackTrace);
+      playMediaDebugError('Subtitle trial search failed: $error');
+      if (!mounted) {
+        return;
+      }
+      showErrorSnackBar(context, t.videoControls.subtitleDownloadFailed);
+    }
+  }
+
+  Future<void> _applySubtitleTrialAtCurrentIndex() async {
+    final entry = _subtitleTrialResults.elementAtOrNull(_subtitleTrialIndex);
+    if (entry == null) {
+      return;
+    }
+    setState(() => _subtitleTrialLoading = true);
+    try {
+      playMediaDebugInfo(
+        'Subtitle trial applying ${_subtitleTrialIndex + 1}/${_subtitleTrialResults.length}: ${entry.displayLabel}',
+      );
+      final downloaded = await SubdlService().downloadAndExtract(
+        rawDownload: entry.rawDownload,
+        displayLabel: entry.displayLabel,
+        languageCode: entry.languageCode,
+        fixedFileBaseName: 'subtitle_trial_active',
+      );
+      final displayTitle = _truncateSubtitleLabel(downloaded.displayLabel);
+      await _onExternalSubtitleReady(
+        SubtitleTrack.uri(
+          downloaded.file.uri.toString(),
+          title: displayTitle,
+          language: downloaded.languageCode?.toLowerCase(),
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      if (!_subtitlesVisible) {
+        await widget.player.setProperty('sub-visibility', 'yes');
+      }
+      setState(() {
+        _subtitlesVisible = true;
+        _subtitleTrialLoading = false;
+      });
+      playMediaDebugSuccess('Subtitle trial applied successfully.');
+    } catch (error, stackTrace) {
+      appLogger.e('Subtitle trial apply failed', error: error, stackTrace: stackTrace);
+      playMediaDebugError('Subtitle trial apply failed: $error');
+      if (!mounted) {
+        return;
+      }
+      setState(() => _subtitleTrialLoading = false);
+      showErrorSnackBar(context, t.videoControls.subtitleDownloadFailed);
+    }
+  }
+
+  Future<void> _confirmSubtitleTrial() async {
+    if (!_subtitleTrialActive || !mounted) {
+      return;
+    }
+    setState(() {
+      _subtitleTrialResults = const [];
+      _subtitleTrialIndex = 0;
+      _subtitleTrialLoading = false;
+      _subtitleTrialBaselineTrack = null;
+    });
+    _restartHideTimerIfPlaying();
+    showSuccessSnackBar(context, t.videoControls.subtitleDownloaded);
+  }
+
+  Future<void> _cancelSubtitleTrial() async {
+    final baseline = _subtitleTrialBaselineTrack;
+    setState(() {
+      _subtitleTrialResults = const [];
+      _subtitleTrialIndex = 0;
+      _subtitleTrialLoading = false;
+      _subtitleTrialBaselineTrack = null;
+    });
+    if (baseline == null || baseline.id == 'no') {
+      await widget.player.selectSubtitleTrack(SubtitleTrack.off);
+      widget.onSubtitleTrackChanged?.call(SubtitleTrack.off);
+      return;
+    }
+    if (baseline.uri != null && baseline.uri!.isNotEmpty) {
+      await _onExternalSubtitleReady(baseline);
+    } else {
+      await widget.player.selectSubtitleTrack(baseline);
+    }
+    widget.onSubtitleTrackChanged?.call(baseline);
+  }
+
+  bool _handleBackFromSubtitleTrial() {
+    if (!_subtitleTrialActive) {
+      return false;
+    }
+    unawaited(_cancelSubtitleTrial());
+    return true;
+  }
+
   void _toggleShader() {
     final shaderService = widget.shaderService;
     if (shaderService == null || !shaderService.isSupported) return;
@@ -703,6 +848,10 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     _positionSubscription?.cancel();
     _focusNode.dispose();
     _skipMarkerFocusNode.dispose();
+    _subtitleTrialPreviousFocusNode.dispose();
+    _subtitleTrialCancelFocusNode.dispose();
+    _subtitleTrialConfirmFocusNode.dispose();
+    _subtitleTrialNextFocusNode.dispose();
     // Restore original rate if long-press was active when disposed
     if (_isLongPressing && _rateBeforeLongPress != null) {
       widget.player.setRate(_rateBeforeLongPress!);
@@ -1159,6 +1308,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       mediaTitle: widget.metadata.title,
       onSubtitleDownloaded: _onSubtitleDownloaded,
       onExternalSubtitleReady: _onExternalSubtitleReady,
+      onSearchSubtitles: _startSubtitleSearchTrial,
     );
   }
 
@@ -1630,6 +1780,9 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     // Focus.onKeyEvent won't fire if _focusNode lost focus, so handle ESC here.
     if ((_videoPlayerNavigationEnabled || PlatformDetector.isTV()) && event.logicalKey.isBackKey) {
       if (!_focusNode.hasFocus) {
+            if (_handleBackFromSubtitleTrial()) {
+              return true;
+            }
         // Skip if an overlay sheet is open — the sheet's FocusScope handles
         // back keys via its own onKeyEvent. Without this check, this global
         // handler would call Navigator.pop() alongside the sheet's handler.
@@ -1819,6 +1972,9 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
               BackKeyCoordinator.markHandled();
             }
             final backResult = handleBackKeyAction(event, () {
+              if (_handleBackFromSubtitleTrial()) {
+                return;
+              }
               if (PlatformDetector.isTV()) {
                 if (_showControls) {
                   if (_isContentStripVisible) {
@@ -2135,6 +2291,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
                                                     ? _onQueueItemSelected
                                                     : null,
                                                 controlsVisible: widget.controlsVisible,
+                                                subtitleTrialMode: _subtitleTrialActive,
                                                 onStripVisibilityChanged: (visible) {
                                                   setState(() => _isContentStripVisible = visible);
                                                   if (visible) {
@@ -2170,7 +2327,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
                   // Speed indicator overlay for long-press 2x
                   if (_showSpeedIndicator) Positioned.fill(child: IgnorePointer(child: _buildSpeedIndicator())),
                   // Skip intro/credits button (auto-dismisses after 7s, then only shows with controls)
-                  if (_currentMarker != null && (!_skipButtonDismissed || _showControls))
+                  if (!_subtitleTrialActive && _currentMarker != null && (!_skipButtonDismissed || _showControls))
                     AnimatedPositioned(
                       duration: const Duration(milliseconds: 200),
                       curve: Curves.easeInOut,
@@ -2194,6 +2351,20 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
                       top: _showControls && isMobile ? 80.0 : 16.0,
                       left: 16,
                       child: IgnorePointer(child: PlayerPerformanceOverlay(player: widget.player)),
+                    ),
+                  if (_subtitleTrialActive)
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      left: 24,
+                      bottom: () {
+                        if (_showControls) {
+                          if (_isContentStripVisible) return 180.0;
+                          return isMobile ? 84.0 : 120.0;
+                        }
+                        return 24.0;
+                      }(),
+                      child: _buildSubtitleTrialBar(),
                     ),
                   // Screen lock overlay - absorbs all touches when active
                   if (_isScreenLocked)
@@ -2288,6 +2459,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
         onCancelAutoHide: () => _hideTimer?.cancel(),
         onStartAutoHide: _startHideTimer,
         onSeekCompleted: widget.onSeekCompleted,
+        subtitleTrialMode: _subtitleTrialActive,
         onContentStripVisibilityChanged: (visible) {
           setState(() => _isContentStripVisible = visible);
           if (visible) {
@@ -2298,6 +2470,159 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
         },
       ),
     );
+  }
+
+  Widget _buildSubtitleTrialBar() {
+    final current = _subtitleTrialResults[_subtitleTrialIndex];
+    final displayTitle = _truncateSubtitleLabel(current.displayLabel);
+    final theme = Theme.of(context);
+    final canGoPrevious = !_subtitleTrialLoading && _subtitleTrialIndex > 0;
+    final canGoNext = !_subtitleTrialLoading && _subtitleTrialIndex < _subtitleTrialResults.length - 1;
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 540),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.82),
+          borderRadius: BorderRadius.circular(tokens(context).radiusMd),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 18, offset: const Offset(0, 6)),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              displayTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${_subtitleTrialIndex + 1}/${_subtitleTrialResults.length}',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.72), fontSize: 11),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildSubtitleTrialActionButton(
+                  focusNode: _subtitleTrialPreviousFocusNode,
+                  label: 'Previous',
+                  enabled: canGoPrevious,
+                  onPressed: () async {
+                    setState(() => _subtitleTrialIndex -= 1);
+                    await _applySubtitleTrialAtCurrentIndex();
+                  },
+                  onNavigateRight: () => _subtitleTrialCancelFocusNode.requestFocus(),
+                ),
+                const SizedBox(width: 8),
+                _buildSubtitleTrialActionButton(
+                  focusNode: _subtitleTrialCancelFocusNode,
+                  label: t.common.cancel,
+                  enabled: !_subtitleTrialLoading,
+                  onPressed: () => unawaited(_cancelSubtitleTrial()),
+                  onNavigateLeft: () => _subtitleTrialPreviousFocusNode.requestFocus(),
+                  onNavigateRight: () => _subtitleTrialConfirmFocusNode.requestFocus(),
+                ),
+                const SizedBox(width: 8),
+                _buildSubtitleTrialActionButton(
+                  focusNode: _subtitleTrialConfirmFocusNode,
+                  label: t.common.confirm,
+                  enabled: !_subtitleTrialLoading,
+                  onPressed: () => unawaited(_confirmSubtitleTrial()),
+                  onNavigateLeft: () => _subtitleTrialCancelFocusNode.requestFocus(),
+                  onNavigateRight: () => _subtitleTrialNextFocusNode.requestFocus(),
+                  isPrimary: true,
+                ),
+                const SizedBox(width: 8),
+                _buildSubtitleTrialActionButton(
+                  focusNode: _subtitleTrialNextFocusNode,
+                  label: 'Next',
+                  enabled: canGoNext,
+                  onPressed: () async {
+                    setState(() => _subtitleTrialIndex += 1);
+                    await _applySubtitleTrialAtCurrentIndex();
+                  },
+                  onNavigateLeft: () => _subtitleTrialConfirmFocusNode.requestFocus(),
+                ),
+                if (_subtitleTrialLoading) ...[
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(theme.colorScheme.primary),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubtitleTrialActionButton({
+    required FocusNode focusNode,
+    required String label,
+    required bool enabled,
+    required VoidCallback onPressed,
+    VoidCallback? onNavigateLeft,
+    VoidCallback? onNavigateRight,
+    bool isPrimary = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final background = isPrimary ? colorScheme.primary : Colors.white.withValues(alpha: 0.12);
+    final foreground = isPrimary ? colorScheme.onPrimary : Colors.white;
+
+    return FocusableButton(
+      focusNode: focusNode,
+      onPressed: enabled ? onPressed : null,
+      onNavigateLeft: onNavigateLeft,
+      onNavigateRight: onNavigateRight,
+      onBack: () => unawaited(_cancelSubtitleTrial()),
+      useBackgroundFocus: true,
+      autoScroll: false,
+      child: AnimatedOpacity(
+        opacity: enabled ? 1.0 : 0.45,
+        duration: const Duration(milliseconds: 160),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: enabled ? onPressed : null,
+            borderRadius: BorderRadius.circular(tokens(context).radiusSm),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: BorderRadius.circular(tokens(context).radiusSm),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Text(
+                  label,
+                  style: TextStyle(color: foreground, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _truncateSubtitleLabel(String value, {int maxLength = 54}) {
+    final normalized = value.trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return '${normalized.substring(0, maxLength - 3)}...';
   }
 
   Widget _buildSkipMarkerButton() {

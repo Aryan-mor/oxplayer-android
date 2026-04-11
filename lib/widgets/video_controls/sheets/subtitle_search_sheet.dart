@@ -2,12 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:oxplayer/infrastructure/config/app_config.dart';
 import 'package:oxplayer/infrastructure/subtitles/subdl_service.dart';
 import 'package:oxplayer/mpv/mpv.dart';
 
 import '../../../i18n/strings.g.dart';
 import '../../../models/plex_metadata.dart';
+import '../../../services/auth_debug_service.dart';
+import '../../../utils/app_logger.dart';
 import '../../../utils/language_codes.dart';
 import '../../../utils/snackbar_helper.dart';
 import '../../../widgets/app_icon.dart';
@@ -83,14 +84,11 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
     });
 
     try {
-      final config = await AppConfig.load();
-      if (config.subdlApiKey.isEmpty) {
-        throw Exception('SUBDL_API_KEY is not configured.');
-      }
-
       final title = _titleController.text.trim();
+      playMediaDebugInfo(
+        'Subtitle search UI requested: lang=${_languageCode.toUpperCase()}, title=${title.isEmpty ? '<default>' : title}',
+      );
       final results = await SubdlService().search(
-        apiKey: config.subdlApiKey,
         metadata: widget.metadata,
         languageCode: _languageCode,
         titleOverride: title.isEmpty ? null : title,
@@ -100,7 +98,10 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
         _results = results;
         _isSearching = false;
       });
+      playMediaDebugSuccess('Subtitle search UI received ${results.length} SubDL results.');
     } catch (e) {
+      appLogger.e('Subtitle search sheet failed', error: e);
+      playMediaDebugError('Subtitle search UI failed: $e');
       if (!mounted) return;
       setState(() {
         _error = e.toString();
@@ -128,6 +129,7 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
     setState(() => _downloadingKey = result.rawDownload);
 
     try {
+      playMediaDebugInfo('Subtitle download UI requested: ${result.displayLabel}');
       final downloaded = await SubdlService().downloadAndExtract(
         rawDownload: result.rawDownload,
         displayLabel: result.displayLabel,
@@ -146,8 +148,11 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
       if (!mounted) return;
 
       showSuccessSnackBar(context, t.videoControls.subtitleDownloaded);
+      playMediaDebugSuccess('Subtitle download UI finished successfully.');
       OverlaySheetController.of(context).close();
-    } catch (_) {
+    } catch (e) {
+      appLogger.e('Subtitle download sheet failed', error: e);
+      playMediaDebugError('Subtitle download UI failed: $e');
       if (!mounted) return;
       showErrorSnackBar(context, t.videoControls.subtitleDownloadFailed);
       setState(() => _downloadingKey = null);

@@ -78,6 +78,7 @@ class MobileVideoControls extends StatefulWidget {
 
   /// Called when the content strip visibility changes
   final ValueChanged<bool>? onStripVisibilityChanged;
+  final bool subtitleTrialMode;
 
   const MobileVideoControls({
     super.key,
@@ -110,6 +111,7 @@ class MobileVideoControls extends StatefulWidget {
     this.onQueueItemSelected,
     this.controlsVisible,
     this.onStripVisibilityChanged,
+    this.subtitleTrialMode = false,
   });
 
   @override
@@ -302,6 +304,9 @@ class _MobileVideoControlsState extends State<MobileVideoControls>
   }
 
   Widget _buildTopBar(BuildContext context) {
+    if (widget.subtitleTrialMode) {
+      return const SizedBox.shrink();
+    }
     final topBar = _conditionalSafeArea(
       context: context,
       bottom: false, // Only respect top safe area when in portrait
@@ -320,6 +325,9 @@ class _MobileVideoControlsState extends State<MobileVideoControls>
   }
 
   Widget _buildPlaybackControls(BuildContext _) {
+    if (widget.subtitleTrialMode) {
+      return const SizedBox.shrink();
+    }
     // Hide all playback controls in host-only mode for non-host
     if (!widget.canControl) {
       return const SizedBox.shrink();

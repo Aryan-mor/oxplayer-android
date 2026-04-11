@@ -103,6 +103,7 @@ class TrackChapterControls extends StatelessWidget {
   Future<void> Function()? get onSubtitleDownloaded => trackControlsState.onSubtitleDownloaded;
   Future<void> Function(SubtitleTrack track)? get onExternalSubtitleReady =>
       trackControlsState.onExternalSubtitleReady;
+  Future<void> Function()? get onSearchSubtitles => trackControlsState.onSearchSubtitles;
 
   /// Handle key event for button navigation
   KeyEventResult _handleButtonKeyEvent(FocusNode _, KeyEvent event, int index, int totalButtons) {
@@ -238,14 +239,16 @@ class TrackChapterControls extends StatelessWidget {
         );
         buttonIndex++;
 
-        // Combined audio & subtitles button
-        if (_hasMultipleAudioTracks(tracks) || _hasSubtitles(tracks)) {
+        // Combined audio & subtitles button.
+        // Keep this available when subtitle search is supported even if no
+        // embedded/sidecar subtitle tracks are currently loaded yet.
+        if (_canOpenTrackSheet(tracks)) {
           final currentIndex = buttonIndex;
           final hasSubs = _hasSubtitles(tracks);
           final selectedSub = player.state.track.subtitle;
           final hasActiveSubtitle = selectedSub != null && selectedSub.id != 'no';
           final isHidden = hasSubs && hasActiveSubtitle && !subtitlesVisible;
-          final icon = hasSubs
+          final icon = (hasSubs || ratingKey.isNotEmpty)
               ? (isHidden ? Symbols.subtitles_off_rounded : Symbols.subtitles_rounded)
               : Symbols.audiotrack_rounded;
           buttons.add(
@@ -269,6 +272,7 @@ class TrackChapterControls extends StatelessWidget {
                         mediaTitle: mediaTitle,
                         onSubtitleDownloaded: onSubtitleDownloaded,
                         onExternalSubtitleReady: onExternalSubtitleReady,
+                        onSearchSubtitles: onSearchSubtitles,
                         onAudioTrackChanged: onAudioTrackChanged,
                         onSubtitleTrackChanged: onSubtitleTrackChanged,
                         onSecondarySubtitleTrackChanged: onSecondarySubtitleTrackChanged,
@@ -482,7 +486,7 @@ class TrackChapterControls extends StatelessWidget {
   /// Calculate total button count for navigation
   int _getButtonCount(Tracks? tracks, bool isMobile, bool isDesktop) {
     int count = 1; // Settings button always shown
-    if (_hasMultipleAudioTracks(tracks) || _hasSubtitles(tracks)) count++;
+    if (_canOpenTrackSheet(tracks)) count++;
     if (chapters.isNotEmpty && !hideChaptersAndQueue) count++;
     if (showQueueButton && onQueueItemSelected != null && !hideChaptersAndQueue) count++;
     if (availableVersions.length > 1 && onSwitchVersion != null) count++;
@@ -502,6 +506,10 @@ class TrackChapterControls extends StatelessWidget {
   bool _hasSubtitles(Tracks? tracks) {
     if (tracks == null) return false;
     return TrackFilterHelper.hasTracks<SubtitleTrack>(tracks.subtitle);
+  }
+
+  bool _canOpenTrackSheet(Tracks? tracks) {
+    return _hasMultipleAudioTracks(tracks) || _hasSubtitles(tracks) || ratingKey.isNotEmpty;
   }
 
   IconData _getBoxFitIcon(int mode) {
