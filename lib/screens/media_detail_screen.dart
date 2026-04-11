@@ -46,6 +46,7 @@ import '../widgets/app_bar_back_button.dart';
 import '../utils/desktop_window_padding.dart';
 import '../widgets/horizontal_scroll_with_arrows.dart';
 import '../widgets/media_context_menu.dart';
+import '../widgets/ox_file_option_card.dart';
 import '../widgets/overlay_sheet.dart';
 import '../widgets/placeholder_container.dart';
 import '../mixins/watch_state_aware.dart';
@@ -102,6 +103,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   final ScrollController _seasonTabsScrollController = ScrollController();
   final FocusNode _firstEpisodeFocusNode = FocusNode(debugLabel: 'first_episode');
   final FocusNode _lastEpisodeFocusNode = FocusNode(debugLabel: 'last_episode');
+  final Map<String, List<OxFileOptionItem>> _oxFileOptionsByParentKey = {};
+  PlexMetadata? _selectedOxOptionParent;
+  List<FocusNode> _oxOptionTabFocusNodes = [];
+  final ScrollController _oxOptionTabsScrollController = ScrollController();
 
   late final FocusNode _playButtonFocusNode;
   late final FocusNode _ratingChipFocusNode;
@@ -373,7 +378,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     for (final node in _seasonTabFocusNodes) {
       node.dispose();
     }
+    for (final node in _oxOptionTabFocusNodes) {
+      node.dispose();
+    }
     _seasonTabsScrollController.dispose();
+    _oxOptionTabsScrollController.dispose();
     _firstEpisodeFocusNode.dispose();
     _lastEpisodeFocusNode.dispose();
     super.dispose();
@@ -439,7 +448,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       setStateIfMounted(() => _isStartingPrimaryPlayback = true);
       try {
         if (_isOxLibraryMetadata(metadata)) {
-          await _playOxViaSystemPlayer(metadata);
+          if (metadata.isShow || metadata.isSeason) {
+            await _playFirstEpisode();
+          } else {
+            await _playOxViaSystemPlayer(metadata);
+          }
           return;
         }
 
@@ -905,6 +918,79 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     return metadata.key?.startsWith('ox-library:') == true;
   }
 
+  Future<void> _playOxFileWithRepository({
+    required MediaRepository mediaRepository,
+    required PlexMetadata metadata,
+    required OxLibraryMediaDetailFile file,
+    String? detailGlobalId,
+  }) async {
+    var selectedFile = file;
+
+    playMediaDebugInfo(
+      'Selected OX file id=${selectedFile.id} canStream=${selectedFile.canStream} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
+    );
+
+    Uri? streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
+
+    if (streamUrl == null) {
+      playMediaDebugInfo('Initial stream URL resolution failed for file=${selectedFile.id}. Requesting media recovery.');
+      final recovered = await mediaRepository.requestMediaRecovery(selectedFile.id);
+      playMediaDebugInfo('Media recovery result for file=${selectedFile.id}: recovered=$recovered');
+      if (recovered && detailGlobalId != null && detailGlobalId.isNotEmpty) {
+        final refreshedDetail = await mediaRepository.fetchLibraryMediaDetail(detailGlobalId);
+        final refreshedFile = refreshedDetail.files.where((candidate) => candidate.id == selectedFile.id).firstOrNull ??
+            mediaRepository.selectPreferredFile(refreshedDetail);
+        if (refreshedFile != null) {
+          selectedFile = refreshedFile;
+          playMediaDebugInfo(
+            'Retrying stream URL resolution with refreshed file id=${selectedFile.id} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
+          );
+          streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
+        }
+      }
+    }
+
+    if (!mounted) return;
+
+    if (streamUrl == null) {
+      playMediaDebugError('Playback stream URL is still empty for metadata=${metadata.ratingKey} file=${selectedFile.id}');
+      await mediaRepository.releaseInternalPlaybackSession(reason: 'stream_url_unavailable');
+      showErrorSnackBar(context, t.externalPlayer.launchFailed);
+      return;
+    }
+
+    final videoUrl = streamUrl.toString();
+    playMediaDebugSuccess('Resolved internal playback URL for file=${selectedFile.id}: $videoUrl');
+    final playbackFuture = navigateToInternalVideoPlayerForUrl(context, metadata: metadata, videoUrl: videoUrl);
+    playbackFuture.whenComplete(() async {
+      await mediaRepository.releaseInternalPlaybackSession(reason: 'video_player_closed');
+    });
+    unawaited(playbackFuture);
+  }
+
+  Future<void> _playOxFileOption(PlexMetadata metadata, OxFileOptionItem option) async {
+    MediaRepository? mediaRepository;
+    try {
+      final repository = await DataRepository.create();
+      mediaRepository = MediaRepository(dataRepository: repository);
+      await _playOxFileWithRepository(
+        mediaRepository: mediaRepository,
+        metadata: metadata,
+        file: option.file,
+        detailGlobalId: metadata.grandparentRatingKey ?? widget.metadata.ratingKey,
+      );
+    } catch (error) {
+      appLogger.e('Failed to start OX internal playback', error: error);
+      playMediaDebugError('Failed to start OX internal playback for metadata=${metadata.ratingKey}: $error');
+      if (mediaRepository != null) {
+        unawaited(mediaRepository.releaseInternalPlaybackSession(reason: 'playback_launch_failed'));
+      }
+      if (mounted) {
+        showErrorSnackBar(context, t.externalPlayer.launchFailed);
+      }
+    }
+  }
+
   Future<void> _playOxViaSystemPlayer(PlexMetadata metadata) async {
     MediaRepository? mediaRepository;
     try {
@@ -920,52 +1006,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         showErrorSnackBar(context, t.messages.fileInfoNotAvailable);
         return;
       }
-
-      playMediaDebugInfo(
-        'Selected OX file id=${selectedFile.id} canStream=${selectedFile.canStream} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
-      );
-
-      Uri? streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
-
-      // Legacy-like fallback: trigger provider recovery, refresh locator, retry once.
-      if (streamUrl == null) {
-        playMediaDebugInfo('Initial stream URL resolution failed for file=${selectedFile.id}. Requesting media recovery.');
-        final recovered = await mediaRepository.requestMediaRecovery(selectedFile.id);
-        playMediaDebugInfo('Media recovery result for file=${selectedFile.id}: recovered=$recovered');
-        if (recovered) {
-          final refreshedDetail = await mediaRepository.fetchLibraryMediaDetail(metadata.ratingKey);
-          final refreshedFile = refreshedDetail.files.where((f) => f.id == selectedFile!.id).firstOrNull ??
-              mediaRepository.selectPreferredFile(refreshedDetail);
-          if (refreshedFile != null) {
-            selectedFile = refreshedFile;
-            playMediaDebugInfo(
-              'Retrying stream URL resolution with refreshed file id=${selectedFile.id} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
-            );
-            streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
-          }
-        }
-      }
-
-      if (!mounted) return;
-
-      if (streamUrl == null) {
-        playMediaDebugError('Playback stream URL is still empty for metadata=${metadata.ratingKey} file=${selectedFile.id}');
-        await mediaRepository.releaseInternalPlaybackSession(reason: 'stream_url_unavailable');
-        showErrorSnackBar(context, t.externalPlayer.launchFailed);
-        return;
-      }
-
-      final videoUrl = streamUrl.toString();
-      playMediaDebugSuccess('Resolved internal playback URL for file=${selectedFile.id}: $videoUrl');
-      final playbackFuture = navigateToInternalVideoPlayerForUrl(
-        context,
+      await _playOxFileWithRepository(
+        mediaRepository: mediaRepository,
         metadata: metadata,
-        videoUrl: videoUrl,
+        file: selectedFile,
+        detailGlobalId: metadata.ratingKey,
       );
-      playbackFuture.whenComplete(() async {
-        await mediaRepository?.releaseInternalPlaybackSession(reason: 'video_player_closed');
-      });
-      unawaited(playbackFuture);
     } catch (error) {
       appLogger.e('Failed to start OX internal playback', error: error);
       playMediaDebugError('Failed to start OX internal playback for metadata=${metadata.ratingKey}: $error');
@@ -1176,6 +1222,246 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     return getServerBoundClient(context);
   }
 
+  bool _isOxMovieWithFileOptions(PlexMetadata metadata) {
+    return _isOxLibraryMetadata(metadata) && metadata.isMovie && (_oxFileOptionsByParentKey[metadata.ratingKey]?.isNotEmpty ?? false);
+  }
+
+  bool _isShowingOxFileOptions(PlexMetadata metadata) {
+    if (!_isOxLibraryMetadata(metadata)) {
+      return false;
+    }
+    if (metadata.isMovie) {
+      return _isOxMovieWithFileOptions(metadata);
+    }
+    return _selectedOxOptionParent != null;
+  }
+
+  List<OxFileOptionItem> _currentOxFileOptions(PlexMetadata metadata) {
+    if (metadata.isMovie) {
+      return _oxFileOptionsByParentKey[metadata.ratingKey] ?? const <OxFileOptionItem>[];
+    }
+    final key = _selectedOxOptionParent?.ratingKey;
+    if (key == null) {
+      return const <OxFileOptionItem>[];
+    }
+    return _oxFileOptionsByParentKey[key] ?? const <OxFileOptionItem>[];
+  }
+
+  List<PlexMetadata> _currentOxEpisodeTabs() {
+    if (_selectedSeasonIndex < 0 || _selectedSeasonIndex >= _seasons.length) {
+      return const <PlexMetadata>[];
+    }
+    return List<PlexMetadata>.of(_episodeCache[_seasons[_selectedSeasonIndex].ratingKey] ?? const <PlexMetadata>[]);
+  }
+
+  String _buildOxEpisodeTabLabel(PlexMetadata episode) {
+    final seasonNumber = episode.parentIndex ?? 0;
+    final episodeNumber = episode.index ?? 0;
+    return episodeNumber > 0 ? 'S$seasonNumber E$episodeNumber' : 'S$seasonNumber';
+  }
+
+  void _updateOxOptionTabFocusNodes(int count) {
+    if (_oxOptionTabFocusNodes.length != count) {
+      for (final node in _oxOptionTabFocusNodes) {
+        node.dispose();
+      }
+      _oxOptionTabFocusNodes = List.generate(count, (index) => FocusNode(debugLabel: 'ox_option_tab_$index'));
+    }
+  }
+
+  void _enterOxFileOptions(PlexMetadata episode) {
+    final options = _oxFileOptionsByParentKey[episode.ratingKey] ?? const <OxFileOptionItem>[];
+    if (options.isEmpty) {
+      showErrorSnackBar(context, t.messages.fileInfoNotAvailable);
+      return;
+    }
+
+    final episodeTabs = _currentOxEpisodeTabs();
+    _updateOxOptionTabFocusNodes(episodeTabs.length + 1);
+    setStateIfMounted(() {
+      _selectedOxOptionParent = episode;
+    });
+  }
+
+  void _exitOxFileOptions() {
+    setStateIfMounted(() {
+      _selectedOxOptionParent = null;
+    });
+    _focusSelectedSeasonTab();
+  }
+
+  List<PlexMetadata> _flattenOxEpisodes(Iterable<OxSeriesSeasonGroup> seasons) {
+    final episodes = <PlexMetadata>[];
+    for (final season in seasons) {
+      episodes.addAll(season.episodes);
+    }
+    episodes.sort((left, right) {
+      final seasonCompare = (left.parentIndex ?? 0).compareTo(right.parentIndex ?? 0);
+      if (seasonCompare != 0) {
+        return seasonCompare;
+      }
+      return (left.index ?? 0).compareTo(right.index ?? 0);
+    });
+    return episodes;
+  }
+
+  int _resolveOxSelectedSeasonIndex(List<PlexMetadata> seasons, PlexMetadata? firstEpisode) {
+    if (widget.initialSeasonIndex != null && seasons.isNotEmpty) {
+      final idx = seasons.indexWhere((season) => season.index == widget.initialSeasonIndex);
+      if (idx != -1) {
+        return idx;
+      }
+    }
+
+    if (firstEpisode?.parentIndex != null && seasons.isNotEmpty) {
+      final idx = seasons.indexWhere((season) => season.index == firstEpisode!.parentIndex);
+      if (idx != -1) {
+        return idx;
+      }
+    }
+
+    return 0;
+  }
+
+  Future<void> _loadOxSeriesMetadata() async {
+    _seasonsCompleter = Completer<void>();
+    setStateIfMounted(() {
+      _isLoadingSeasons = true;
+      _isLoadingEpisodes = true;
+      _isLoadingSeasonEpisodes = true;
+    });
+
+    try {
+      final repository = await DataRepository.create();
+      final mediaRepository = MediaRepository(dataRepository: repository);
+      final detail = await mediaRepository.fetchLibraryMediaDetail(widget.metadata.ratingKey);
+      final oxSeriesView = mediaRepository.buildSeriesDetailView(detail: detail, fallback: widget.metadata);
+      final seasons = oxSeriesView.seasons.map((group) => group.season).toList(growable: false);
+      final shouldShowEpisodesDirectly = seasons.length <= 1;
+      final selectedSeasonIndex = _resolveOxSelectedSeasonIndex(seasons, oxSeriesView.firstEpisode);
+      final currentEpisodes = shouldShowEpisodesDirectly
+          ? _flattenOxEpisodes(oxSeriesView.seasons)
+          : selectedSeasonIndex < oxSeriesView.seasons.length
+              ? List<PlexMetadata>.of(oxSeriesView.seasons[selectedSeasonIndex].episodes)
+              : <PlexMetadata>[];
+
+      _episodeCache.clear();
+      _oxFileOptionsByParentKey
+        ..clear()
+        ..addAll(oxSeriesView.fileOptionsByParentKey);
+      for (final group in oxSeriesView.seasons) {
+        _episodeCache[group.season.ratingKey] = List<PlexMetadata>.of(group.episodes);
+      }
+      _updateSeasonTabFocusNodes(seasons.length);
+
+      if (!mounted) return;
+      setState(() {
+        _fullMetadata = oxSeriesView.series;
+        _onDeckEpisode = oxSeriesView.firstEpisode;
+        _playbackData = null;
+        _seasons = seasons;
+        _episodes = currentEpisodes;
+        _selectedOxOptionParent = null;
+        _showEpisodesDirectly = shouldShowEpisodesDirectly;
+        _selectedSeasonIndex = selectedSeasonIndex;
+        _extras = null;
+        _isLoadingMetadata = false;
+        _isLoadingSeasons = false;
+        _isLoadingEpisodes = false;
+        _isLoadingSeasonEpisodes = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _fullMetadata = widget.metadata;
+        _seasons = const [];
+        _episodes = const [];
+        _oxFileOptionsByParentKey.clear();
+        _selectedOxOptionParent = null;
+        _showEpisodesDirectly = true;
+        _isLoadingMetadata = false;
+        _isLoadingSeasons = false;
+        _isLoadingEpisodes = false;
+        _isLoadingSeasonEpisodes = false;
+      });
+    } finally {
+      if (!(_seasonsCompleter?.isCompleted ?? true)) {
+        _seasonsCompleter?.complete();
+      }
+    }
+  }
+
+  Future<void> _loadOxMovieMetadata() async {
+    setStateIfMounted(() {
+      _isLoadingEpisodes = true;
+      _isLoadingSeasonEpisodes = true;
+    });
+
+    try {
+      final repository = await DataRepository.create();
+      final mediaRepository = MediaRepository(dataRepository: repository);
+      final detail = await mediaRepository.fetchLibraryMediaDetail(widget.metadata.ratingKey);
+      final metadata = _mapOxDetailToPlexMetadata(detail, fallback: widget.metadata);
+      final fileOptions = mediaRepository.buildMovieFileOptions(detail);
+      _oxFileOptionsByParentKey
+        ..clear()
+        ..[metadata.ratingKey] = fileOptions;
+      _updateOxOptionTabFocusNodes(1);
+
+      if (!mounted) return;
+      setState(() {
+        _fullMetadata = metadata;
+        _selectedOxOptionParent = null;
+        _isLoadingMetadata = false;
+        _isLoadingEpisodes = false;
+        _isLoadingSeasonEpisodes = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _oxFileOptionsByParentKey.clear();
+        _selectedOxOptionParent = null;
+        _fullMetadata = widget.metadata;
+        _isLoadingMetadata = false;
+        _isLoadingEpisodes = false;
+        _isLoadingSeasonEpisodes = false;
+      });
+    }
+  }
+
+  PlexMetadata _mapOxDetailToPlexMetadata(OxLibraryMediaDetail detail, {required PlexMetadata fallback}) {
+    final media = detail.media;
+    final normalizedType = switch (media.type.toUpperCase()) {
+      'MOVIE' => 'movie',
+      'SERIES' => 'show',
+      'GENERAL_VIDEO' => 'movie',
+      _ => fallback.type ?? 'movie',
+    };
+    final posterUrl = _resolvePosterUrl(media.posterPath) ?? fallback.thumb;
+
+    return fallback.copyWith(
+      ratingKey: media.id,
+      key: 'ox-library:${media.id}',
+      type: normalizedType,
+      title: media.title,
+      summary: media.summary,
+      rating: media.voteAverage,
+      year: media.releaseYear,
+      thumb: posterUrl,
+      art: posterUrl ?? fallback.art,
+    );
+  }
+
+  String? _resolvePosterUrl(String? posterPath) {
+    final value = posterPath?.trim();
+    if (value == null || value.isEmpty) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+    final normalized = value.startsWith('/') ? value : '/$value';
+    return 'https://image.tmdb.org/t/p/w500$normalized';
+  }
+
   /// Resolve version selection for download using shared utility.
   Future<DownloadVersionConfig?> _resolveDownloadVersion(
     BuildContext context,
@@ -1194,6 +1480,15 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     setState(() {
       _isLoadingMetadata = true;
     });
+
+    if (_isOxLibraryMetadata(widget.metadata)) {
+      if (widget.metadata.isShow) {
+        await _loadOxSeriesMetadata();
+      } else if (widget.metadata.isMovie) {
+        await _loadOxMovieMetadata();
+      }
+      return;
+    }
 
     // Offline mode: try to load full metadata from cache (has clearLogo, summary, etc.)
     if (widget.isOffline) {
@@ -1304,6 +1599,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   }
 
   Future<void> _loadSeasons() async {
+    if (_isOxLibraryMetadata(widget.metadata) && widget.metadata.isShow) {
+      await _loadOxSeriesMetadata();
+      return;
+    }
+
     _seasonsCompleter = Completer<void>();
     setState(() {
       _isLoadingSeasons = true;
@@ -1585,6 +1885,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       return KeyEventResult.handled;
     }
 
+    if (_selectedOxOptionParent != null && _oxOptionTabFocusNodes.isNotEmpty) {
+      _oxOptionTabFocusNodes.first.requestFocus();
+      _scrollSectionIntoView(_seasonsSectionKey);
+      return KeyEventResult.handled;
+    }
+
     if (metadata.isShow && !_showEpisodesDirectly && _seasons.isNotEmpty && _seasonTabFocusNodes.isNotEmpty) {
       // Focus the selected season tab chip
       _seasonTabFocusNodes[_selectedSeasonIndex].requestFocus();
@@ -1638,6 +1944,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
     // DOWN: season tabs → cast → extras
     if (key.isDownKey) {
+      if (_selectedOxOptionParent != null && _oxOptionTabFocusNodes.isNotEmpty) {
+        _oxOptionTabFocusNodes.first.requestFocus();
+        _scrollSectionIntoView(_seasonsSectionKey);
+      } else
       if (metadata.isShow && !_showEpisodesDirectly && _seasons.isNotEmpty && _seasonTabFocusNodes.isNotEmpty) {
         _seasonTabFocusNodes[_selectedSeasonIndex].requestFocus();
         _scrollSectionIntoView(_seasonsSectionKey);
@@ -1679,6 +1989,123 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   void _scrollSeasonTabIntoView(int index) {
     if (index < 0 || index >= _seasonTabFocusNodes.length) return;
     scrollContextToCenter(_seasonTabFocusNodes[index].context);
+  }
+
+  Widget _buildOxFileOptionTabs(PlexMetadata metadata) {
+    final isMovie = metadata.isMovie;
+    final episodeTabs = isMovie ? const <PlexMetadata>[] : _currentOxEpisodeTabs();
+    final tabCount = isMovie ? 1 : episodeTabs.length + 1;
+    _updateOxOptionTabFocusNodes(tabCount);
+
+    return HorizontalScrollWithArrows(
+      controller: _oxOptionTabsScrollController,
+      builder: (scrollController) => SingleChildScrollView(
+        controller: scrollController,
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: List.generate(tabCount, (index) {
+            final focusNode = _oxOptionTabFocusNodes[index];
+
+            if (isMovie) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: FocusableTabChip(
+                  label: 'Files',
+                  isSelected: true,
+                  focusNode: focusNode,
+                  onSelect: () {},
+                  onNavigateDown: () => _firstEpisodeFocusNode.requestFocus(),
+                  onBack: () => Navigator.of(context).maybePop(),
+                ),
+              );
+            }
+
+            if (index == 0) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: FocusableTabChip(
+                  label: t.common.back,
+                  isSelected: false,
+                  focusNode: focusNode,
+                  onSelect: _exitOxFileOptions,
+                  onNavigateRight: episodeTabs.isNotEmpty
+                      ? () {
+                          _oxOptionTabFocusNodes[1].requestFocus();
+                          scrollContextToCenter(_oxOptionTabFocusNodes[1].context);
+                        }
+                      : null,
+                  onNavigateDown: () => _firstEpisodeFocusNode.requestFocus(),
+                  onBack: _exitOxFileOptions,
+                ),
+              );
+            }
+
+            final episode = episodeTabs[index - 1];
+            final isSelected = episode.ratingKey == _selectedOxOptionParent?.ratingKey;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FocusableTabChip(
+                label: _buildOxEpisodeTabLabel(episode),
+                isSelected: isSelected,
+                focusNode: focusNode,
+                onSelect: () => _enterOxFileOptions(episode),
+                onNavigateLeft: () {
+                  final targetIndex = index - 1;
+                  _oxOptionTabFocusNodes[targetIndex].requestFocus();
+                  scrollContextToCenter(_oxOptionTabFocusNodes[targetIndex].context);
+                },
+                onNavigateRight: index < tabCount - 1
+                    ? () {
+                        final targetIndex = index + 1;
+                        _oxOptionTabFocusNodes[targetIndex].requestFocus();
+                        scrollContextToCenter(_oxOptionTabFocusNodes[targetIndex].context);
+                      }
+                    : null,
+                onNavigateDown: () => _firstEpisodeFocusNode.requestFocus(),
+                onBack: _exitOxFileOptions,
+              ),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOxFileOptionsList(PlexMetadata metadata) {
+    final fileOptions = _currentOxFileOptions(metadata);
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      itemCount: fileOptions.length,
+      itemBuilder: (context, index) {
+        final option = fileOptions[index];
+        final playbackMetadata = _selectedOxOptionParent ?? metadata;
+        return OxFileOptionCard(
+          title: option.title,
+          badgeLabel: option.badgeLabel,
+          infoLine: option.infoLine,
+          summary: option.summary,
+          imageUrl: playbackMetadata.thumb,
+          focusNode: index == 0
+              ? _firstEpisodeFocusNode
+              : index == fileOptions.length - 1 && fileOptions.length > 1
+                  ? _lastEpisodeFocusNode
+                  : null,
+          onNavigateUp: index == 0
+              ? () {
+                  if (_oxOptionTabFocusNodes.isNotEmpty) {
+                    _oxOptionTabFocusNodes[0].requestFocus();
+                    _scrollSectionIntoView(_seasonsSectionKey);
+                  }
+                }
+              : null,
+          onTap: () async {
+            await _playOxFileOption(playbackMetadata, option);
+          },
+        );
+      },
+    );
   }
 
   /// Build inline season tab chips with LEFT/RIGHT/DOWN focus navigation
@@ -1825,6 +2252,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       if (metadata.role != null && metadata.role!.isNotEmpty) {
         _castFocusNode.requestFocus();
         _scrollSectionIntoView(_castSectionKey);
+      } else if (_selectedOxOptionParent != null && _oxOptionTabFocusNodes.isNotEmpty) {
+        _oxOptionTabFocusNodes.first.requestFocus();
+        _scrollSectionIntoView(_seasonsSectionKey);
       } else if (metadata.isShow && !_showEpisodesDirectly && _seasons.isNotEmpty && _seasonTabFocusNodes.isNotEmpty) {
         _seasonTabFocusNodes[_selectedSeasonIndex].requestFocus();
         _scrollSectionIntoView(_seasonsSectionKey);
@@ -1922,6 +2352,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       itemCount: _episodes.length,
       itemBuilder: (context, index) {
         final episode = _episodes[index];
+        final isOxEpisode = _isOxLibraryMetadata(episode);
         String? localPosterPath;
         if (widget.isOffline && episode.serverId != null) {
           final artworkRef = context.read<DownloadProvider>().getArtworkPaths(episode.globalKey);
@@ -1953,6 +2384,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               : null,
           localPosterPath: localPosterPath,
           onTap: () async {
+            if (isOxEpisode) {
+              _enterOxFileOptions(episode);
+              return;
+            }
             await navigateToVideoPlayerWithRefresh(
               context,
               metadata: episode,
@@ -1970,19 +2405,27 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           },
           onRefresh: widget.isOffline
               ? null
-              : (ratingKey) async {
-                  final refreshed = await client?.getMetadataWithImages(ratingKey);
-                  if (refreshed != null) {
-                    setStateIfMounted(() {
-                      final i = _episodes.indexWhere((e) => e.ratingKey == ratingKey);
-                      if (i != -1) {
-                        _episodes[i] = refreshed;
-                        _syncEpisodeToCache(i, refreshed);
+              : isOxEpisode
+                  ? (_) async {
+                      await _loadFullMetadata();
+                    }
+                  : (ratingKey) async {
+                      final refreshed = await client?.getMetadataWithImages(ratingKey);
+                      if (refreshed != null) {
+                        setStateIfMounted(() {
+                          final i = _episodes.indexWhere((e) => e.ratingKey == ratingKey);
+                          if (i != -1) {
+                            _episodes[i] = refreshed;
+                            _syncEpisodeToCache(i, refreshed);
+                          }
+                        });
                       }
-                    });
-                  }
-                },
-          onListRefresh: widget.isOffline ? null : _refreshCurrentEpisodes,
+                    },
+          onListRefresh: widget.isOffline
+              ? null
+              : isOxEpisode
+                  ? _loadFullMetadata
+                  : _refreshCurrentEpisodes,
         );
       },
     );
@@ -2001,6 +2444,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
   /// Refresh episodes for the current context (inline season or all flattened)
   Future<void> _refreshCurrentEpisodes() async {
+    if (_isOxLibraryMetadata(widget.metadata)) {
+      await _loadFullMetadata();
+      return;
+    }
+
     if (_showEpisodesDirectly) {
       await _fetchAllEpisodes();
     } else if (_seasons.isNotEmpty) {
@@ -2012,6 +2460,21 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   }
 
   Future<void> _fetchAllEpisodes() async {
+    if (_isOxLibraryMetadata(widget.metadata)) {
+      setStateIfMounted(() {
+        _episodes = _flattenOxEpisodes(
+          _seasons.map(
+            (season) => OxSeriesSeasonGroup(
+              season: season,
+              episodes: List<PlexMetadata>.of(_episodeCache[season.ratingKey] ?? const <PlexMetadata>[]),
+            ),
+          ),
+        );
+        _isLoadingEpisodes = false;
+      });
+      return;
+    }
+
     if (_seasons.isEmpty) return;
     final client = _getClientForMetadata(context);
     if (client == null) return;
@@ -2047,6 +2510,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   Future<void> _updateWatchState() async {
     // Skip in offline mode
     if (widget.isOffline) return;
+
+    if (_isOxLibraryMetadata(widget.metadata)) {
+      await _loadFullMetadata();
+      return;
+    }
 
     try {
       // Use server-specific client for this metadata
@@ -2090,6 +2558,53 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
   Future<void> _playFirstEpisode() async {
     try {
+      if (_isOxLibraryMetadata(widget.metadata)) {
+        if (_seasons.isEmpty && _episodes.isEmpty && !_isLoadingMetadata) {
+          await _loadOxSeriesMetadata();
+        }
+
+        if (!mounted) return;
+
+        PlexMetadata? firstEpisode = _onDeckEpisode;
+        if (firstEpisode == null && _episodes.isNotEmpty) {
+          firstEpisode = _episodes.firstWhere(
+            (episode) => (episode.parentIndex ?? 0) > 0,
+            orElse: () => _episodes.first,
+          );
+        }
+
+        if (firstEpisode == null) {
+          for (final season in _seasons) {
+            final cachedEpisodes = _episodeCache[season.ratingKey];
+            if (cachedEpisodes != null && cachedEpisodes.isNotEmpty) {
+              firstEpisode = cachedEpisodes.first;
+              if ((season.index ?? 0) > 0) {
+                break;
+              }
+            }
+          }
+        }
+
+        if (firstEpisode == null) {
+          if (mounted) {
+            showErrorSnackBar(context, t.messages.noEpisodesFound);
+          }
+          return;
+        }
+
+        final options = _oxFileOptionsByParentKey[firstEpisode.ratingKey] ?? const <OxFileOptionItem>[];
+        final preferredOption = options.isNotEmpty ? options.first : null;
+        if (preferredOption == null) {
+          if (mounted) {
+            showErrorSnackBar(context, t.messages.fileInfoNotAvailable);
+          }
+          return;
+        }
+
+        await _playOxFileOption(firstEpisode, preferredOption);
+        return;
+      }
+
       // If seasons aren't loaded yet, wait for them or load them
       if (_seasons.isEmpty && !_isLoadingSeasons) {
         if (widget.isOffline) {
@@ -2256,9 +2771,15 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     final isShow = metadata.isShow;
     final isMobile = PlatformDetector.isMobile(context);
     final isTv = PlatformDetector.isTV();
+    final showingOxFileOptions = _isShowingOxFileOptions(metadata);
+    final showOxMovieFiles = _isOxMovieWithFileOptions(metadata);
 
-    KeyEventResult handleBack(FocusNode _, KeyEvent event) =>
-        handleBackKeyNavigation(context, event, result: _watchStateChanged);
+    KeyEventResult handleBack(FocusNode _, KeyEvent event) {
+      if (_selectedOxOptionParent != null) {
+        return handleBackKeyAction(event, _exitOxFileOptions);
+      }
+      return handleBackKeyNavigation(context, event, result: _watchStateChanged);
+    }
 
     // Show loading state while fetching full metadata
     if (_isLoadingMetadata) {
@@ -2572,20 +3093,22 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                 style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                               ),
                               const SizedBox(height: 12),
-                              _buildSeasonTabs(),
+                              showingOxFileOptions ? _buildOxFileOptionTabs(metadata) : _buildSeasonTabs(),
                               const SizedBox(height: 16),
                               if (_isLoadingSeasonEpisodes)
                                 const Center(
                                   child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()),
                                 )
-                              else if (_episodes.isNotEmpty)
+                              else if (showingOxFileOptions && _currentOxFileOptions(metadata).isNotEmpty)
+                                _buildOxFileOptionsList(metadata)
+                              else if (!showingOxFileOptions && _episodes.isNotEmpty)
                                 _buildEpisodesList()
                               else
                                 Padding(
                                   padding: const EdgeInsets.all(32),
                                   child: Center(
                                     child: Text(
-                                      t.messages.noEpisodesFoundGeneral,
+                                      showingOxFileOptions ? t.messages.fileInfoNotAvailable : t.messages.noEpisodesFoundGeneral,
                                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
                                     ),
                                   ),
@@ -2600,18 +3123,50 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 12),
+                            if (showingOxFileOptions) ...[
+                              _buildOxFileOptionTabs(metadata),
+                              const SizedBox(height: 16),
+                            ],
                             if (_isLoadingSeasons || _isLoadingEpisodes)
                               const Center(
                                 child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()),
                               )
-                            else if (_episodes.isNotEmpty)
+                            else if (showingOxFileOptions && _currentOxFileOptions(metadata).isNotEmpty)
+                              _buildOxFileOptionsList(metadata)
+                            else if (!showingOxFileOptions && _episodes.isNotEmpty)
                               _buildEpisodesList()
                             else
                               Padding(
                                 padding: const EdgeInsets.all(32),
                                 child: Center(
                                   child: Text(
-                                    t.messages.noEpisodesFoundGeneral,
+                                    showingOxFileOptions ? t.messages.fileInfoNotAvailable : t.messages.noEpisodesFoundGeneral,
+                                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 24),
+                          ] else if (showOxMovieFiles) ...[
+                            Text(
+                              key: _seasonsSectionKey,
+                              'Files',
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 12),
+                            _buildOxFileOptionTabs(metadata),
+                            const SizedBox(height: 16),
+                            if (_isLoadingEpisodes)
+                              const Center(
+                                child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()),
+                              )
+                            else if (_currentOxFileOptions(metadata).isNotEmpty)
+                              _buildOxFileOptionsList(metadata)
+                            else
+                              Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Center(
+                                  child: Text(
+                                    t.messages.fileInfoNotAvailable,
                                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
                                   ),
                                 ),
