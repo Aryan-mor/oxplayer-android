@@ -567,9 +567,10 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _loadSavedCredentials() async {
     _setStatus(t.common.checkingNetwork);
 
+    final authNotifier = context.read<AuthNotifier>();
+
     final storage = await StorageService.getInstance();
     final registry = ServerRegistry(storage);
-    final authNotifier = context.read<AuthNotifier>();
     final hasPersistedSession = authNotifier.hasPersistedSession;
 
     // Check network connectivity early to fast-path airplane mode.
