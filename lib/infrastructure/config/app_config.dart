@@ -54,7 +54,22 @@ class AppConfig {
 
   static Future<void> _ensureLoaded() async {
     if (dotenv.isInitialized) return;
-    await dotenv.load(fileName: 'assets/env/default.env');
+
+    for (final fileName in const <String>[
+      'assets/env/default.env',
+      'assets/env/default.env.example',
+    ]) {
+      try {
+        await dotenv.load(fileName: fileName);
+        return;
+      } catch (_) {
+        // Prefer a local override, but keep a tracked example for safe fallbacks.
+      }
+    }
+
+    throw StateError(
+      'Missing env asset. Create assets/env/default.env from assets/env/default.env.example or pass values via --dart-define/--dart-define-from-file.',
+    );
   }
 
   static const Map<String, String> _dartDefineEnvByKey = <String, String>{

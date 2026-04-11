@@ -12,6 +12,15 @@ permissions:
   contents: write
   actions: write
 
+env:
+  TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || vars.TELEGRAM_API_ID }}
+  TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || vars.TELEGRAM_API_HASH }}
+  BOT_USERNAME: ${{ vars.BOT_USERNAME || secrets.BOT_USERNAME }}
+  OXPLAYER_API_BASE_URL: ${{ vars.OXPLAYER_API_BASE_URL || secrets.OXPLAYER_API_BASE_URL }}
+  OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME || secrets.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
+  OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_URL || secrets.OXPLAYER_TELEGRAM_WEBAPP_URL }}
+  SUBDL_API_KEY: ${{ secrets.SUBDL_API_KEY || vars.SUBDL_API_KEY }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -26,6 +35,31 @@ jobs:
         run: |
           if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "Error: Version must be in semantic versioning format (e.g., 1.9.0)"
+            exit 1
+          fi
+
+      - name: Validate required app environment
+        shell: bash
+        run: |
+          required_vars=(
+            TELEGRAM_API_ID
+            TELEGRAM_API_HASH
+            BOT_USERNAME
+            OXPLAYER_API_BASE_URL
+            OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME
+            OXPLAYER_TELEGRAM_WEBAPP_URL
+            SUBDL_API_KEY
+          )
+
+          missing_vars=()
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              missing_vars+=("$var_name")
+            fi
+          done
+
+          if [ ${#missing_vars[@]} -gt 0 ]; then
+            echo "Missing required release environment variables: ${missing_vars[*]}"
             exit 1
           fi
 

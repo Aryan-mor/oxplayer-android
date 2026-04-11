@@ -124,7 +124,7 @@ class TelegramTdlibFacade implements TdlibFacade {
   }) async {
     if (apiId <= 0 || apiHash.isEmpty) {
       throw StateError(
-        'Set TELEGRAM_API_ID and TELEGRAM_API_HASH via dart-define/dart-define-from-file or assets/env/default.env',
+        'Set TELEGRAM_API_ID and TELEGRAM_API_HASH via dart-define/dart-define-from-file or a local assets/env/default.env copied from assets/env/default.env.example.',
       );
     }
     final previousGlobal = _globalInitSerial;

@@ -9,6 +9,13 @@ on:
 env:
   SENTRY_DART_DEFINE: ${{ github.repository == 'edde746/plezy' && '--dart-define=ENABLE_SENTRY=true' || '' }}
   GIT_COMMIT_DART_DEFINE: --dart-define=GIT_COMMIT=${{ github.sha }}
+  TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || vars.TELEGRAM_API_ID }}
+  TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || vars.TELEGRAM_API_HASH }}
+  BOT_USERNAME: ${{ vars.BOT_USERNAME || secrets.BOT_USERNAME }}
+  OXPLAYER_API_BASE_URL: ${{ vars.OXPLAYER_API_BASE_URL || secrets.OXPLAYER_API_BASE_URL }}
+  OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME || secrets.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
+  OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_URL || secrets.OXPLAYER_TELEGRAM_WEBAPP_URL }}
+  SUBDL_API_KEY: ${{ secrets.SUBDL_API_KEY || vars.SUBDL_API_KEY }}
 
 jobs:
   build-android:
@@ -54,6 +61,54 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Validate required app environment
+        shell: bash
+        run: |
+          required_vars=(
+            TELEGRAM_API_ID
+            TELEGRAM_API_HASH
+            BOT_USERNAME
+            OXPLAYER_API_BASE_URL
+            OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME
+            OXPLAYER_TELEGRAM_WEBAPP_URL
+            SUBDL_API_KEY
+          )
+
+          missing_vars=()
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              missing_vars+=("$var_name")
+            fi
+          done
+
+          if [ ${#missing_vars[@]} -gt 0 ]; then
+            echo "Missing required build environment variables: ${missing_vars[*]}"
+            exit 1
+          fi
+
+      - name: Generate Flutter dart-defines file
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          output_path = Path(os.environ['RUNNER_TEMP']) / 'flutter-build-env.json'
+          payload = {
+              'TELEGRAM_API_ID': os.environ['TELEGRAM_API_ID'],
+              'TELEGRAM_API_HASH': os.environ['TELEGRAM_API_HASH'],
+              'BOT_USERNAME': os.environ['BOT_USERNAME'],
+              'OXPLAYER_API_BASE_URL': os.environ['OXPLAYER_API_BASE_URL'],
+              'OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME': os.environ['OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME'],
+              'OXPLAYER_TELEGRAM_WEBAPP_URL': os.environ['OXPLAYER_TELEGRAM_WEBAPP_URL'],
+              'SUBDL_API_KEY': os.environ['SUBDL_API_KEY'],
+          }
+          output_path.write_text(json.dumps(payload), encoding='utf-8')
+          print(f'FLUTTER_BUILD_ENV_FILE={output_path}')
+          PY
+          echo "FLUTTER_BUILD_ENV_FILE=$RUNNER_TEMP/flutter-build-env.json" >> "$GITHUB_ENV"
+
       - name: Configure Android signing
         run: |
           STORE_PASSWORD="${{ secrets.ANDROID_KEYSTORE_PASSWORD || secrets.ANDROID_STORE_PASSWORD }}"
@@ -82,10 +137,10 @@ jobs:
           fi
 
       - name: Build APKs
-        run: flutter build apk --release --split-per-abi --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build apk --release --split-per-abi --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Build AAB
-        run: flutter build appbundle --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build appbundle --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Clean up keystore
         if: always()
@@ -156,8 +211,56 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Validate required app environment
+        shell: bash
+        run: |
+          required_vars=(
+            TELEGRAM_API_ID
+            TELEGRAM_API_HASH
+            BOT_USERNAME
+            OXPLAYER_API_BASE_URL
+            OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME
+            OXPLAYER_TELEGRAM_WEBAPP_URL
+            SUBDL_API_KEY
+          )
+
+          missing_vars=()
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              missing_vars+=("$var_name")
+            fi
+          done
+
+          if [ ${#missing_vars[@]} -gt 0 ]; then
+            echo "Missing required build environment variables: ${missing_vars[*]}"
+            exit 1
+          fi
+
+      - name: Generate Flutter dart-defines file
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          output_path = Path(os.environ['RUNNER_TEMP']) / 'flutter-build-env.json'
+          payload = {
+              'TELEGRAM_API_ID': os.environ['TELEGRAM_API_ID'],
+              'TELEGRAM_API_HASH': os.environ['TELEGRAM_API_HASH'],
+              'BOT_USERNAME': os.environ['BOT_USERNAME'],
+              'OXPLAYER_API_BASE_URL': os.environ['OXPLAYER_API_BASE_URL'],
+              'OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME': os.environ['OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME'],
+              'OXPLAYER_TELEGRAM_WEBAPP_URL': os.environ['OXPLAYER_TELEGRAM_WEBAPP_URL'],
+              'SUBDL_API_KEY': os.environ['SUBDL_API_KEY'],
+          }
+          output_path.write_text(json.dumps(payload), encoding='utf-8')
+          print(f'FLUTTER_BUILD_ENV_FILE={output_path}')
+          PY
+          echo "FLUTTER_BUILD_ENV_FILE=$RUNNER_TEMP/flutter-build-env.json" >> "$GITHUB_ENV"
+
       - name: Build iOS (no codesign)
-        run: flutter build ios --release --build-number=${{ github.run_number }} --no-codesign --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build ios --release --build-number=${{ github.run_number }} --no-codesign --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Create IPA
         run: |
@@ -216,8 +319,56 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Validate required app environment
+        shell: bash
+        run: |
+          required_vars=(
+            TELEGRAM_API_ID
+            TELEGRAM_API_HASH
+            BOT_USERNAME
+            OXPLAYER_API_BASE_URL
+            OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME
+            OXPLAYER_TELEGRAM_WEBAPP_URL
+            SUBDL_API_KEY
+          )
+
+          missing_vars=()
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              missing_vars+=("$var_name")
+            fi
+          done
+
+          if [ ${#missing_vars[@]} -gt 0 ]; then
+            echo "Missing required build environment variables: ${missing_vars[*]}"
+            exit 1
+          fi
+
+      - name: Generate Flutter dart-defines file
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          output_path = Path(os.environ['RUNNER_TEMP']) / 'flutter-build-env.json'
+          payload = {
+              'TELEGRAM_API_ID': os.environ['TELEGRAM_API_ID'],
+              'TELEGRAM_API_HASH': os.environ['TELEGRAM_API_HASH'],
+              'BOT_USERNAME': os.environ['BOT_USERNAME'],
+              'OXPLAYER_API_BASE_URL': os.environ['OXPLAYER_API_BASE_URL'],
+              'OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME': os.environ['OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME'],
+              'OXPLAYER_TELEGRAM_WEBAPP_URL': os.environ['OXPLAYER_TELEGRAM_WEBAPP_URL'],
+              'SUBDL_API_KEY': os.environ['SUBDL_API_KEY'],
+          }
+          output_path.write_text(json.dumps(payload), encoding='utf-8')
+          print(f'FLUTTER_BUILD_ENV_FILE={output_path}')
+          PY
+          echo "FLUTTER_BUILD_ENV_FILE=$RUNNER_TEMP/flutter-build-env.json" >> "$GITHUB_ENV"
+
       - name: Build macOS
-        run: flutter build macos --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build macos --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Import Code Signing Certificate
         env:

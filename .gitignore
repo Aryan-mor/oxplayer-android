@@ -51,6 +51,8 @@ duplication-report/
 .env.*
 .env
 !.env.example
+assets/env/default.env
+!assets/env/default.env.example
 
 **/fastlane/**/
 **/fastlane/report.xml
