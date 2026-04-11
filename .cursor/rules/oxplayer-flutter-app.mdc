@@ -1,0 +1,56 @@
+---
+description: Flutter app — UI reuse, theme, infrastructure boundaries, DataRepository/MediaRepository, migration
+globs: "**/lib/**/*.dart"
+alwaysApply: false
+---
+
+# OXPlayer Flutter app (oxplayer-android)
+
+## UI and UX
+
+- Before UI changes: inspect existing widgets, sections, cards, and theme tokens.
+- Preserve current app UI/UX unless the user explicitly asks for a redesign.
+- **Mandatory reuse**: prioritize the existing design system and pre-built components.
+- **Component permission gate**: ask before creating new UI/UX primitives (new card styles, unique layouts, custom interaction patterns). **Exception**: duplicating or repurposing existing sections, cards, or layouts with different labels/titles/data is reuse and does not require permission.
+- **Theming**: follow established tokens in `lib/theme` (if `lib/core/theme` becomes canonical later, follow that instead). No ad hoc colors, spacing, or motion outside the theme system.
+
+## Architecture
+
+- Put transport and integration in **infrastructure / repositories**, not in screens, widgets, or presentation providers.
+- **DataRepository**: route app data requests through it.
+- **MediaRepository**: Telegram-backed media, cache resolution, image file lookup, stream proxy handling — work with `DataRepository`.
+- Extend or create boundaries under **`lib/infrastructure`** instead of scattering transport logic.
+- **Do not** add direct Telegram calls in Flutter screens, widgets, or presentation-layer providers.
+- **Do not** add direct raw API calls app-wide when the request belongs behind repository/infrastructure boundaries.
+- If `DataRepository` or `MediaRepository` is missing, add them under `lib/infrastructure` before piling on feature work.
+
+## Widgets and product scope
+
+- Prefer extending existing media cards, episode cards, sections, and focusable patterns before proposing visually new UI.
+- Reuse the existing home shell, navigation, focus behavior, cards, sections, and TV/mobile responsive layouts before a new home experience.
+- For goals limited to browse, detail, search, and playback: do not chase full Plex parity; implement the minimum contract for those flows.
+- When screens expect Plex-shaped models, satisfy them via **infrastructure adapters / compatibility layers** fed by OX backend and Telegram-backed media — not by redesigning UI.
+- Treat Plex emulation as **scoped compatibility for UI reuse**, not a goal to clone Plex end-to-end.
+- Prefer removing or disabling out-of-scope surfaces (e.g. Live TV, DVR, unused Plex-specific areas) over inventing replacement UI early.
+
+## Telegram and media assumptions
+
+- Assume Telegram does **not** provide stable direct media URLs.
+- **Images**: prefer cache-first handling (local file paths or cache-backed addresses).
+- **Video / large media**: prefer local proxy or stream mediation owned by media infrastructure.
+- Keep auth, tokens, headers, Telegram init data, and app-token usage aligned with backend expectations.
+
+## Home migration strategy
+
+1. Reuse current home and navigation before new page-level UI.
+2. Preserve Android TV / D-pad behavior: existing focus, card, section, and layout primitives.
+3. Move data sourcing off Plex incrementally (browse, details, search, playback first).
+4. Feed existing screens via repository-backed adapters into the minimum view models the UI already understands.
+5. Avoid broad rewrites: remove or hide unsupported sections first; replace data seams screen by screen.
+6. Prefer **adapting data contracts** over rewriting UI when the compatibility surface stays small and maintainable.
+
+## Avoid (Flutter)
+
+- Direct `Dio`, `http`, or Telegram calls in view code
+- Inventing new visual components when an existing section, card, or layout can be reused
+- Ignoring theme tokens

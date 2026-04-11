@@ -1,0 +1,48 @@
+---
+description: OXPlayer multi-repo stack — repo roles, scope, working method, and anti-patterns
+alwaysApply: true
+---
+
+# OXPlayer stack
+
+You are the OXPlayer stack engineer. Workspace roles:
+
+- **oxplayer-android**: Active Flutter app; source of truth for current UI/UX and product implementation.
+- **refs/legacy-android**: Read-only reference for legacy login, Telegram integration, request flow, and prior behavior. Never edit unless explicitly asked.
+- **oxplayer**: Source of truth for API contracts, auth behavior, main-bot, provider-bot, and database-backed flows.
+
+## When this applies
+
+- Flutter features or refactors in `oxplayer-android`
+- Migrating auth, Telegram, or media behavior from `refs/legacy-android`
+- Wiring flows to `oxplayer/apps/api`
+- Repository boundaries for app data and media
+- Telegram media proxy, cache, streaming, app-safe URLs
+- Coordinated app + backend changes when contracts must evolve together
+
+## Core rules
+
+- Prefer **current backend contract** over legacy when they differ; adapt the app cleanly, do not copy legacy verbatim.
+- Allow **cross-repo edits** when needed; keep the change surface minimal and explicit.
+- **Validate** new app code does not bypass repository boundaries for Telegram or API work.
+
+## Working method
+
+1. Search `oxplayer-android` first for the current seam.
+2. Read `oxplayer` to confirm the live backend contract before changing request logic.
+3. Read `refs/legacy-android` only to recover prior login, Telegram, API, or media behavior.
+4. Edit `oxplayer` when backend contract, auth, media endpoints, or bot behavior must change for a clean app.
+
+## Preferred output
+
+- Start with the concrete boundary you inspected.
+- State which repo is the source of truth for the decision.
+- Summarize edits in terms of architecture and behavior, not only file churn.
+- Call out where legacy behavior is reference-only and unsafe to copy directly.
+
+## Avoid
+
+- Blindly porting legacy classes into the new app
+- Treating `refs/legacy-android` as the canonical contract
+- Solving backend mismatches with Flutter-only hacks
+- Breaking current `oxplayer-android` interaction patterns to mirror legacy structure

@@ -1,0 +1,540 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
+import 'package:flutter/services.dart';
+
+import '../../../focus/dpad_navigator.dart';
+import '../../../mpv/mpv.dart';
+import '../../../models/plex_media_info.dart';
+import '../../../models/plex_media_version.dart';
+import '../../../services/sleep_timer_service.dart';
+import '../../../utils/platform_detector.dart';
+import '../../../i18n/strings.g.dart';
+import '../../../widgets/overlay_sheet.dart';
+import '../../../models/plex_metadata.dart';
+import '../models/track_controls_state.dart';
+import '../sheets/chapter_sheet.dart';
+import '../sheets/queue_sheet.dart';
+import '../sheets/track_sheet.dart';
+import '../sheets/version_sheet.dart';
+import '../sheets/video_settings_sheet.dart';
+import '../../../services/shader_service.dart';
+import '../helpers/track_filter_helper.dart';
+import '../video_control_button.dart';
+
+/// Row of track and chapter control buttons for the video player
+class TrackChapterControls extends StatelessWidget {
+  final Player player;
+  final List<PlexChapter> chapters;
+  final bool chaptersLoaded;
+  final TrackControlsState trackControlsState;
+  final Function(Duration position)? onSeekCompleted;
+
+  /// List of FocusNodes for the buttons (passed from parent for navigation)
+  final List<FocusNode>? focusNodes;
+
+  /// Called when focus changes on any button
+  final ValueChanged<bool>? onFocusChange;
+
+  /// Called to navigate left from the first button
+  final VoidCallback? onNavigateLeft;
+
+  /// Called to navigate up from any button (e.g., to focus timeline on TV)
+  final VoidCallback? onNavigateUp;
+
+  /// Called to navigate down from any button (e.g., to show content strip on TV)
+  final VoidCallback? onNavigateDown;
+
+  /// Whether to hide the chapters and queue buttons (mobile uses content strip instead)
+  final bool hideChaptersAndQueue;
+
+  const TrackChapterControls({
+    super.key,
+    required this.player,
+    required this.chapters,
+    required this.chaptersLoaded,
+    required this.trackControlsState,
+    this.onSeekCompleted,
+    this.focusNodes,
+    this.onFocusChange,
+    this.onNavigateLeft,
+    this.onNavigateUp,
+    this.onNavigateDown,
+    this.hideChaptersAndQueue = false,
+  });
+
+  List<PlexMediaVersion> get availableVersions => trackControlsState.availableVersions;
+  int get selectedMediaIndex => trackControlsState.selectedMediaIndex;
+  int get boxFitMode => trackControlsState.boxFitMode;
+  int get audioSyncOffset => trackControlsState.audioSyncOffset;
+  int get subtitleSyncOffset => trackControlsState.subtitleSyncOffset;
+  bool get isRotationLocked => trackControlsState.isRotationLocked;
+  bool get isScreenLocked => trackControlsState.isScreenLocked;
+  bool get isFullscreen => trackControlsState.isFullscreen;
+  bool get isAlwaysOnTop => trackControlsState.isAlwaysOnTop;
+  VoidCallback? get onTogglePIPMode => trackControlsState.onTogglePIPMode;
+  VoidCallback? get onCycleBoxFitMode => trackControlsState.onCycleBoxFitMode;
+  VoidCallback? get onToggleRotationLock => trackControlsState.onToggleRotationLock;
+  VoidCallback? get onToggleScreenLock => trackControlsState.onToggleScreenLock;
+  VoidCallback? get onToggleFullscreen => trackControlsState.onToggleFullscreen;
+  VoidCallback? get onToggleAlwaysOnTop => trackControlsState.onToggleAlwaysOnTop;
+  Function(int)? get onSwitchVersion => trackControlsState.onSwitchVersion;
+  Function(AudioTrack)? get onAudioTrackChanged => trackControlsState.onAudioTrackChanged;
+  Function(SubtitleTrack)? get onSubtitleTrackChanged => trackControlsState.onSubtitleTrackChanged;
+  Function(SubtitleTrack)? get onSecondarySubtitleTrackChanged => trackControlsState.onSecondarySubtitleTrackChanged;
+  VoidCallback? get onLoadSeekTimes => trackControlsState.onLoadSeekTimes;
+  VoidCallback? get onCancelAutoHide => trackControlsState.onCancelAutoHide;
+  VoidCallback? get onStartAutoHide => trackControlsState.onStartAutoHide;
+  void Function(String propertyName, int offset)? get onSyncOffsetChanged => trackControlsState.onSyncOffsetChanged;
+  String get serverId => trackControlsState.serverId;
+  ShaderService? get shaderService => trackControlsState.shaderService;
+  VoidCallback? get onShaderChanged => trackControlsState.onShaderChanged;
+  bool get isAmbientLightingEnabled => trackControlsState.isAmbientLightingEnabled;
+  VoidCallback? get onToggleAmbientLighting => trackControlsState.onToggleAmbientLighting;
+  bool get canControl => trackControlsState.canControl;
+  bool get isLive => trackControlsState.isLive;
+  bool get subtitlesVisible => trackControlsState.subtitlesVisible;
+  bool get showQueueButton => trackControlsState.showQueueButton;
+  Function(PlexMetadata)? get onQueueItemSelected => trackControlsState.onQueueItemSelected;
+  PlexMetadata get metadata => trackControlsState.metadata ?? PlexMetadata(ratingKey: ratingKey);
+  String get ratingKey => trackControlsState.ratingKey;
+  String? get mediaTitle => trackControlsState.mediaTitle;
+  Future<void> Function()? get onSubtitleDownloaded => trackControlsState.onSubtitleDownloaded;
+  Future<void> Function(SubtitleTrack track)? get onExternalSubtitleReady =>
+      trackControlsState.onExternalSubtitleReady;
+  Future<void> Function()? get onSearchSubtitles => trackControlsState.onSearchSubtitles;
+
+  /// Handle key event for button navigation
+  KeyEventResult _handleButtonKeyEvent(FocusNode _, KeyEvent event, int index, int totalButtons) {
+    if (!event.isActionable) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+
+    // LEFT arrow - move to previous button or exit to volume
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (index > 0 && focusNodes != null && focusNodes!.length > index - 1) {
+        focusNodes![index - 1].requestFocus();
+        return KeyEventResult.handled;
+      } else if (index == 0) {
+        onNavigateLeft?.call();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+
+    // RIGHT arrow - move to next button
+    if (key == LogicalKeyboardKey.arrowRight) {
+      if (index < totalButtons - 1 && focusNodes != null && focusNodes!.length > index + 1) {
+        focusNodes![index + 1].requestFocus();
+        return KeyEventResult.handled;
+      }
+      // At end, consume to prevent bubbling
+      return KeyEventResult.handled;
+    }
+
+    // UP arrow - navigate up (e.g., to timeline)
+    if (key == LogicalKeyboardKey.arrowUp) {
+      onNavigateUp?.call();
+      return KeyEventResult.handled;
+    }
+
+    // DOWN arrow - navigate down (e.g., to content strip)
+    if (key == LogicalKeyboardKey.arrowDown) {
+      onNavigateDown?.call();
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  /// Build a track control button with consistent focus handling
+  Widget _buildTrackButton({
+    required int buttonIndex,
+    required IconData icon,
+    required String semanticLabel,
+    required VoidCallback? onPressed,
+    required Tracks? tracks,
+    required bool isMobile,
+    required bool isDesktop,
+    String? tooltip,
+    bool isActive = false,
+  }) {
+    return VideoControlButton(
+      icon: icon,
+      tooltip: tooltip,
+      semanticLabel: semanticLabel,
+      isActive: isActive,
+      focusNode: focusNodes != null && focusNodes!.length > buttonIndex ? focusNodes![buttonIndex] : null,
+      onKeyEvent: focusNodes != null
+          ? (node, event) =>
+                _handleButtonKeyEvent(node, event, buttonIndex, _getButtonCount(tracks, isMobile, isDesktop))
+          : null,
+      onFocusChange: onFocusChange,
+      onPressed: onPressed,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<Tracks>(
+      stream: player.streams.tracks,
+      initialData: player.state.tracks,
+      builder: (context, snapshot) {
+        final tracks = snapshot.data;
+        final isMobile = PlatformDetector.isMobile(context);
+        final isDesktop = Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+        // Build list of buttons dynamically to track indices
+        final buttons = <Widget>[];
+        int buttonIndex = 0;
+
+        // Settings button (always shown)
+        buttons.add(
+          ListenableBuilder(
+            listenable: SleepTimerService(),
+            builder: (context, _) {
+              final sleepTimer = SleepTimerService();
+              final isShaderActive =
+                  shaderService != null && shaderService!.isSupported && shaderService!.currentPreset.isEnabled;
+              final isActive = sleepTimer.isActive || audioSyncOffset != 0 || subtitleSyncOffset != 0 || isShaderActive;
+              return _buildTrackButton(
+                buttonIndex: 0,
+                icon: Symbols.tune_rounded,
+                isActive: isActive,
+                tooltip: t.videoControls.settingsButton,
+                semanticLabel: t.videoControls.settingsButton,
+                tracks: tracks,
+                isMobile: isMobile,
+                isDesktop: isDesktop,
+                onPressed: () {
+                  onCancelAutoHide?.call();
+                  OverlaySheetController.of(context)
+                      .show(
+                        builder: (_) => VideoSettingsSheet(
+                          player: player,
+                          audioSyncOffset: audioSyncOffset,
+                          subtitleSyncOffset: subtitleSyncOffset,
+                          canControl: canControl,
+                          isLive: isLive,
+                          shaderService: shaderService,
+                          onShaderChanged: onShaderChanged,
+                          isAmbientLightingEnabled: isAmbientLightingEnabled,
+                          onToggleAmbientLighting: onToggleAmbientLighting,
+                          onCancelAutoHide: onCancelAutoHide,
+                          onStartAutoHide: onStartAutoHide,
+                          onSyncOffsetChanged: onSyncOffsetChanged,
+                        ),
+                      )
+                      .whenComplete(() {
+                        onStartAutoHide?.call();
+                        onLoadSeekTimes?.call();
+                      });
+                },
+              );
+            },
+          ),
+        );
+        buttonIndex++;
+
+        // Combined audio & subtitles button.
+        // Keep this available when subtitle search is supported even if no
+        // embedded/sidecar subtitle tracks are currently loaded yet.
+        if (_canOpenTrackSheet(tracks)) {
+          final currentIndex = buttonIndex;
+          final hasSubs = _hasSubtitles(tracks);
+          final selectedSub = player.state.track.subtitle;
+          final hasActiveSubtitle = selectedSub != null && selectedSub.id != 'no';
+          final isHidden = hasSubs && hasActiveSubtitle && !subtitlesVisible;
+          final icon = (hasSubs || ratingKey.isNotEmpty)
+              ? (isHidden ? Symbols.subtitles_off_rounded : Symbols.subtitles_rounded)
+              : Symbols.audiotrack_rounded;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: icon,
+              tooltip: t.videoControls.tracksButton,
+              semanticLabel: t.videoControls.tracksButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: () {
+                onCancelAutoHide?.call();
+                OverlaySheetController.of(context)
+                    .show(
+                      builder: (_) => TrackSheet(
+                        player: player,
+                        metadata: metadata,
+                        ratingKey: ratingKey,
+                        serverId: serverId,
+                        mediaTitle: mediaTitle,
+                        onSubtitleDownloaded: onSubtitleDownloaded,
+                        onExternalSubtitleReady: onExternalSubtitleReady,
+                        onSearchSubtitles: onSearchSubtitles,
+                        onAudioTrackChanged: onAudioTrackChanged,
+                        onSubtitleTrackChanged: onSubtitleTrackChanged,
+                        onSecondarySubtitleTrackChanged: onSecondarySubtitleTrackChanged,
+                      ),
+                    )
+                    .whenComplete(() => onStartAutoHide?.call());
+              },
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Chapters button (hidden on mobile when content strip is available)
+        if (chapters.isNotEmpty && !hideChaptersAndQueue) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: Symbols.video_library_rounded,
+              tooltip: t.videoControls.chaptersButton,
+              semanticLabel: t.videoControls.chaptersButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: () {
+                onCancelAutoHide?.call();
+                OverlaySheetController.of(context)
+                    .show(
+                      builder: (_) => ChapterSheet(
+                        player: player,
+                        chapters: chapters,
+                        chaptersLoaded: chaptersLoaded,
+                        serverId: serverId,
+                        onSeekCompleted: onSeekCompleted,
+                      ),
+                    )
+                    .whenComplete(() => onStartAutoHide?.call());
+              },
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Queue button (hidden on mobile when content strip is available)
+        if (showQueueButton && onQueueItemSelected != null && !hideChaptersAndQueue) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: Symbols.queue_music_rounded,
+              tooltip: t.videoControls.queue,
+              semanticLabel: t.videoControls.queue,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: () {
+                onCancelAutoHide?.call();
+                OverlaySheetController.of(context)
+                    .show(builder: (_) => QueueSheet(onItemSelected: onQueueItemSelected!))
+                    .whenComplete(() => onStartAutoHide?.call());
+              },
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Versions button
+        if (availableVersions.length > 1 && onSwitchVersion != null) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: Symbols.video_file_rounded,
+              tooltip: t.videoControls.versionsButton,
+              semanticLabel: t.videoControls.versionsButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: () {
+                onCancelAutoHide?.call();
+                OverlaySheetController.of(context)
+                    .show(
+                      builder: (_) => VersionSheet(
+                        availableVersions: availableVersions,
+                        selectedMediaIndex: selectedMediaIndex,
+                        onVersionSelected: onSwitchVersion!,
+                      ),
+                    )
+                    .whenComplete(() => onStartAutoHide?.call());
+              },
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Picture-in-Picture mode
+        if (onTogglePIPMode != null) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: Symbols.picture_in_picture_alt,
+              tooltip: t.videoControls.pipButton,
+              semanticLabel: t.videoControls.pipButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: onTogglePIPMode,
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // BoxFit mode button
+        if (onCycleBoxFitMode != null) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: _getBoxFitIcon(boxFitMode),
+              tooltip: _getBoxFitTooltip(boxFitMode),
+              semanticLabel: t.videoControls.aspectRatioButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: onCycleBoxFitMode,
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Rotation lock button (mobile only, not on TV since screens don't rotate)
+        if (isMobile && !PlatformDetector.isTV()) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: isRotationLocked ? Symbols.screen_lock_rotation_rounded : Symbols.screen_rotation_rounded,
+              tooltip: isRotationLocked ? t.videoControls.unlockRotation : t.videoControls.lockRotation,
+              semanticLabel: t.videoControls.rotationLockButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: onToggleRotationLock,
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Screen lock button (mobile only, not on TV)
+        if (isMobile && !PlatformDetector.isTV()) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: Symbols.lock_rounded,
+              tooltip: t.videoControls.lockScreen,
+              semanticLabel: t.videoControls.screenLockButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: onToggleScreenLock,
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Always on top button (desktop only, not TV)
+        if (isDesktop && onToggleAlwaysOnTop != null) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: Symbols.layers_rounded,
+              tooltip: t.videoControls.alwaysOnTopButton,
+              semanticLabel: t.videoControls.alwaysOnTopButton,
+              isActive: isAlwaysOnTop,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: onToggleAlwaysOnTop,
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // Fullscreen button (desktop only)
+        if (isDesktop) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: isFullscreen ? Symbols.fullscreen_exit_rounded : Symbols.fullscreen_rounded,
+              tooltip: isFullscreen ? t.videoControls.exitFullscreenButton : t.videoControls.fullscreenButton,
+              semanticLabel: isFullscreen ? t.videoControls.exitFullscreenButton : t.videoControls.fullscreenButton,
+              tracks: tracks,
+              isMobile: isMobile,
+              isDesktop: isDesktop,
+              onPressed: onToggleFullscreen,
+            ),
+          );
+        }
+
+        return IntrinsicHeight(
+          child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: buttons),
+        );
+      },
+    );
+  }
+
+  /// Calculate total button count for navigation
+  int _getButtonCount(Tracks? tracks, bool isMobile, bool isDesktop) {
+    int count = 1; // Settings button always shown
+    if (_canOpenTrackSheet(tracks)) count++;
+    if (chapters.isNotEmpty && !hideChaptersAndQueue) count++;
+    if (showQueueButton && onQueueItemSelected != null && !hideChaptersAndQueue) count++;
+    if (availableVersions.length > 1 && onSwitchVersion != null) count++;
+    if (onTogglePIPMode != null) count++;
+    if (onCycleBoxFitMode != null) count++;
+    if (isMobile && !PlatformDetector.isTV()) count++; // Rotation lock (not on TV)
+    if (isDesktop && onToggleAlwaysOnTop != null) count++; // Always on top
+    if (isDesktop) count++; // Fullscreen
+    return count;
+  }
+
+  bool _hasMultipleAudioTracks(Tracks? tracks) {
+    if (tracks == null) return false;
+    return TrackFilterHelper.hasMultipleTracks<AudioTrack>(tracks.audio);
+  }
+
+  bool _hasSubtitles(Tracks? tracks) {
+    if (tracks == null) return false;
+    return TrackFilterHelper.hasTracks<SubtitleTrack>(tracks.subtitle);
+  }
+
+  bool _canOpenTrackSheet(Tracks? tracks) {
+    return _hasMultipleAudioTracks(tracks) || _hasSubtitles(tracks) || ratingKey.isNotEmpty;
+  }
+
+  IconData _getBoxFitIcon(int mode) {
+    switch (mode) {
+      case 0:
+        return Symbols.fit_screen_rounded; // contain (letterbox)
+      case 1:
+        return Symbols.aspect_ratio_rounded; // cover (fill screen)
+      case 2:
+        return Symbols.settings_overscan_rounded; // fill (stretch)
+      default:
+        return Symbols.fit_screen_rounded;
+    }
+  }
+
+  String _getBoxFitTooltip(int mode) {
+    switch (mode) {
+      case 0:
+        return t.videoControls.letterbox;
+      case 1:
+        return t.videoControls.fillScreen;
+      case 2:
+        return t.videoControls.stretch;
+      default:
+        return t.videoControls.letterbox;
+    }
+  }
+}

@@ -1,0 +1,154 @@
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+
+import '../../../mpv/mpv.dart';
+import '../../../models/plex_media_info.dart';
+import '../../../utils/formatters.dart';
+import 'timeline_slider.dart';
+
+/// Encapsulates the StreamBuilder stack for video timeline with timestamps.
+///
+/// This widget listens to player position and duration streams, and displays
+/// a timeline slider with formatted timestamps. Supports both horizontal
+/// layout (timestamps beside slider) and vertical layout (timestamps below slider).
+class VideoTimelineBar extends StatelessWidget {
+  final Player player;
+  final List<PlexChapter> chapters;
+  final bool chaptersLoaded;
+  final ValueChanged<Duration> onSeek;
+  final ValueChanged<Duration> onSeekEnd;
+
+  /// If true, timestamps are shown in a row beside the slider (desktop layout).
+  /// If false, timestamps are shown in a row below the slider (mobile layout).
+  final bool horizontalLayout;
+
+  /// Optional FocusNode for D-pad/keyboard navigation.
+  final FocusNode? focusNode;
+
+  /// Custom key event handler for focus navigation.
+  final KeyEventResult Function(FocusNode, KeyEvent)? onKeyEvent;
+
+  /// Called when focus changes.
+  final ValueChanged<bool>? onFocusChange;
+
+  /// Whether the timeline is enabled for interaction.
+  final bool enabled;
+
+  /// Whether to show the estimated finish time next to the remaining timestamp (mobile).
+  final bool showFinishTime;
+
+  /// Optional callback that returns thumbnail image bytes for a given timestamp.
+  final Uint8List? Function(Duration time)? thumbnailDataBuilder;
+
+  const VideoTimelineBar({
+    super.key,
+    required this.player,
+    required this.chapters,
+    required this.chaptersLoaded,
+    required this.onSeek,
+    required this.onSeekEnd,
+    this.horizontalLayout = true,
+    this.focusNode,
+    this.onKeyEvent,
+    this.onFocusChange,
+    this.enabled = true,
+    this.showFinishTime = false,
+    this.thumbnailDataBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<Duration>(
+      stream: player.streams.position,
+      initialData: player.state.position,
+      builder: (context, positionSnapshot) {
+        return StreamBuilder<Duration>(
+          stream: player.streams.duration,
+          initialData: player.state.duration,
+          builder: (context, durationSnapshot) {
+            return StreamBuilder<List<BufferRange>>(
+              stream: player.streams.bufferRanges,
+              initialData: player.state.bufferRanges,
+              builder: (context, bufferRangesSnapshot) {
+                final position = positionSnapshot.data ?? Duration.zero;
+                final duration = durationSnapshot.data ?? Duration.zero;
+                final bufferRanges = bufferRangesSnapshot.data ?? const [];
+                final remaining = position - duration; // We want this to be negative
+
+                return horizontalLayout
+                    ? _buildHorizontalLayout(position, duration, remaining, bufferRanges)
+                    : _buildVerticalLayout(position, duration, remaining, bufferRanges);
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildHorizontalLayout(Duration position, Duration duration, Duration remaining, List<BufferRange> bufferRanges) {
+    return Row(
+      children: [
+        _buildTimestamp(position),
+        const SizedBox(width: 12),
+        Expanded(child: _buildSlider(position, duration, bufferRanges)),
+        const SizedBox(width: 12),
+        _buildTimestamp(remaining),
+      ],
+    );
+  }
+
+  Widget _buildVerticalLayout(Duration position, Duration duration, Duration remaining, List<BufferRange> bufferRanges) {
+    return Column(
+      children: [
+        _buildSlider(position, duration, bufferRanges),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [_buildTimestamp(position), _buildRemainingTimestamp(remaining)],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static const _timestampStyle = TextStyle(color: Colors.white, fontSize: 14, fontFeatures: [FontFeature.tabularFigures()]);
+
+  Widget _buildTimestamp(Duration time) {
+    return Text(formatDurationTimestamp(time), style: _timestampStyle);
+  }
+
+  Widget _buildRemainingTimestamp(Duration remaining) {
+    if (!showFinishTime || remaining.inSeconds >= 0) {
+      return _buildTimestamp(remaining);
+    }
+    return StreamBuilder<double>(
+      stream: player.streams.rate,
+      initialData: player.state.rate,
+      builder: (context, rateSnap) {
+        final rate = rateSnap.data ?? 1.0;
+        final text = '${formatDurationTimestamp(remaining)} · ${formatFinishTime(remaining.abs(), rate: rate, is24Hour: MediaQuery.alwaysUse24HourFormatOf(context))}';
+        return Text(text, style: _timestampStyle);
+      },
+    );
+  }
+
+  Widget _buildSlider(Duration position, Duration duration, List<BufferRange> bufferRanges) {
+    return TimelineSlider(
+      position: position,
+      duration: duration,
+      bufferRanges: bufferRanges,
+      chapters: chapters,
+      chaptersLoaded: chaptersLoaded,
+      onSeek: onSeek,
+      onSeekEnd: onSeekEnd,
+      focusNode: focusNode,
+      onKeyEvent: onKeyEvent,
+      onFocusChange: onFocusChange,
+      enabled: enabled,
+      thumbnailDataBuilder: thumbnailDataBuilder,
+    );
+  }
+}
