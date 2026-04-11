@@ -608,7 +608,7 @@ class TelegramTdlibFacade implements TdlibFacade {
         }
         if (_getMeRetryCount < _kMaxGetMeRetries) {
           _getMeRetryCount += 1;
-          authDebugError('TDLib GetMe failed, retrying (${_getMeRetryCount}/$_kMaxGetMeRetries): $error');
+          authDebugError('TDLib GetMe failed, retrying ($_getMeRetryCount/$_kMaxGetMeRetries): $error');
           Future<void>.delayed(const Duration(milliseconds: 350), _requestGetMe);
           return;
         }

@@ -126,7 +126,6 @@ ThemeData monoTheme({required bool dark, bool oled = false}) {
       thumbShape: const HandleThumbShape(),
       trackShape: const GappedTrackShape(),
       tickMarkShape: const RoundSliderTickMarkShape(tickMarkRadius: 2),
-      year2023: false,
     ),
     dividerTheme: DividerThemeData(space: 0, thickness: 1, color: c.outline),
     listTileTheme: ListTileThemeData(
