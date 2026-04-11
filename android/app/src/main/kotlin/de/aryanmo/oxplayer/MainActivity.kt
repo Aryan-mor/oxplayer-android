@@ -1,7 +1,9 @@
 package de.aryanmo.oxplayer
 
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.media.MediaMetadataRetriever
@@ -67,6 +69,7 @@ class MainActivity : FlutterActivity() {
     private val EXTERNAL_PLAYER_CHANNEL = "com.plezy/external_player"
     private val THEME_CHANNEL = "com.plezy/theme"
     private val MEDIA_TOOLS_CHANNEL = "de.aryanmo.oxplayer/media_tools"
+    private val UPDATE_CHANNEL = "de.aryanmo.oxplayer/update"
     private val subdlClient = SubdlApiClient()
     private var watchNextPlugin: WatchNextPlugin? = null
 
@@ -446,6 +449,63 @@ class MainActivity : FlutterActivity() {
                         tmdbId = tmdbId,
                         result = result,
                     )
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, UPDATE_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "installApk" -> {
+                    val apkPath = call.argument<String>("path")
+                    if (apkPath.isNullOrBlank()) {
+                        result.error("INVALID_ARGUMENT", "path is required", null)
+                        return@setMethodCallHandler
+                    }
+
+                    try {
+                        val apkFile = File(apkPath)
+                        if (!apkFile.exists()) {
+                            result.error("NOT_FOUND", "APK file does not exist", null)
+                            return@setMethodCallHandler
+                        }
+
+                        val apkUri = FileProvider.getUriForFile(
+                            this,
+                            "${applicationContext.packageName}.fileprovider",
+                            apkFile,
+                        )
+
+                        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(apkUri, "application/vnd.android.package-archive")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+
+                        val resolveInfo = packageManager.queryIntentActivities(
+                            installIntent,
+                            PackageManager.MATCH_DEFAULT_ONLY,
+                        )
+                        if (resolveInfo.isEmpty()) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+
+                        resolveInfo.forEach { info ->
+                            grantUriPermission(
+                                info.activityInfo.packageName,
+                                apkUri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                            )
+                        }
+
+                        startActivity(installIntent)
+                        result.success(true)
+                    } catch (error: ActivityNotFoundException) {
+                        result.success(false)
+                    } catch (error: Exception) {
+                        result.error("INSTALL_FAILED", error.message ?: error.javaClass.simpleName, null)
+                    }
                 }
                 else -> result.notImplemented()
             }

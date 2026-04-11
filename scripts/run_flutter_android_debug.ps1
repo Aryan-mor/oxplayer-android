@@ -11,6 +11,49 @@ $packageName = 'de.aryanmo.oxplayer.debug'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $apkOutputDir = Join-Path $projectRoot 'build\app\outputs\flutter-apk'
 
+function Get-DebugApkPath {
+    param([string]$TargetAbi)
+
+    return (Join-Path $apkOutputDir ("app-{0}-debug.apk" -f $TargetAbi))
+}
+
+function Get-BuildInputs {
+    $relativePaths = @(
+        'pubspec.yaml',
+        'assets\env\default.env',
+        'assets\env\default.env.example'
+    )
+
+    $paths = @()
+    foreach ($relativePath in $relativePaths) {
+        $fullPath = Join-Path $projectRoot $relativePath
+        if (Test-Path $fullPath) {
+            $paths += $fullPath
+        }
+    }
+
+    return $paths
+}
+
+function Test-DebugBuildIsStale {
+    param([string]$TargetAbi)
+
+    $apkPath = Get-DebugApkPath -TargetAbi $TargetAbi
+    if (-not (Test-Path $apkPath)) {
+        return $true
+    }
+
+    $apkTimestampUtc = (Get-Item $apkPath).LastWriteTimeUtc
+    foreach ($inputPath in Get-BuildInputs) {
+        if ((Get-Item $inputPath).LastWriteTimeUtc -gt $apkTimestampUtc) {
+            Write-Host ("Detected newer build input: {0}" -f $inputPath)
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Invoke-CheckedCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -118,7 +161,7 @@ function Install-And-Launch {
         [string]$TargetAbi
     )
 
-    $apkPath = Join-Path $apkOutputDir ("app-{0}-debug.apk" -f $TargetAbi)
+    $apkPath = Get-DebugApkPath -TargetAbi $TargetAbi
     if (-not (Test-Path $apkPath)) {
         throw "Expected APK not found: $apkPath"
     }
@@ -165,7 +208,14 @@ switch ($Mode) {
         Install-And-Launch -SelectedDeviceId $selectedDevice.Id -TargetAbi $targetAbi
     }
     'attach' {
-        Launch-ExistingInstall -SelectedDeviceId $selectedDevice.Id
+        if (Test-DebugBuildIsStale -TargetAbi $targetAbi) {
+            Write-Host 'Local debug APK is missing or stale. Rebuilding and reinstalling before attach...'
+            Build-DebugApks
+            Install-And-Launch -SelectedDeviceId $selectedDevice.Id -TargetAbi $targetAbi
+        }
+        else {
+            Launch-ExistingInstall -SelectedDeviceId $selectedDevice.Id
+        }
     }
 }
 

@@ -5,13 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HardwareKeyboard, KeyDownEvent, KeyUpEvent, LogicalKeyboardKey, SystemNavigator;
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import '../../services/plex_client.dart';
 import '../i18n/strings.g.dart';
 import '../services/update_service.dart';
 import '../utils/app_logger.dart';
-import '../focus/focusable_button.dart';
 import '../utils/dialogs.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/platform_detector.dart';
@@ -51,6 +49,7 @@ import 'settings/settings_screen.dart';
 import 'profile/profile_switch_screen.dart';
 import '../services/watch_next_service.dart';
 import '../watch_together/watch_together.dart';
+import '../widgets/update/update_dialog.dart';
 
 /// Provides access to the main screen's focus control.
 class MainScreenFocusScope extends InheritedWidget {
@@ -322,88 +321,12 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
     try {
       final updateInfo = await UpdateService.checkForUpdatesOnStartup();
 
-      if (updateInfo != null && updateInfo['hasUpdate'] == true && mounted) {
-        _showUpdateDialog(updateInfo);
+      if (updateInfo != null && mounted) {
+        await showUpdateFlowDialog(context, updateInfo, useLaterLabel: true);
       }
     } catch (e) {
       appLogger.e('Error checking for updates', error: e);
     }
-  }
-
-  void _showUpdateDialog(Map<String, dynamic> updateInfo) {
-    showDialog(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: Text(t.update.available),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                t.update.versionAvailable(version: updateInfo['latestVersion']),
-                style: Theme.of(dialogContext).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                t.update.currentVersion(version: updateInfo['currentVersion']),
-                style: Theme.of(dialogContext).textTheme.bodySmall,
-              ),
-            ],
-          ),
-          actions: [
-            FocusableButton(
-              autofocus: true,
-              onPressed: () => Navigator.pop(dialogContext),
-              child: TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                  shape: const StadiumBorder(),
-                ),
-                child: Text(t.common.later),
-              ),
-            ),
-            FocusableButton(
-              onPressed: () async {
-                await UpdateService.skipVersion(updateInfo['latestVersion']);
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-              },
-              child: TextButton(
-                onPressed: () async {
-                  await UpdateService.skipVersion(updateInfo['latestVersion']);
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                },
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                  shape: const StadiumBorder(),
-                ),
-                child: Text(t.update.skipVersion),
-              ),
-            ),
-            FocusableButton(
-              onPressed: () async {
-                final url = Uri.parse(updateInfo['releaseUrl']);
-                if (await canLaunchUrl(url)) {
-                  await launchUrl(url, mode: LaunchMode.externalApplication);
-                }
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-              },
-              child: FilledButton(
-                onPressed: () async {
-                  final url = Uri.parse(updateInfo['releaseUrl']);
-                  if (await canLaunchUrl(url)) {
-                    await launchUrl(url, mode: LaunchMode.externalApplication);
-                  }
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                },
-                child: Text(t.update.viewRelease),
-              ),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   /// Set up the Watch Together navigation callback for guests

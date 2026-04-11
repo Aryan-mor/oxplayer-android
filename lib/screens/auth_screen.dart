@@ -609,6 +609,12 @@ class _AuthScreenState extends State<AuthScreen> {
                 )
               : const Text('Continue'),
         ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          onPressed: _resetTelegramFlow,
+          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+          child: const Text('Back'),
+        ),
       ],
     );
   }

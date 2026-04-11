@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../focus/focus_memory_tracker.dart';
 import '../../focus/input_mode_tracker.dart';
@@ -25,6 +24,7 @@ import '../../utils/snackbar_helper.dart';
 import '../../utils/platform_detector.dart';
 import '../../widgets/desktop_app_bar.dart';
 import '../../widgets/settings_section.dart';
+import '../../widgets/update/update_dialog.dart';
 import 'about_screen.dart';
 import 'appearance_settings_screen.dart';
 import 'keyboard_shortcuts_screen.dart';
@@ -72,7 +72,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
 
   // Update checking state
   bool _isCheckingForUpdate = false;
-  Map<String, dynamic>? _updateInfo;
+  UpdateInfo? _updateInfo;
 
   @override
   void initState() {
@@ -162,8 +162,8 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
                 // --- Advanced (inline) ---
                 _buildAdvancedSection(),
 
-                // --- Updates (conditional) ---
-                if (UpdateService.isUpdateCheckEnabled) ...[
+                // --- Updates (available in debug for dialog previews) ---
+                if (UpdateService.isUpdateCheckEnabled || kDebugMode) ...[
                   _buildUpdateSection(),
                   ],
 
@@ -396,6 +396,34 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
   }
 
   Widget _buildUpdateSection() {
+    if (!UpdateService.isUpdateCheckEnabled && kDebugMode) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SettingsSectionHeader(t.settings.updates),
+          const ListTile(
+            leading: AppIcon(Symbols.info_rounded, fill: 1),
+            title: Text('Update checks are disabled in this build'),
+            subtitle: Text('Preview entries are still available below for testing the dialog layout'),
+          ),
+          ListTile(
+            leading: const AppIcon(Symbols.preview_rounded, fill: 1),
+            title: const Text('Preview optional update dialog'),
+            subtitle: const Text('Shows the in-app Android update dialog with sample data'),
+            trailing: const AppIcon(Symbols.chevron_right_rounded, fill: 1),
+            onTap: () => _previewUpdateDialog(isMandatory: false),
+          ),
+          ListTile(
+            leading: const AppIcon(Symbols.warning_rounded, fill: 1),
+            title: const Text('Preview required update dialog'),
+            subtitle: const Text('Shows the mandatory update version of the dialog'),
+            trailing: const AppIcon(Symbols.chevron_right_rounded, fill: 1),
+            onTap: () => _previewUpdateDialog(isMandatory: true),
+          ),
+        ],
+      );
+    }
+
     if (UpdateService.useNativeUpdater) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -412,7 +440,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
       );
     }
 
-    final hasUpdate = _updateInfo != null && _updateInfo!['hasUpdate'] == true;
+    final hasUpdate = _updateInfo != null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -426,7 +454,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
             color: hasUpdate ? Colors.orange : null,
           ),
           title: Text(hasUpdate ? t.settings.updateAvailable : t.settings.checkForUpdates),
-          subtitle: hasUpdate ? Text(t.update.versionAvailable(version: _updateInfo!['latestVersion'])) : null,
+          subtitle: hasUpdate ? Text(t.update.versionAvailable(version: _updateInfo!.latestVersion)) : null,
           trailing: _isCheckingForUpdate
               ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
               : const AppIcon(Symbols.chevron_right_rounded, fill: 1),
@@ -440,9 +468,47 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
                   }
                 },
         ),
+          if (kDebugMode) ...[
+            ListTile(
+              leading: const AppIcon(Symbols.preview_rounded, fill: 1),
+              title: const Text('Preview optional update dialog'),
+              subtitle: const Text('Shows the in-app Android update dialog with sample data'),
+              trailing: const AppIcon(Symbols.chevron_right_rounded, fill: 1),
+              onTap: () => _previewUpdateDialog(isMandatory: false),
+            ),
+            ListTile(
+              leading: const AppIcon(Symbols.warning_rounded, fill: 1),
+              title: const Text('Preview required update dialog'),
+              subtitle: const Text('Shows the mandatory update version of the dialog'),
+              trailing: const AppIcon(Symbols.chevron_right_rounded, fill: 1),
+              onTap: () => _previewUpdateDialog(isMandatory: true),
+            ),
+          ],
       ],
     );
   }
+
+    Future<void> _previewUpdateDialog({required bool isMandatory}) async {
+      final previewInfo = UpdateInfo(
+        deliveryKind: UpdateDeliveryKind.inAppAndroid,
+        releaseTag: 'v1.99.0',
+        currentVersion: '1.31.3',
+        latestVersion: '1.99.0',
+        releaseUrl: 'https://github.com/Aryan-mor/oxplayer-android/releases/latest',
+        releaseName: 'Preview Update',
+        releaseNotes:
+            'This is a debug preview of the Android update flow.\n\n'
+            '- Updated playback engine startup\n'
+            '- Improved download stability\n'
+            '- Refined TV focus handling',
+        isMandatory: isMandatory,
+        downloadUrl: 'https://example.invalid/oxplayer-preview.apk',
+        cachedApkPath: null,
+        publishedAt: DateTime.now(),
+      );
+
+      await showUpdateFlowDialog(context, previewInfo, useLaterLabel: !isMandatory);
+    }
 
   // --- Dialogs ---
 
@@ -668,7 +734,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
           _isCheckingForUpdate = false;
         });
 
-        if (updateInfo == null || updateInfo['hasUpdate'] != true) {
+        if (updateInfo == null) {
           showAppSnackBar(context, t.update.latestVersion);
         }
       }
@@ -683,41 +749,13 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
   void _showUpdateDialog() {
     if (_updateInfo == null) return;
 
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(t.settings.updateAvailable),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                t.update.versionAvailable(version: _updateInfo!['latestVersion']),
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                t.update.currentVersion(version: _updateInfo!['currentVersion']),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(autofocus: true, onPressed: () => Navigator.pop(context), child: Text(t.common.close)),
-            FilledButton(
-              onPressed: () async {
-                final url = Uri.parse(_updateInfo!['releaseUrl']);
-                if (await canLaunchUrl(url)) {
-                  await launchUrl(url, mode: LaunchMode.externalApplication);
-                }
-                if (context.mounted) Navigator.pop(context);
-              },
-              child: Text(t.update.viewRelease),
-            ),
-          ],
-        );
-      },
-    );
+    showUpdateFlowDialog(context, _updateInfo!, useLaterLabel: false).then((result) {
+      if (!mounted) return;
+      if (result == UpdateDialogResult.skipped) {
+        setState(() {
+          _updateInfo = null;
+        });
+      }
+    });
   }
 }

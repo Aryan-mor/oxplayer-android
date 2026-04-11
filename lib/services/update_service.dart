@@ -1,22 +1,86 @@
 import 'dart:io';
 
 import 'package:auto_updater/auto_updater.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:logger/logger.dart';
-import 'package:oxplayer/utils/http_client.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'update/android_update_cache.dart';
+import 'update/android_update_downloader.dart';
+import 'update/apk_installer.dart';
+import 'update/github_release_service.dart';
+import 'update/semver_utils.dart';
+
+enum UpdateDeliveryKind { browser, inAppAndroid, nativeDesktop }
+
+class UpdateInfo {
+  const UpdateInfo({
+    required this.deliveryKind,
+    required this.releaseTag,
+    required this.currentVersion,
+    required this.latestVersion,
+    required this.releaseUrl,
+    required this.releaseName,
+    required this.releaseNotes,
+    required this.isMandatory,
+    required this.downloadUrl,
+    required this.cachedApkPath,
+    this.publishedAt,
+  });
+
+  final UpdateDeliveryKind deliveryKind;
+  final String releaseTag;
+  final String currentVersion;
+  final String latestVersion;
+  final String releaseUrl;
+  final String releaseName;
+  final String releaseNotes;
+  final bool isMandatory;
+  final String? downloadUrl;
+  final String? cachedApkPath;
+  final DateTime? publishedAt;
+
+  bool get hasCachedApk => cachedApkPath != null && cachedApkPath!.isNotEmpty;
+  bool get canDownloadInApp =>
+      deliveryKind == UpdateDeliveryKind.inAppAndroid &&
+      (hasCachedApk || (downloadUrl != null && downloadUrl!.isNotEmpty));
+
+  UpdateInfo copyWith({String? cachedApkPath}) {
+    return UpdateInfo(
+      deliveryKind: deliveryKind,
+      releaseTag: releaseTag,
+      currentVersion: currentVersion,
+      latestVersion: latestVersion,
+      releaseUrl: releaseUrl,
+      releaseName: releaseName,
+      releaseNotes: releaseNotes,
+      isMandatory: isMandatory,
+      downloadUrl: downloadUrl,
+      cachedApkPath: cachedApkPath ?? this.cachedApkPath,
+      publishedAt: publishedAt,
+    );
+  }
+}
 
 /// Service to check for new versions on GitHub
 /// Only enabled when ENABLE_UPDATE_CHECK build flag is set
 ///
 /// On macOS (non-Homebrew) and installed Windows: delegates to Sparkle/WinSparkle
 /// via auto_updater for native update dialogs and in-app installs.
+/// On Android: uses GitHub Releases + in-app APK download/install flow.
 /// On all other platforms: falls back to GitHub API check + browser link dialog.
 class UpdateService {
   static final Logger _logger = Logger();
-  static const String _githubRepo = 'edde746/plezy';
-  static const String _feedUrl = 'https://cdn.jsdelivr.net/gh/edde746/plezy@appcast/appcast.xml';
+  static const String _githubOwner = 'Aryan-mor';
+  static const String _githubRepo = 'oxplayer-android';
+  static const String _feedUrl =
+      'https://cdn.jsdelivr.net/gh/$_githubOwner/$_githubRepo@appcast/appcast.xml';
+  static const bool _patchOnlyUpdatesAreOptional = true;
+  static final GithubReleaseService _githubReleaseService = GithubReleaseService(
+    owner: _githubOwner,
+    repo: _githubRepo,
+  );
 
   // SharedPreferences keys
   static const String _keySkippedVersion = 'update_skipped_version';
@@ -39,6 +103,10 @@ class UpdateService {
     if (Platform.isMacOS) return !_isHomebrewInstall();
     if (Platform.isWindows) return _isInstalledApp() && !_isWingetInstall();
     return false;
+  }
+
+  static bool get useInAppAndroidUpdater {
+    return isUpdateCheckEnabled && Platform.isAndroid;
   }
 
   /// Initialize the native auto_updater (Sparkle/WinSparkle).
@@ -139,14 +207,38 @@ class UpdateService {
     await prefs.setString(_keyLastCheckTime, DateTime.now().toIso8601String());
   }
 
-  /// Internal method that performs the actual update check
-  /// [respectCooldown] - if true, checks cooldown and updates last check time
-  static Future<Map<String, dynamic>?> _performUpdateCheck({required bool respectCooldown}) async {
+  static bool _isNewerVersion(String newVersion, String currentVersion) {
+    List<int> parse(String version) {
+      return version.split('.').map((part) {
+        final numericPart = part.split('+').first.split('-').first;
+        return int.tryParse(numericPart) ?? 0;
+      }).toList();
+    }
+
+    try {
+      final newParts = parse(newVersion);
+      final currentParts = parse(currentVersion);
+      final maxLength = newParts.length > currentParts.length
+          ? newParts.length
+          : currentParts.length;
+      for (var index = 0; index < maxLength; index++) {
+        final newPart = index < newParts.length ? newParts[index] : 0;
+        final currentPart = index < currentParts.length ? currentParts[index] : 0;
+        if (newPart > currentPart) return true;
+        if (newPart < currentPart) return false;
+      }
+      return false;
+    } catch (error) {
+      _logger.e('Error comparing versions: $error');
+      return false;
+    }
+  }
+
+  static Future<UpdateInfo?> _performUpdateCheck({required bool respectCooldown}) async {
     if (!isUpdateCheckEnabled) {
       return null;
     }
 
-    // Check cooldown if requested
     if (respectCooldown && !await shouldCheckForUpdates()) {
       return null;
     }
@@ -155,102 +247,132 @@ class UpdateService {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
 
-      final response = await httpClient.get(
-        'https://api.github.com/repos/$_githubRepo/releases/latest',
-        options: Options(headers: {'Accept': 'application/vnd.github+json'}),
+      final release = await _githubReleaseService.fetchLatest(
+        includePreferredApk: useInAppAndroidUpdater,
       );
 
-      if (response.statusCode == 200) {
-        final data = response.data;
-        final latestVersion = data['tag_name'] as String;
-
-        // Remove 'v' prefix if present
-        final cleanVersion = latestVersion.startsWith('v') ? latestVersion.substring(1) : latestVersion;
-
-        final hasUpdate = _isNewerVersion(cleanVersion, currentVersion);
-
-        if (hasUpdate) {
-          // Check if this version was skipped
-          final skippedVersion = await getSkippedVersion();
-          if (skippedVersion == cleanVersion) {
-            // Update last check time even when skipped (if respecting cooldown)
-            if (respectCooldown) {
-              await _updateLastCheckTime();
-            }
-            return null;
-          }
-
-          // Update last check time on success (if respecting cooldown)
-          if (respectCooldown) {
-            await _updateLastCheckTime();
-          }
-
-          return {
-            'hasUpdate': true,
-            'currentVersion': currentVersion,
-            'latestVersion': cleanVersion,
-            'releaseUrl': data['html_url'] as String,
-            'releaseName': data['name'] as String? ?? 'Version $cleanVersion',
-            'releaseNotes': data['body'] as String? ?? '',
-            'publishedAt': data['published_at'] as String,
-          };
-        }
+      final currentSemver = tryParsePackageVersionName(currentVersion);
+      final latestSemver = release != null ? tryParseSemVer(release.tagName) : null;
+      if (useInAppAndroidUpdater) {
+        await reconcileApkCache(installed: currentSemver, latestRemote: latestSemver);
       }
 
-      // Update last check time even when no update (if respecting cooldown)
+      if (release == null) {
+        if (respectCooldown) {
+          await _updateLastCheckTime();
+        }
+        return null;
+      }
+
+      final cleanVersion = release.tagName.startsWith('v')
+          ? release.tagName.substring(1)
+          : release.tagName;
+      final hasUpdate = currentSemver != null && latestSemver != null
+          ? isRemoteNewer(currentSemver, latestSemver)
+          : _isNewerVersion(cleanVersion, currentVersion);
+
+      if (!hasUpdate) {
+        if (respectCooldown) {
+          await _updateLastCheckTime();
+        }
+        return null;
+      }
+
+      final skippedVersion = await getSkippedVersion();
+      if (skippedVersion == cleanVersion) {
+        if (respectCooldown) {
+          await _updateLastCheckTime();
+        }
+        return null;
+      }
+
       if (respectCooldown) {
         await _updateLastCheckTime();
       }
-    } catch (e) {
-      _logger.e('Failed to check for updates: $e');
+
+      final cachedApkPath = useInAppAndroidUpdater
+          ? await cachedApkPathForRelease(release.tagName)
+          : null;
+      final isMandatory = currentSemver != null && latestSemver != null
+          ? isMandatorySemverBump(
+              local: currentSemver,
+              remote: latestSemver,
+              patchOptional: _patchOnlyUpdatesAreOptional,
+            )
+          : false;
+
+      return UpdateInfo(
+        deliveryKind: useNativeUpdater
+            ? UpdateDeliveryKind.nativeDesktop
+            : (useInAppAndroidUpdater
+                  ? UpdateDeliveryKind.inAppAndroid
+                  : UpdateDeliveryKind.browser),
+        releaseTag: release.tagName,
+        currentVersion: currentVersion,
+        latestVersion: cleanVersion,
+        releaseUrl: release.releaseUrl,
+        releaseName: release.releaseName,
+        releaseNotes: release.releaseNotes,
+        isMandatory: isMandatory,
+        downloadUrl: release.downloadUrl,
+        cachedApkPath: cachedApkPath,
+        publishedAt: release.publishedAt == null
+            ? null
+            : DateTime.tryParse(release.publishedAt!),
+      );
+    } catch (error) {
+      _logger.e('Failed to check for updates: $error');
+      if (respectCooldown) {
+        await _updateLastCheckTime();
+      }
     }
 
     return null;
   }
 
-  /// Check for updates on GitHub (manual check, ignores cooldown)
-  /// Returns a map with update info, or null if no update or error
-  static Future<Map<String, dynamic>?> checkForUpdates() {
+  static Future<UpdateInfo?> checkForUpdates() {
     return _performUpdateCheck(respectCooldown: false);
   }
 
-  /// Check for updates on startup (respects cooldown and skipped versions)
-  /// Returns update info if available, null otherwise
-  static Future<Map<String, dynamic>?> checkForUpdatesOnStartup() {
+  static Future<UpdateInfo?> checkForUpdatesOnStartup() {
     return _performUpdateCheck(respectCooldown: true);
   }
 
-  /// Parse version string into list of integers
-  /// Handles versions like "1.2.3+4" by taking only the numeric parts
-  static List<int> _parseVersionParts(String version) {
-    return version.split('.').map((p) {
-      final numPart = p.split('+').first.split('-').first;
-      return int.tryParse(numPart) ?? 0;
-    }).toList();
+  static Future<String> prepareInAppUpdate(
+    UpdateInfo updateInfo, {
+    required void Function(int received, int total) onProgress,
+    required bool Function() isCancelled,
+    dynamic cancelToken,
+  }) async {
+    if (!useInAppAndroidUpdater) {
+      throw const ApkDownloadException('In-app updates are only supported on Android');
+    }
+
+    if (updateInfo.hasCachedApk) {
+      return updateInfo.cachedApkPath!;
+    }
+
+    final downloadUrl = updateInfo.downloadUrl;
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      throw const ApkDownloadException('No APK asset was found for this device');
+    }
+
+    final token = cancelToken is CancelToken ? cancelToken : CancelToken();
+    await downloadReleaseApk(
+      url: downloadUrl,
+      cancelToken: token,
+      onProgress: (received, total) {
+        if (!isCancelled()) {
+          onProgress(received, total);
+        }
+      },
+    );
+    await writeCachedReleaseTag(updateInfo.releaseTag);
+    final file = await updateApkFile();
+    return file.path;
   }
 
-  /// Compare two version strings
-  /// Returns true if newVersion is newer than currentVersion
-  static bool _isNewerVersion(String newVersion, String currentVersion) {
-    try {
-      final newParts = _parseVersionParts(newVersion);
-      final currentParts = _parseVersionParts(currentVersion);
-
-      // Compare each part
-      final maxLength = newParts.length > currentParts.length ? newParts.length : currentParts.length;
-
-      for (int i = 0; i < maxLength; i++) {
-        final newPart = i < newParts.length ? newParts[i] : 0;
-        final currentPart = i < currentParts.length ? currentParts[i] : 0;
-
-        if (newPart > currentPart) return true;
-        if (newPart < currentPart) return false;
-      }
-
-      return false; // Versions are equal
-    } catch (e) {
-      _logger.e('Error comparing versions: $e');
-      return false;
-    }
+  static Future<bool> installInAppUpdate(String apkPath) {
+    return installDownloadedApk(apkPath);
   }
 }
