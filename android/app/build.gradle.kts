@@ -138,12 +138,14 @@ android {
         }
         release {
             resValue("string", "app_name", "OXPlayer")
-            // Only use release signing if key.properties exists (not in CI/CD)
+            // Use the release keystore when available; otherwise fall back to the
+            // debug keystore so CI can still produce installable artifacts.
             val keystorePropertiesFile = rootProject.file("key.properties")
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
             }
-            // If key.properties doesn't exist, it will use debug signing for CI builds
             ndk {
                 debugSymbolLevel = "FULL"
             }

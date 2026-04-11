@@ -56,21 +56,30 @@ jobs:
 
       - name: Configure Android signing
         run: |
+          STORE_PASSWORD="${{ secrets.ANDROID_KEYSTORE_PASSWORD || secrets.ANDROID_STORE_PASSWORD }}"
+
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ] || [ -z "$STORE_PASSWORD" ] || [ -z "${{ secrets.ANDROID_KEY_ALIAS }}" ] || [ -z "${{ secrets.ANDROID_KEY_PASSWORD }}" ]; then
+            echo "Android release signing secrets are incomplete. Falling back to debug signing."
+            rm -f android/app/upload-keystore.jks android/key.properties
+            exit 0
+          fi
+
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
           cat > android/key.properties << EOF
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD || secrets.ANDROID_STORE_PASSWORD }}
+          storePassword=$STORE_PASSWORD
           keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
           keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
           storeFile=upload-keystore.jks
           EOF
 
-      - name: Validate Android signing configuration
-        run: |
-          keytool -list -v \
+          if ! keytool -list -v \
             -keystore android/app/upload-keystore.jks \
             -alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
-            -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD || secrets.ANDROID_STORE_PASSWORD }}" \
-            -keypass "${{ secrets.ANDROID_KEY_PASSWORD }}" >/dev/null
+            -storepass "$STORE_PASSWORD" \
+            -keypass "${{ secrets.ANDROID_KEY_PASSWORD }}" >/dev/null 2>&1; then
+            echo "Android release signing validation failed. Falling back to debug signing."
+            rm -f android/app/upload-keystore.jks android/key.properties
+          fi
 
       - name: Build APKs
         run: flutter build apk --release --split-per-abi --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
