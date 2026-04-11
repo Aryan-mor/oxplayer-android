@@ -1,27 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="internal_player_subtitles">Subtitles</string>
-    <string name="internal_player_turn_off_subtitles">Turn off subtitles</string>
-    <string name="internal_player_search_subtitles">Search subtitles…</string>
-    <string name="internal_player_subtitle_search_requires_key">Subtitle search needs a SubDL API key in app settings.</string>
-    <string name="internal_player_embedded_track">Embedded: %1$s</string>
     <string name="internal_player_search_title">Search subtitles</string>
     <string name="internal_player_label_name">Name</string>
     <string name="internal_player_label_language">Language</string>
     <string name="internal_player_label_season">Season</string>
     <string name="internal_player_label_episode">Episode</string>
     <string name="internal_player_check">Check</string>
-    <string name="internal_player_continue">Continue</string>
     <string name="internal_player_cancel">Cancel</string>
-    <string name="internal_player_found_n_subtitles">Found %1$d subtitle(s).</string>
-    <string name="internal_player_found_zero_subtitles">No subtitles found. Change the query and try again.</string>
-    <string name="internal_player_search_failed">Search failed: %1$s</string>
-    <string name="internal_player_loading">Loading…</string>
     <string name="internal_player_loading_languages">Loading languages…</string>
-    <string name="internal_player_previous">Previous</string>
-    <string name="internal_player_confirm">Confirm</string>
-    <string name="internal_player_next">Next</string>
+    <string name="internal_player_loading">Loading…</string>
+    <string name="internal_player_search_failed">Search failed: %1$s</string>
+    <string name="internal_player_found_zero_subtitles">No subtitles found. Change the query and try again.</string>
     <string name="internal_player_subtitle_apply_failed">Could not apply this subtitle.</string>
-    <string name="internal_player_overflow_menu">More options</string>
-    <string name="internal_player_open_external">Open in external player</string>
 </resources>

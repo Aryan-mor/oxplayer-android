@@ -1,3 +1,5 @@
+import com.android.build.gradle.LibraryExtension
+
 allprojects {
     repositories {
         google()
@@ -5,40 +7,28 @@ allprojects {
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
+val newBuildDir: Directory = rootProject.layout.buildDirectory.dir("../../build").get()
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
-subprojects {
-    project.evaluationDependsOn(":app")
-}
 
-// Third-party plugins without `namespace` (required by AGP 8+): patch from AndroidManifest package.
 subprojects {
     plugins.withId("com.android.library") {
-        val androidExt = extensions.findByName("android") ?: return@withId
-        val requiredNs =
-            when (name) {
-                "isar_flutter_libs" -> "dev.isar.isar_flutter_libs"
-                "tdlib" -> "org.naji.td.tdlib"
-                else -> null
-            } ?: return@withId
-        try {
-            val getNs = androidExt.javaClass.getMethod("getNamespace")
-            val current = getNs.invoke(androidExt) as? String
-            if (current.isNullOrEmpty()) {
-                val setNs = androidExt.javaClass.getMethod("setNamespace", String::class.java)
-                setNs.invoke(androidExt, requiredNs)
+        extensions.configure<LibraryExtension>("android") {
+            if (namespace == null) {
+                namespace = project.group.toString().takeIf {
+                    it.isNotBlank() && it != "unspecified"
+                } ?: "${rootProject.group}.${project.name}".replace('-', '_')
             }
-        } catch (_: Exception) {
         }
     }
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
