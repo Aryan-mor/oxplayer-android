@@ -96,6 +96,7 @@ class DesktopVideoControls extends StatefulWidget {
 
   /// Called when a seek operation completes successfully.
   final Function(Duration position)? onSeekCompleted;
+  final bool subtitleTrialMode;
 
   const DesktopVideoControls({
     super.key,
@@ -136,6 +137,7 @@ class DesktopVideoControls extends StatefulWidget {
     this.onStartAutoHide,
     this.onContentStripVisibilityChanged,
     this.onSeekCompleted,
+    this.subtitleTrialMode = false,
   });
 
   @override
@@ -619,6 +621,9 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   }
 
   Widget _buildTopBarContent(BuildContext _, double leftPadding) {
+    if (widget.subtitleTrialMode) {
+      return const SizedBox.shrink();
+    }
     final topBar = Padding(
       padding: EdgeInsets.only(left: leftPadding, right: 16),
       child: Row(
@@ -649,6 +654,9 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   }
 
   Widget _buildBottomControlsContent(BuildContext _, {required bool hasFrame}) {
+    if (widget.subtitleTrialMode) {
+      return const SizedBox.shrink();
+    }
     final canInteract = _canControl && hasFrame;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),

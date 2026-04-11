@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true"
+    android:padding="14dp">
+
+  <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:orientation="vertical">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:labelFor="@id/subdl_search_name"
+        android:text="@string/internal_player_label_name"
+        android:textSize="13sp" />
+
+    <EditText
+        android:id="@+id/subdl_search_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:importantForAutofill="no"
+        android:inputType="textCapWords"
+        android:textSize="14sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:labelFor="@id/subdl_search_language"
+        android:text="@string/internal_player_label_language"
+        android:textSize="13sp" />
+
+    <LinearLayout
+        android:id="@+id/subdl_language_loading_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+      <ProgressBar
+          style="?android:attr/progressBarStyleSmall"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:indeterminate="true" />
+
+      <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_marginStart="8dp"
+          android:text="@string/internal_player_loading_languages"
+          android:textSize="12sp" />
+    </LinearLayout>
+
+    <Spinner
+        android:id="@+id/subdl_search_language"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:labelFor="@id/subdl_search_season"
+        android:text="@string/internal_player_label_season"
+        android:textSize="13sp" />
+
+    <EditText
+        android:id="@+id/subdl_search_season"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:importantForAutofill="no"
+        android:inputType="number"
+        android:textSize="14sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:labelFor="@id/subdl_search_episode"
+        android:text="@string/internal_player_label_episode"
+        android:textSize="13sp" />
+
+    <EditText
+        android:id="@+id/subdl_search_episode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:importantForAutofill="no"
+                android:inputType="number"
+                android:textSize="14sp" />
+  </LinearLayout>
+</ScrollView>

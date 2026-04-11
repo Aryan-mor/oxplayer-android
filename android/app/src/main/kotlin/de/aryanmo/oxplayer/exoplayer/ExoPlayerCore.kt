@@ -799,6 +799,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
     private fun emitTrackList() {
         val player = exoPlayer ?: return
         val tracks = player.currentTracks
+        val pendingSubtitleId = selectedSubtitleTrackId
 
         val trackList = mutableListOf<Map<String, Any?>>()
         audioTrackGroupMap.clear()
@@ -844,7 +845,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
         textGroups.forEachIndexed { groupIndex, group ->
             val trackGroup = group.mediaTrackGroup
             val format = trackGroup.getFormat(0)
-            val trackId = "${C.TRACK_TYPE_TEXT}_$groupIndex"
+            val trackId = format.id?.takeIf { it.isNotBlank() } ?: "${C.TRACK_TYPE_TEXT}_$groupIndex"
             subtitleTrackGroupMap[trackId] = trackGroup
             val isSelected = group.isSelected
 
@@ -901,9 +902,20 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
         if (selectedSubId != null) {
             selectedSubtitleTrackId = selectedSubId
             delegate?.onPropertyChange("sid", selectedSubId)
-        } else if (textGroups.isNotEmpty()) {
+        } else if (
+            textGroups.isNotEmpty() &&
+            (pendingSubtitleId == null || pendingSubtitleId == "no" || !subtitleTrackGroupMap.containsKey(pendingSubtitleId))
+        ) {
             selectedSubtitleTrackId = "no"
             delegate?.onPropertyChange("sid", "no")
+        }
+
+        if (pendingSubtitleId != null &&
+            pendingSubtitleId != "no" &&
+            pendingSubtitleId != selectedSubId &&
+            subtitleTrackGroupMap.containsKey(pendingSubtitleId)
+        ) {
+            selectSubtitleTrack(pendingSubtitleId)
         }
 
         delegate?.onPropertyChange("track-list", trackList)
@@ -1339,21 +1351,31 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
     }
 
     fun addSubtitleTrack(uri: String, title: String?, language: String?, mimeType: String?, select: Boolean) {
+        val player = exoPlayer ?: return
+        val currentUri = currentMediaUri ?: return
         val index = externalSubtitles.size
+        val subtitleId = "external_$index"
         val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(uri))
-            .setId("external_$index")
+            .setId(subtitleId)
             .setLabel(title ?: "External")
             .setLanguage(language)
             .setMimeType(mimeType ?: detectSubtitleMimeType(uri))
+            .setSelectionFlags(if (select) C.SELECTION_FLAG_DEFAULT else 0)
             .build()
 
         externalSubtitles.add(subtitleConfig)
         externalSubtitleUris.add(uri)
 
-        // Note: ExoPlayer won't see these until the media is reloaded.
-        // On Android, external subs are normally passed at open() time.
-        // This path is only reached if the Flutter layer calls addSubtitleTrack
-        // while ExoPlayer (not MPV fallback) is active.
+        val currentPosition = player.currentPosition.coerceAtLeast(0L)
+        val wasPlaying = player.playWhenReady
+        player.setMediaItem(buildMediaItem(currentUri), currentPosition)
+        player.prepare()
+        player.playWhenReady = wasPlaying
+
+        if (select) {
+            selectedSubtitleTrackId = subtitleId
+        }
+
         emitTrackList()
     }
 

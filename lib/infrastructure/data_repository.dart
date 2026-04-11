@@ -835,6 +835,25 @@ class DataRepository {
       playMediaDebugError(
         'Telegram range playback failed for mediaId=$mediaId fileId=${resolved.file.id} reason=${TelegramRangePlayback.instance.lastOpenFailureReason}',
       );
+
+      final quickStartPath = await _waitForReadableVideoPrefix(resolved.file.id);
+      if (quickStartPath != null && quickStartPath.isNotEmpty) {
+        final localUri = Uri.file(quickStartPath);
+        playMediaDebugSuccess(
+          'Falling back to local-file playback URL for mediaId=$mediaId at $localUri after range playback failure',
+        );
+        return localUri;
+      }
+
+      final downloadedPath = await _downloadTelegramFileFully(resolved.file.id);
+      if (downloadedPath != null && downloadedPath.isNotEmpty) {
+        final localUri = Uri.file(downloadedPath);
+        playMediaDebugSuccess(
+          'Falling back to fully-downloaded local playback URL for mediaId=$mediaId at $localUri after range playback failure',
+        );
+        return localUri;
+      }
+
       return null;
     }
 

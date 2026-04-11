@@ -1,5 +1,6 @@
 package de.aryanmo.oxplayer
 
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
@@ -16,11 +17,20 @@ import android.content.res.Configuration
 import android.util.Log
 import android.util.Rational
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.TextureView
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ProgressBar
+import android.widget.Spinner
+import android.widget.Toast
 import androidx.core.content.FileProvider
+import androidx.lifecycle.lifecycleScope
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterShellArgs
 import io.flutter.embedding.android.FlutterTextureView
@@ -34,6 +44,9 @@ import de.aryanmo.oxplayer.shared.ThemeHelper
 import de.aryanmo.oxplayer.watchnext.WatchNextPlugin
 import java.io.File
 import java.io.FileOutputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : FlutterActivity() {
 
@@ -54,6 +67,7 @@ class MainActivity : FlutterActivity() {
     private val EXTERNAL_PLAYER_CHANNEL = "com.plezy/external_player"
     private val THEME_CHANNEL = "com.plezy/theme"
     private val MEDIA_TOOLS_CHANNEL = "de.aryanmo.oxplayer/media_tools"
+    private val subdlClient = SubdlApiClient()
     private var watchNextPlugin: WatchNextPlugin? = null
 
     // Auto PiP state
@@ -320,6 +334,119 @@ class MainActivity : FlutterActivity() {
                         }
                     }.start()
                 }
+                "searchSubdl" -> {
+                    val apiKey = call.argument<String>("apiKey")?.trim().orEmpty()
+                    val filmName = call.argument<String>("filmName")?.trim().orEmpty()
+                    val contentType = call.argument<String>("contentType")?.trim().orEmpty()
+                    val languages = call.argument<String>("languages")?.trim().orEmpty()
+                    val year = call.argument<Int>("year")
+                    val seasonNumber = call.argument<Int>("seasonNumber")
+                    val episodeNumber = call.argument<Int>("episodeNumber")
+                    val imdbId = call.argument<String>("imdbId")?.trim()
+                    val tmdbId = call.argument<String>("tmdbId")?.trim()
+
+                    if (apiKey.isBlank() || filmName.isBlank() || contentType.isBlank()) {
+                        result.error("INVALID_ARGUMENT", "apiKey, filmName, and contentType are required", null)
+                        return@setMethodCallHandler
+                    }
+
+                    Thread {
+                        try {
+                            val outcome = subdlClient.search(
+                                apiKey = apiKey,
+                                filmName = filmName,
+                                contentType = contentType,
+                                languages = languages,
+                                year = year,
+                                seasonNumber = seasonNumber,
+                                episodeNumber = episodeNumber,
+                                imdbId = imdbId,
+                                tmdbId = tmdbId,
+                            )
+                            runOnUiThread {
+                                if (outcome.errorMessage != null) {
+                                    result.error("SUBDL_SEARCH_FAILED", outcome.errorMessage, null)
+                                } else {
+                                    result.success(
+                                        outcome.subtitles.map { subtitle ->
+                                            mapOf(
+                                                "displayLabel" to subtitle.displayLabel,
+                                                "rawDownload" to subtitle.rawDownload,
+                                                "languageCode" to subtitle.languageCode,
+                                            )
+                                        },
+                                    )
+                                }
+                            }
+                        } catch (error: Exception) {
+                            runOnUiThread {
+                                result.error(
+                                    "SUBDL_SEARCH_FAILED",
+                                    error.message ?: error.javaClass.simpleName,
+                                    null,
+                                )
+                            }
+                        }
+                    }.start()
+                }
+                "pickSubdlSubtitle" -> {
+                    val apiKey = call.argument<String>("apiKey")?.trim().orEmpty()
+                    val filmName = call.argument<String>("filmName")?.trim().orEmpty()
+                    val contentType = call.argument<String>("contentType")?.trim().orEmpty()
+                    val preferredLanguageCode = call.argument<String>("preferredLanguageCode")?.trim()
+                    val year = call.argument<Int>("year")
+                    val seasonNumber = call.argument<Int>("seasonNumber")
+                    val episodeNumber = call.argument<Int>("episodeNumber")
+                    val imdbId = call.argument<String>("imdbId")?.trim()
+                    val tmdbId = call.argument<String>("tmdbId")?.trim()
+
+                    if (apiKey.isBlank() || filmName.isBlank() || contentType.isBlank()) {
+                        result.error("INVALID_ARGUMENT", "apiKey, filmName, and contentType are required", null)
+                        return@setMethodCallHandler
+                    }
+
+                    showLegacySubdlPicker(
+                        apiKey = apiKey,
+                        initialFilmName = filmName,
+                        contentType = contentType,
+                        preferredLanguageCode = preferredLanguageCode,
+                        year = year,
+                        seasonNumber = seasonNumber,
+                        episodeNumber = episodeNumber,
+                        imdbId = imdbId,
+                        tmdbId = tmdbId,
+                        result = result,
+                    )
+                }
+                "searchSubdlWithDialog" -> {
+                    val apiKey = call.argument<String>("apiKey")?.trim().orEmpty()
+                    val filmName = call.argument<String>("filmName")?.trim().orEmpty()
+                    val contentType = call.argument<String>("contentType")?.trim().orEmpty()
+                    val preferredLanguageCode = call.argument<String>("preferredLanguageCode")?.trim()
+                    val year = call.argument<Int>("year")
+                    val seasonNumber = call.argument<Int>("seasonNumber")
+                    val episodeNumber = call.argument<Int>("episodeNumber")
+                    val imdbId = call.argument<String>("imdbId")?.trim()
+                    val tmdbId = call.argument<String>("tmdbId")?.trim()
+
+                    if (apiKey.isBlank() || filmName.isBlank() || contentType.isBlank()) {
+                        result.error("INVALID_ARGUMENT", "apiKey, filmName, and contentType are required", null)
+                        return@setMethodCallHandler
+                    }
+
+                    showLegacySubdlSearchDialog(
+                        apiKey = apiKey,
+                        initialFilmName = filmName,
+                        contentType = contentType,
+                        preferredLanguageCode = preferredLanguageCode,
+                        year = year,
+                        seasonNumber = seasonNumber,
+                        episodeNumber = episodeNumber,
+                        imdbId = imdbId,
+                        tmdbId = tmdbId,
+                        result = result,
+                    )
+                }
                 else -> result.notImplemented()
             }
         }
@@ -481,5 +608,346 @@ class MainActivity : FlutterActivity() {
             } catch (_: Exception) {
             }
         }
+    }
+
+    private fun showLegacySubdlPicker(
+        apiKey: String,
+        initialFilmName: String,
+        contentType: String,
+        preferredLanguageCode: String?,
+        year: Int?,
+        seasonNumber: Int?,
+        episodeNumber: Int?,
+        imdbId: String?,
+        tmdbId: String?,
+        result: MethodChannel.Result,
+    ) {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_subdl_search, null, false)
+        val nameEditText = view.findViewById<EditText>(R.id.subdl_search_name)
+        val languageSpinner = view.findViewById<Spinner>(R.id.subdl_search_language)
+        val languageLoadingRow = view.findViewById<View>(R.id.subdl_language_loading_row)
+        val seasonEditText = view.findViewById<EditText>(R.id.subdl_search_season)
+        val episodeEditText = view.findViewById<EditText>(R.id.subdl_search_episode)
+
+        nameEditText.setText(initialFilmName)
+        seasonNumber?.let { seasonEditText.setText(it.toString()) }
+        episodeNumber?.let { episodeEditText.setText(it.toString()) }
+
+        var languagePairs: List<Pair<String, String>> = emptyList()
+        var completed = false
+
+        fun finishOnce(value: Map<String, Any?>?) {
+            if (completed) return
+            completed = true
+            result.success(value)
+        }
+
+        fun failOnce(message: String) {
+            if (completed) return
+            completed = true
+            result.error("SUBDL_PICK_FAILED", message, null)
+        }
+
+        fun busyDialog(): AlertDialog {
+            val progress = ProgressBar(this).apply { isIndeterminate = true }
+            return AlertDialog.Builder(this)
+                .setTitle(R.string.internal_player_loading)
+                .setView(progress)
+                .setCancelable(false)
+                .create()
+        }
+
+        fun showResultsDialog(entries: List<SubdlApiClient.SubtitleEntry>) {
+            val labels = entries.map { it.displayLabel }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle(R.string.internal_player_search_title)
+                .setItems(labels) { dialogInterface, which ->
+                    dialogInterface.dismiss()
+                    val selected = entries.getOrNull(which)
+                    if (selected == null) {
+                        finishOnce(null)
+                        return@setItems
+                    }
+                    val loading = busyDialog()
+                    loading.show()
+                    lifecycleScope.launch {
+                        val extracted = withContext(Dispatchers.IO) {
+                            try {
+                                val workDir = File(cacheDir, "subtitles/manual_${System.currentTimeMillis()}")
+                                workDir.mkdirs()
+                                val zipFile = File(workDir, "sub.zip")
+                                subdlClient.downloadZipToFile(selected.rawDownload, zipFile)
+                                SubtitleZipExtractor.extractBest(zipFile, workDir)
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                        loading.dismiss()
+                        if (extracted == null) {
+                            Toast.makeText(this@MainActivity, R.string.internal_player_subtitle_apply_failed, Toast.LENGTH_LONG).show()
+                            failOnce(getString(R.string.internal_player_subtitle_apply_failed))
+                            return@launch
+                        }
+                        finishOnce(
+                            mapOf(
+                                "filePath" to extracted.file.absolutePath,
+                                "displayLabel" to selected.displayLabel,
+                                "languageCode" to selected.languageCode,
+                            ),
+                        )
+                    }
+                }
+                .setOnCancelListener { finishOnce(null) }
+                .create().also {
+                    it.setOnShowListener { _ -> applyLegacyDialogWidth(it) }
+                    it.show()
+                }
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.internal_player_search_title)
+            .setView(view)
+            .setPositiveButton(R.string.internal_player_check, null)
+            .setNegativeButton(R.string.internal_player_cancel) { dialogInterface, _ ->
+                finishOnce(null)
+                dialogInterface.dismiss()
+            }
+            .create()
+
+        fun positiveButton(): Button? = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+
+        fun runSearch() {
+            val filmName = nameEditText.text?.toString().orEmpty().trim()
+            if (filmName.isEmpty()) {
+                Toast.makeText(this, R.string.internal_player_label_name, Toast.LENGTH_SHORT).show()
+                return
+            }
+            val selectedLanguage = languagePairs.getOrNull(languageSpinner.selectedItemPosition)?.first ?: "EN"
+            val parsedSeason = seasonEditText.text?.toString()?.trim()?.toIntOrNull()
+            val parsedEpisode = episodeEditText.text?.toString()?.trim()?.toIntOrNull()
+            positiveButton()?.isEnabled = false
+
+            lifecycleScope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    subdlClient.search(
+                        apiKey = apiKey,
+                        filmName = filmName,
+                        contentType = contentType,
+                        languages = selectedLanguage,
+                        year = year,
+                        seasonNumber = parsedSeason,
+                        episodeNumber = parsedEpisode,
+                        imdbId = imdbId,
+                        tmdbId = tmdbId,
+                    )
+                }
+                positiveButton()?.isEnabled = true
+                if (outcome.errorMessage != null) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.internal_player_search_failed, outcome.errorMessage),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@launch
+                }
+                if (outcome.subtitles.isEmpty()) {
+                    Toast.makeText(this@MainActivity, R.string.internal_player_found_zero_subtitles, Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                dialog.dismiss()
+                showResultsDialog(outcome.subtitles)
+            }
+        }
+
+        dialog.setOnShowListener {
+            positiveButton()?.apply {
+                isEnabled = false
+                setOnClickListener { runSearch() }
+            }
+        }
+
+        dialog.setOnDismissListener {
+            if (!completed) {
+                finishOnce(null)
+            }
+        }
+
+        dialog.show()
+        applyLegacyDialogWidth(dialog)
+
+        lifecycleScope.launch {
+            val languages = try {
+                SubdlLanguageListLoader(this@MainActivity).loadSorted()
+            } catch (_: Exception) {
+                listOf("EN" to "English")
+            }
+            languagePairs = languages
+            val labels = languages.map { "${it.second} (${it.first})" }
+            val adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_item,
+                labels,
+            )
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            languageSpinner.adapter = adapter
+            val preferredIndex = preferredLanguageCode
+                ?.uppercase()
+                ?.let { code -> languages.indexOfFirst { it.first.equals(code, ignoreCase = true) } }
+                ?.takeIf { it >= 0 }
+                ?: languages.indexOfFirst { it.first == "EN" }.takeIf { it >= 0 }
+                ?: 0
+            languageSpinner.setSelection(preferredIndex)
+            languageLoadingRow.visibility = View.GONE
+            languageSpinner.visibility = View.VISIBLE
+            positiveButton()?.isEnabled = true
+        }
+    }
+
+    private fun showLegacySubdlSearchDialog(
+        apiKey: String,
+        initialFilmName: String,
+        contentType: String,
+        preferredLanguageCode: String?,
+        year: Int?,
+        seasonNumber: Int?,
+        episodeNumber: Int?,
+        imdbId: String?,
+        tmdbId: String?,
+        result: MethodChannel.Result,
+    ) {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_subdl_search, null, false)
+        val nameEditText = view.findViewById<EditText>(R.id.subdl_search_name)
+        val languageSpinner = view.findViewById<Spinner>(R.id.subdl_search_language)
+        val languageLoadingRow = view.findViewById<View>(R.id.subdl_language_loading_row)
+        val seasonEditText = view.findViewById<EditText>(R.id.subdl_search_season)
+        val episodeEditText = view.findViewById<EditText>(R.id.subdl_search_episode)
+
+        nameEditText.setText(initialFilmName)
+        seasonNumber?.let { seasonEditText.setText(it.toString()) }
+        episodeNumber?.let { episodeEditText.setText(it.toString()) }
+
+        var languagePairs: List<Pair<String, String>> = emptyList()
+        var completed = false
+
+        fun finishOnce(value: List<Map<String, Any?>>?) {
+            if (completed) return
+            completed = true
+            result.success(value)
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.internal_player_search_title)
+            .setView(view)
+            .setPositiveButton(R.string.internal_player_check, null)
+            .setNegativeButton(R.string.internal_player_cancel) { dialogInterface, _ ->
+                finishOnce(null)
+                dialogInterface.dismiss()
+            }
+            .create()
+
+        fun positiveButton(): Button? = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+
+        fun runSearch() {
+            val filmName = nameEditText.text?.toString().orEmpty().trim()
+            if (filmName.isEmpty()) {
+                Toast.makeText(this, R.string.internal_player_label_name, Toast.LENGTH_SHORT).show()
+                return
+            }
+            val selectedLanguage = languagePairs.getOrNull(languageSpinner.selectedItemPosition)?.first ?: "EN"
+            val parsedSeason = seasonEditText.text?.toString()?.trim()?.toIntOrNull()
+            val parsedEpisode = episodeEditText.text?.toString()?.trim()?.toIntOrNull()
+            positiveButton()?.isEnabled = false
+
+            lifecycleScope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    subdlClient.search(
+                        apiKey = apiKey,
+                        filmName = filmName,
+                        contentType = contentType,
+                        languages = selectedLanguage,
+                        year = year,
+                        seasonNumber = parsedSeason,
+                        episodeNumber = parsedEpisode,
+                        imdbId = imdbId,
+                        tmdbId = tmdbId,
+                    )
+                }
+                positiveButton()?.isEnabled = true
+                if (outcome.errorMessage != null) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.internal_player_search_failed, outcome.errorMessage),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@launch
+                }
+                if (outcome.subtitles.isEmpty()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        R.string.internal_player_found_zero_subtitles,
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@launch
+                }
+                finishOnce(
+                    outcome.subtitles.map { subtitle ->
+                        mapOf(
+                            "displayLabel" to subtitle.displayLabel,
+                            "rawDownload" to subtitle.rawDownload,
+                            "languageCode" to subtitle.languageCode,
+                        )
+                    },
+                )
+                dialog.dismiss()
+            }
+        }
+
+        dialog.setOnShowListener {
+            applyLegacyDialogWidth(dialog)
+            positiveButton()?.apply {
+                isEnabled = false
+                setOnClickListener { runSearch() }
+            }
+        }
+
+        dialog.setOnDismissListener {
+            if (!completed) {
+                finishOnce(null)
+            }
+        }
+
+        dialog.show()
+
+        lifecycleScope.launch {
+            val languages = try {
+                SubdlLanguageListLoader(this@MainActivity).loadSorted()
+            } catch (_: Exception) {
+                listOf("EN" to "English")
+            }
+            languagePairs = languages
+            val labels = languages.map { "${it.second} (${it.first})" }
+            val adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_item,
+                labels,
+            )
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            languageSpinner.adapter = adapter
+            val preferredIndex = preferredLanguageCode
+                ?.uppercase()
+                ?.let { code -> languages.indexOfFirst { it.first.equals(code, ignoreCase = true) } }
+                ?.takeIf { it >= 0 }
+                ?: languages.indexOfFirst { it.first == "EN" }.takeIf { it >= 0 }
+                ?: 0
+            languageSpinner.setSelection(preferredIndex)
+            languageLoadingRow.visibility = View.GONE
+            languageSpinner.visibility = View.VISIBLE
+            positiveButton()?.isEnabled = true
+        }
+    }
+
+    private fun applyLegacyDialogWidth(dialog: AlertDialog) {
+        val width = (resources.displayMetrics.widthPixels * 0.92f).toInt()
+        dialog.window?.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 }

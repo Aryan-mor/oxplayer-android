@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="internal_player_search_title">Search subtitles</string>
+    <string name="internal_player_label_name">Name</string>
+    <string name="internal_player_label_language">Language</string>
+    <string name="internal_player_label_season">Season</string>
+    <string name="internal_player_label_episode">Episode</string>
+    <string name="internal_player_check">Check</string>
+    <string name="internal_player_cancel">Cancel</string>
+    <string name="internal_player_loading_languages">Loading languages…</string>
+    <string name="internal_player_loading">Loading…</string>
+    <string name="internal_player_search_failed">Search failed: %1$s</string>
+    <string name="internal_player_found_zero_subtitles">No subtitles found. Change the query and try again.</string>
+    <string name="internal_player_subtitle_apply_failed">Could not apply this subtitle.</string>
+</resources>
