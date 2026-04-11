@@ -885,6 +885,7 @@ jobs:
             release-assets/oxplayer-windows-arm64-portable.7z
             release-assets/oxplayer-windows-installer.exe
             appcast.xml
+          fail_on_unmatched_files: true
           draft: true
           prerelease: false
           generate_release_notes: true
