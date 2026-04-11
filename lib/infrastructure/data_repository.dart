@@ -447,12 +447,14 @@ class DataRepository {
     final apiId = int.tryParse(_config.telegramApiId) ?? 0;
     if (!_config.hasTelegramKeys || apiId <= 0) {
       authDebugError('Telegram API keys are missing in env configuration.');
-      throw StateError('Set TELEGRAM_API_ID and TELEGRAM_API_HASH in assets/env/default.env');
+      throw StateError(
+        'Set TELEGRAM_API_ID and TELEGRAM_API_HASH via --dart-define/--dart-define-from-file or assets/env/default.env',
+      );
     }
     if (!_config.hasApiConfig) {
       authDebugError('OXPlayer API configuration is missing in env configuration.');
       throw StateError(
-        'Set OXPLAYER_API_BASE_URL and OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME or OXPLAYER_TELEGRAM_WEBAPP_URL in assets/env/default.env',
+        'Set OXPLAYER_API_BASE_URL and OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME or OXPLAYER_TELEGRAM_WEBAPP_URL via --dart-define/--dart-define-from-file or assets/env/default.env',
       );
     }
 
@@ -1988,7 +1990,7 @@ class DataRepository {
         );
       }
       throw StateError(
-        'Cannot get WebApp URL. Configure OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME or OXPLAYER_TELEGRAM_WEBAPP_URL in assets/env/default.env.',
+        'Cannot get WebApp URL. Configure OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME or OXPLAYER_TELEGRAM_WEBAPP_URL via --dart-define/--dart-define-from-file or assets/env/default.env.',
       );
     }
     debugLogInfo(

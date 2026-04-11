@@ -20,11 +20,9 @@ class AppConfig {
   final String subdlApiKey;
 
   static Future<AppConfig> load() async {
-    if (!dotenv.isInitialized) {
-      await dotenv.load(fileName: 'assets/env/default.env');
-    }
+    await _ensureLoaded();
 
-    String value(String key) => dotenv.env[key]?.trim() ?? '';
+    String value(String key) => _value(key);
     String valueOrLegacy(String key, String legacyKey) {
       final primary = value(key);
       if (primary.isNotEmpty) return primary;
@@ -53,4 +51,30 @@ class AppConfig {
   bool get hasApiConfig =>
       apiBaseUrl.isNotEmpty &&
       (telegramWebAppShortName.isNotEmpty || telegramWebAppUrl.isNotEmpty);
+
+  static Future<void> _ensureLoaded() async {
+    if (dotenv.isInitialized) return;
+    await dotenv.load(fileName: 'assets/env/default.env');
+  }
+
+  static const Map<String, String> _dartDefineEnvByKey = <String, String>{
+    'TELEGRAM_API_ID': String.fromEnvironment('TELEGRAM_API_ID'),
+    'TELEGRAM_API_HASH': String.fromEnvironment('TELEGRAM_API_HASH'),
+    'BOT_USERNAME': String.fromEnvironment('BOT_USERNAME'),
+    'OXPLAYER_API_BASE_URL': String.fromEnvironment('OXPLAYER_API_BASE_URL'),
+    'TV_APP_API_BASE_URL': String.fromEnvironment('TV_APP_API_BASE_URL'),
+    'OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME': String.fromEnvironment('OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME'),
+    'TV_APP_WEBAPP_SHORT_NAME': String.fromEnvironment('TV_APP_WEBAPP_SHORT_NAME'),
+    'OXPLAYER_TELEGRAM_WEBAPP_URL': String.fromEnvironment('OXPLAYER_TELEGRAM_WEBAPP_URL'),
+    'TV_APP_WEBAPP_URL': String.fromEnvironment('TV_APP_WEBAPP_URL'),
+    'SUBDL_API_KEY': String.fromEnvironment('SUBDL_API_KEY'),
+  };
+
+  static String _value(String key) {
+    final fromDefine = _dartDefineEnvByKey[key]?.trim() ?? '';
+    if (fromDefine.isNotEmpty) {
+      return fromDefine;
+    }
+    return dotenv.env[key]?.trim() ?? '';
+  }
 }
