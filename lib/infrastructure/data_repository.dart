@@ -499,6 +499,10 @@ class DataRepository {
     }
 
     authDebugInfo('Requesting OXPlayer bootstrap session...');
+    debugLogInfo(
+      'Bootstrap request target: ${_formatApiUrl('/me/bootstrap')}',
+      type: LogType.backend,
+    );
     final dio = Dio(
       BaseOptions(
         baseUrl: _config.apiBaseUrl,
@@ -510,11 +514,28 @@ class DataRepository {
     try {
       response = await dio.get<Map<String, dynamic>>('/me/bootstrap');
     } on DioException catch (error) {
+      final statusCode = error.response?.statusCode;
+      final requestUrl = error.requestOptions.uri.toString();
+      final responsePreview = _safeResponsePreview(error.response?.data);
       if (error.response?.statusCode == 401) {
         authDebugError('OXPlayer bootstrap rejected the saved access token.');
+        debugLogError(
+          'Bootstrap rejected (401) [url=$requestUrl]',
+          type: LogType.backend,
+        );
         throw const OxBootstrapUnauthorized();
       }
       authDebugError('OXPlayer bootstrap request failed: $error');
+      debugLogError(
+        'Bootstrap failed [status=${statusCode ?? 'n/a'}] [type=${error.type.name}] [url=$requestUrl]',
+        type: LogType.backend,
+      );
+      if (responsePreview.isNotEmpty) {
+        debugLogError(
+          'Bootstrap error response: $responsePreview',
+          type: LogType.backend,
+        );
+      }
       rethrow;
     }
 
@@ -1815,13 +1836,45 @@ class DataRepository {
     final identity = await _resolveDeviceIdentity();
     final dio = Dio(BaseOptions(baseUrl: _config.apiBaseUrl));
     authDebugInfo('Sending Telegram initData to OXPlayer API...', completeStatus: AuthDebugStatusKey.backendRequestSent);
-    final response = await dio.post<Map<String, dynamic>>(
-      '/auth/telegram',
-      data: <String, dynamic>{
-        'initData': initData,
-        'deviceId': identity.deviceId,
-        if (identity.deviceName != null) 'deviceName': identity.deviceName,
-      },
+    debugLogInfo(
+      'Telegram auth request target: ${_formatApiUrl('/auth/telegram')}',
+      type: LogType.backend,
+    );
+    debugLogInfo(
+      'Telegram auth payload meta: initDataLength=${initData.length}, deviceId=${identity.deviceId}, deviceName=${identity.deviceName ?? '-'}',
+      type: LogType.backend,
+    );
+
+    Response<Map<String, dynamic>> response;
+    try {
+      response = await dio.post<Map<String, dynamic>>(
+        '/auth/telegram',
+        data: <String, dynamic>{
+          'initData': initData,
+          'deviceId': identity.deviceId,
+          if (identity.deviceName != null) 'deviceName': identity.deviceName,
+        },
+      );
+    } on DioException catch (error) {
+      final statusCode = error.response?.statusCode;
+      final requestUrl = error.requestOptions.uri.toString();
+      final responsePreview = _safeResponsePreview(error.response?.data);
+      authDebugError('Telegram backend authentication failed: $error');
+      debugLogError(
+        'Telegram auth failed [status=${statusCode ?? 'n/a'}] [type=${error.type.name}] [url=$requestUrl]',
+        type: LogType.backend,
+      );
+      if (responsePreview.isNotEmpty) {
+        debugLogError(
+          'Telegram auth error response: $responsePreview',
+          type: LogType.backend,
+        );
+      }
+      rethrow;
+    }
+    debugLogSuccess(
+      'Telegram auth response status=${response.statusCode ?? 200}',
+      type: LogType.backend,
     );
 
     final accessToken = response.data?['accessToken']?.toString() ?? '';
@@ -1938,6 +1991,10 @@ class DataRepository {
         'Cannot get WebApp URL. Configure OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME or OXPLAYER_TELEGRAM_WEBAPP_URL in assets/env/default.env.',
       );
     }
+    debugLogInfo(
+      'Telegram WebApp URL resolved: ${_safeUriForLog(webAppUrl)}',
+      type: LogType.auth,
+    );
 
     final initData = _extractTgWebAppData(webAppUrl);
     if (initData == null || initData.isEmpty) {
@@ -1982,6 +2039,33 @@ class DataRepository {
       return _decodeComponentSafe(rawValue);
     }
     return null;
+  }
+
+  String _formatApiUrl(String path) {
+    final baseUrl = _config.apiBaseUrl.trim();
+    if (baseUrl.isEmpty) return path;
+    final parsed = Uri.tryParse(baseUrl);
+    if (parsed == null) {
+      return '$baseUrl$path';
+    }
+    return parsed.resolve(path).toString();
+  }
+
+  String _safeUriForLog(String rawUrl) {
+    final parsed = Uri.tryParse(rawUrl);
+    if (parsed == null) return 'invalid-url';
+    final host = parsed.host.isEmpty ? '(no-host)' : parsed.host;
+    final path = parsed.path.isEmpty ? '/' : parsed.path;
+    return '${parsed.scheme}://$host$path';
+  }
+
+  String _safeResponsePreview(Object? value) {
+    if (value == null) return '';
+    final text = value.toString().replaceAll('\n', ' ').trim();
+    if (text.isEmpty) return '';
+    const maxLength = 280;
+    if (text.length <= maxLength) return text;
+    return '${text.substring(0, maxLength)}...';
   }
 
   String _decodeComponentSafe(String input) {
