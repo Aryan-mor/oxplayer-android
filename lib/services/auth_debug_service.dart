@@ -1,5 +1,6 @@
 import 'dart:collection';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
 enum AuthDebugLevel { info, success, error }
