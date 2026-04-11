@@ -765,6 +765,27 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      - name: Collect release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          cp artifacts/android-apk/oxplayer-android-arm64-v8a.tar.gz release-assets/
+          cp artifacts/android-apk/oxplayer-android-armeabi-v7a.tar.gz release-assets/
+          cp artifacts/android-apk/oxplayer-android-x86_64.tar.gz release-assets/
+          cp artifacts/android-apk/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-assets/
+          cp artifacts/android-apk/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-assets/
+          cp artifacts/android-apk/build/app/outputs/flutter-apk/app-x86_64-release.apk release-assets/
+          cp artifacts/android-apk/build/app/outputs/bundle/release/app-release.aab release-assets/
+
+          cp artifacts/ios-ipa/oxplayer-ios.ipa release-assets/
+          cp artifacts/windows-x64-portable/oxplayer-windows-x64-portable.7z release-assets/
+          cp artifacts/windows-arm64-portable/oxplayer-windows-arm64-portable.7z release-assets/
+          cp artifacts/windows-installer/oxplayer-windows-installer.exe release-assets/
+
+      - name: Show collected release assets
+        run: ls -la release-assets
+
       - name: Read version from pubspec.yaml
         id: version
         run: |
@@ -852,17 +873,17 @@ jobs:
           tag_name: ${{ steps.version.outputs.release_tag }}
           name: OXPlayer ${{ steps.version.outputs.version }} (build ${{ steps.version.outputs.build_number }})
           files: |
-            artifacts/android-apk/oxplayer-android-arm64-v8a.tar.gz
-            artifacts/android-apk/oxplayer-android-armeabi-v7a.tar.gz
-            artifacts/android-apk/oxplayer-android-x86_64.tar.gz
-            artifacts/android-apk/app-arm64-v8a-release.apk
-            artifacts/android-apk/app-armeabi-v7a-release.apk
-            artifacts/android-apk/app-x86_64-release.apk
-            artifacts/android-apk/app-release.aab
-            artifacts/ios-ipa/oxplayer-ios.ipa
-            artifacts/windows-x64-portable/oxplayer-windows-x64-portable.7z
-            artifacts/windows-arm64-portable/oxplayer-windows-arm64-portable.7z
-            artifacts/windows-installer/oxplayer-windows-installer.exe
+            release-assets/oxplayer-android-arm64-v8a.tar.gz
+            release-assets/oxplayer-android-armeabi-v7a.tar.gz
+            release-assets/oxplayer-android-x86_64.tar.gz
+            release-assets/app-arm64-v8a-release.apk
+            release-assets/app-armeabi-v7a-release.apk
+            release-assets/app-x86_64-release.apk
+            release-assets/app-release.aab
+            release-assets/oxplayer-ios.ipa
+            release-assets/oxplayer-windows-x64-portable.7z
+            release-assets/oxplayer-windows-arm64-portable.7z
+            release-assets/oxplayer-windows-installer.exe
             appcast.xml
           draft: true
           prerelease: false
