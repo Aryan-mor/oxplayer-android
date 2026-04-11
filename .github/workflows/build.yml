@@ -886,7 +886,7 @@ jobs:
             release-assets/oxplayer-windows-installer.exe
             appcast.xml
           fail_on_unmatched_files: true
-          draft: true
+          draft: false
           prerelease: false
           generate_release_notes: true
         env:
