@@ -1,9 +1,6 @@
 import 'dart:collection';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
-
-import 'settings_service.dart';
 
 enum AuthDebugLevel { info, success, error }
 
@@ -120,7 +117,7 @@ class AuthDebugService extends ChangeNotifier {
     ),
   };
 
-  bool get isEnabled => kDebugMode || (SettingsService.instanceOrNull?.getEnableDebugLogging() ?? false);
+  bool get isEnabled => true;
 
   List<AuthDebugEntry> get entries => _entries.toList().reversed.toList(growable: false);
 
