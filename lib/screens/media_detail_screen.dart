@@ -629,11 +629,6 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
                 // State 2: Queued (waiting to download)
                 if (progress?.status == DownloadStatus.queued) {
-                  final currentFile = progress?.currentFile;
-                  final tooltip = currentFile != null && currentFile.contains('episodes')
-                      ? 'Queued $currentFile'
-                      : 'Queued';
-
                   return IconButton.filledTonal(
                     onPressed: () async {
                       await downloadProvider.pauseDownload(globalKey);

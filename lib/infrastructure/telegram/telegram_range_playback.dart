@@ -35,13 +35,11 @@ class TelegramRangePlayback {
   int _activeTotalBytes = 0;
   int _downloadOffset = 0;
   int _downloadPrefixSize = 0;
-  int _downloadedSize = 0;
   String _activeMime = 'video/*';
   String? _lastOpenFailureReason;
   int _lastPokeOffset = -1;
   DateTime _lastPokeAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _lastServedEnd = -1;
-  int _seekGeneration = 0;
 
   String? get lastOpenFailureReason => _lastOpenFailureReason;
 
@@ -68,11 +66,9 @@ class TelegramRangePlayback {
     _activeTotalBytes = _bestFileSize(file);
     _downloadOffset = 0;
     _downloadPrefixSize = 0;
-    _downloadedSize = 0;
     _lastPokeOffset = -1;
     _lastPokeAt = DateTime.fromMillisecondsSinceEpoch(0);
     _lastServedEnd = -1;
-    _seekGeneration = 0;
     _activeMime = (mimeType ?? '').trim().isEmpty ? 'video/*' : mimeType!.trim();
 
     onDiagnostic?.call(
@@ -121,10 +117,8 @@ class TelegramRangePlayback {
     _activeTotalBytes = 0;
     _downloadOffset = 0;
     _downloadPrefixSize = 0;
-    _downloadedSize = 0;
     _lastPokeOffset = -1;
     _lastServedEnd = -1;
-    _seekGeneration = 0;
 
     if (previousTdlib != null && previousFileId != null) {
       await _cancelAndDelete(tdlib: previousTdlib, fileId: previousFileId);
@@ -298,7 +292,6 @@ class TelegramRangePlayback {
 
   Future<void> _handleSeek(int newOffset) async {
     final aligned = (newOffset ~/ _kSeekAlignBytes) * _kSeekAlignBytes;
-    _seekGeneration++;
     final nearEnd = _activeTotalBytes > 0 && aligned + _kChunkBytes >= _activeTotalBytes - (512 * 1024);
     final farBody = aligned >= _kFarSeekSyncMinOffsetBytes;
     final useSyncBootstrap = farBody && !nearEnd;
@@ -532,7 +525,6 @@ class TelegramRangePlayback {
       _activeLocalPath = obj.local.path.trim().isEmpty ? _activeLocalPath : obj.local.path.trim();
       _downloadOffset = obj.local.downloadOffset;
       _downloadPrefixSize = obj.local.downloadedPrefixSize;
-      _downloadedSize = obj.local.downloadedSize;
       final bestSize = _bestFileSize(obj);
       if (bestSize > _activeTotalBytes) {
         _activeTotalBytes = bestSize;
