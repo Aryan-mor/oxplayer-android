@@ -677,7 +677,7 @@ class _TranslationsErrorsFr implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Recherche échouée: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Délai d\'attente de connexion dépassé pendant le chargement ${context}';
-	@override String get connectionFailed => 'Impossible de se connecter au serveur Plex';
+	@override String get connectionFailed => 'Impossible de se connecter au serveur';
 	@override String failedToLoad({required Object context, required Object error}) => 'Échec du chargement ${context}: ${error}';
 	@override String get noClientAvailable => 'Aucun client disponible';
 	@override String authenticationFailed({required Object error}) => 'Échec de l\'authentification: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsFr {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} min restantes',
 			'errors.searchFailed' => ({required Object error}) => 'Recherche échouée: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Délai d\'attente de connexion dépassé pendant le chargement ${context}',
-			'errors.connectionFailed' => 'Impossible de se connecter au serveur Plex',
+			'errors.connectionFailed' => 'Impossible de se connecter au serveur',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Échec du chargement ${context}: ${error}',
 			'errors.noClientAvailable' => 'Aucun client disponible',
 			'errors.authenticationFailed' => ({required Object error}) => 'Échec de l\'authentification: ${error}',

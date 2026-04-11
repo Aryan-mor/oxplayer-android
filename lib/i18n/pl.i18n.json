@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "Wyszukiwanie nie powiodło się: ${error}",
     "connectionTimeout": "Limit czasu połączenia przy ładowaniu ${context}",
-    "connectionFailed": "Nie można połączyć z serwerem Plex",
+    "connectionFailed": "Nie można połączyć z serwerem",
     "failedToLoad": "Nie udało się załadować ${context}: ${error}",
     "noClientAvailable": "Brak dostępnego klienta",
     "authenticationFailed": "Uwierzytelnienie nie powiodło się: ${error}",

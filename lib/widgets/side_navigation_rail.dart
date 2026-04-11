@@ -136,6 +136,7 @@ class SideNavigationRail extends StatefulWidget {
   final bool alwaysExpanded;
   final bool isReconnecting;
   final String? offlineStatusLabel;
+  final IconData? offlineStatusIcon;
   final ValueChanged<NavigationTabId> onDestinationSelected;
   final ValueChanged<String> onLibrarySelected;
 
@@ -155,6 +156,7 @@ class SideNavigationRail extends StatefulWidget {
     this.alwaysExpanded = false,
     this.isReconnecting = false,
     this.offlineStatusLabel,
+    this.offlineStatusIcon,
     required this.onDestinationSelected,
     required this.onLibrarySelected,
     this.onNavigateToContent,
@@ -562,8 +564,8 @@ class SideNavigationRailState extends State<SideNavigationRail> {
 
     return NavigationRailItem(
       icon: showReconnectAction
-          ? (widget.isReconnecting ? Symbols.sync_rounded : Symbols.wifi_rounded)
-          : Symbols.cloud_done_rounded,
+        ? (widget.isReconnecting ? Symbols.sync_rounded : Symbols.wifi_rounded)
+        : (widget.offlineStatusIcon ?? Symbols.cloud_done_rounded),
       label: showReconnectAction && widget.isReconnecting
           ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: t.text))
           : Text(

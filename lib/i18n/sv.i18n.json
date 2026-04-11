@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "Sökning misslyckades: ${error}",
     "connectionTimeout": "Anslutnings-timeout vid laddning ${context}",
-    "connectionFailed": "Kan inte ansluta till Plex-server",
+    "connectionFailed": "Kan inte ansluta till servern",
     "failedToLoad": "Misslyckades att ladda ${context}: ${error}",
     "noClientAvailable": "Ingen klient tillgänglig",
     "authenticationFailed": "Autentisering misslyckades: ${error}",

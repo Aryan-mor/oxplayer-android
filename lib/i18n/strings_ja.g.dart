@@ -677,7 +677,7 @@ class _TranslationsErrorsJa implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => '検索に失敗しました: ${error}';
 	@override String connectionTimeout({required Object context}) => '${context}の読み込み中に接続がタイムアウトしました';
-	@override String get connectionFailed => 'Plexサーバーに接続できません';
+	@override String get connectionFailed => 'サーバーに接続できません';
 	@override String failedToLoad({required Object context, required Object error}) => '${context}の読み込みに失敗しました: ${error}';
 	@override String get noClientAvailable => 'クライアントが利用できません';
 	@override String authenticationFailed({required Object error}) => '認証に失敗しました: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsJa {
 			'discover.minutesLeft' => ({required Object minutes}) => '残り${minutes}分',
 			'errors.searchFailed' => ({required Object error}) => '検索に失敗しました: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => '${context}の読み込み中に接続がタイムアウトしました',
-			'errors.connectionFailed' => 'Plexサーバーに接続できません',
+			'errors.connectionFailed' => 'サーバーに接続できません',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => '${context}の読み込みに失敗しました: ${error}',
 			'errors.noClientAvailable' => 'クライアントが利用できません',
 			'errors.authenticationFailed' => ({required Object error}) => '認証に失敗しました: ${error}',

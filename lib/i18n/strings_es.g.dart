@@ -677,7 +677,7 @@ class _TranslationsErrorsEs implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Error en la búsqueda: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Tiempo de conexión agotado al cargar ${context}';
-	@override String get connectionFailed => 'No se pudo conectar con el servidor Plex';
+	@override String get connectionFailed => 'No se pudo conectar con el servidor';
 	@override String failedToLoad({required Object context, required Object error}) => 'Error al cargar ${context}: ${error}';
 	@override String get noClientAvailable => 'No hay cliente disponible';
 	@override String authenticationFailed({required Object error}) => 'Error de autenticación: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsEs {
 			'discover.minutesLeft' => ({required Object minutes}) => 'quedan ${minutes} min',
 			'errors.searchFailed' => ({required Object error}) => 'Error en la búsqueda: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Tiempo de conexión agotado al cargar ${context}',
-			'errors.connectionFailed' => 'No se pudo conectar con el servidor Plex',
+			'errors.connectionFailed' => 'No se pudo conectar con el servidor',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Error al cargar ${context}: ${error}',
 			'errors.noClientAvailable' => 'No hay cliente disponible',
 			'errors.authenticationFailed' => ({required Object error}) => 'Error de autenticación: ${error}',

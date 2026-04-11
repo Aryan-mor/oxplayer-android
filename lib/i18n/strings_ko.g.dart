@@ -677,7 +677,7 @@ class _TranslationsErrorsKo implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => '검색 실패: ${error}';
 	@override String connectionTimeout({required Object context}) => '${context} 로드 중 연결 시간 초과';
-	@override String get connectionFailed => 'Plex 서버에 연결할 수 없음';
+	@override String get connectionFailed => '서버에 연결할 수 없음';
 	@override String failedToLoad({required Object context, required Object error}) => '${context} 로드 실패: ${error}';
 	@override String get noClientAvailable => '사용 가능한 클라이언트가 없습니다';
 	@override String authenticationFailed({required Object error}) => '인증 실패: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsKo {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes}분 남음',
 			'errors.searchFailed' => ({required Object error}) => '검색 실패: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => '${context} 로드 중 연결 시간 초과',
-			'errors.connectionFailed' => 'Plex 서버에 연결할 수 없음',
+			'errors.connectionFailed' => '서버에 연결할 수 없음',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => '${context} 로드 실패: ${error}',
 			'errors.noClientAvailable' => '사용 가능한 클라이언트가 없습니다',
 			'errors.authenticationFailed' => ({required Object error}) => '인증 실패: ${error}',

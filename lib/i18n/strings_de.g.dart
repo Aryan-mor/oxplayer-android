@@ -677,7 +677,7 @@ class _TranslationsErrorsDe implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Suche fehlgeschlagen: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Zeitüberschreitung beim Laden von ${context}';
-	@override String get connectionFailed => 'Verbindung zum Plex-Server fehlgeschlagen';
+	@override String get connectionFailed => 'Verbindung zum Server fehlgeschlagen';
 	@override String failedToLoad({required Object context, required Object error}) => 'Fehler beim Laden von ${context}: ${error}';
 	@override String get noClientAvailable => 'Kein Client verfügbar';
 	@override String authenticationFailed({required Object error}) => 'Authentifizierung fehlgeschlagen: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsDe {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} Min übrig',
 			'errors.searchFailed' => ({required Object error}) => 'Suche fehlgeschlagen: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Zeitüberschreitung beim Laden von ${context}',
-			'errors.connectionFailed' => 'Verbindung zum Plex-Server fehlgeschlagen',
+			'errors.connectionFailed' => 'Verbindung zum Server fehlgeschlagen',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Fehler beim Laden von ${context}: ${error}',
 			'errors.noClientAvailable' => 'Kein Client verfügbar',
 			'errors.authenticationFailed' => ({required Object error}) => 'Authentifizierung fehlgeschlagen: ${error}',

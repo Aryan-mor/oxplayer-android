@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'dart:io';
 import 'dart:ui';
 
@@ -33,6 +35,8 @@ class EpisodeCard extends StatefulWidget {
   final String? localPosterPath;
   final FocusNode? focusNode;
   final VoidCallback? onNavigateUp;
+  final String? downloadGlobalKey;
+  final VoidCallback? onDownloadTap;
 
   const EpisodeCard({
     super.key,
@@ -46,6 +50,8 @@ class EpisodeCard extends StatefulWidget {
     this.localPosterPath,
     this.focusNode,
     this.onNavigateUp,
+    this.downloadGlobalKey,
+    this.onDownloadTap,
   });
 
   @override
@@ -241,7 +247,7 @@ class _EpisodeCardState extends State<EpisodeCard> {
 
                           // Only show download status in online mode
                           if (!widget.isOffline && widget.episode.serverId != null) {
-                            final globalKey = widget.episode.globalKey;
+                            final globalKey = widget.downloadGlobalKey ?? widget.episode.globalKey;
                             final progress = downloadProvider.getProgress(globalKey);
                             final isQueueing = downloadProvider.isQueueing(globalKey);
 
@@ -363,6 +369,71 @@ class _EpisodeCardState extends State<EpisodeCard> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                              if (widget.onDownloadTap != null) ...[
+                                const SizedBox(width: 6),
+                                Builder(
+                                  builder: (context) {
+                                    final globalKey = widget.downloadGlobalKey ?? widget.episode.globalKey;
+                                    final progress = downloadProvider.getProgress(globalKey);
+                                    final isQueueing = downloadProvider.isQueueing(globalKey);
+
+                                    Widget icon = const AppIcon(Symbols.download_rounded, fill: 1, size: 18);
+                                    VoidCallback? onPressed = widget.onDownloadTap;
+                                    var tooltip = 'Download';
+
+                                    if (isQueueing) {
+                                      icon = SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: tokens(context).textMuted,
+                                        ),
+                                      );
+                                    } else if (progress?.status == DownloadStatus.queued) {
+                                      icon = AppIcon(
+                                        Symbols.schedule_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: tokens(context).textMuted,
+                                      );
+                                      tooltip = 'Pause download';
+                                      onPressed = () {
+                                        unawaited(downloadProvider.pauseDownload(globalKey));
+                                      };
+                                    } else if (progress?.status == DownloadStatus.downloading) {
+                                      icon = SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          value: progress?.progressPercent,
+                                          strokeWidth: 2,
+                                          color: Theme.of(context).colorScheme.primary,
+                                        ),
+                                      );
+                                      tooltip = 'Pause download';
+                                      onPressed = () {
+                                        unawaited(downloadProvider.pauseDownload(globalKey));
+                                      };
+                                    } else if (progress?.status == DownloadStatus.completed) {
+                                      icon = const AppIcon(
+                                        Symbols.file_download_done_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: Colors.green,
+                                      );
+                                      onPressed = null;
+                                    }
+
+                                    return IconButton(
+                                      onPressed: onPressed,
+                                      icon: icon,
+                                      tooltip: tooltip,
+                                      visualDensity: VisualDensity.compact,
+                                    );
+                                  },
+                                ),
+                              ],
                             ],
                           );
                         },

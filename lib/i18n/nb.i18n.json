@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "Søk mislyktes: ${error}",
     "connectionTimeout": "Tidsavbrudd ved lasting av ${context}",
-    "connectionFailed": "Kunne ikke koble til Plex-server",
+    "connectionFailed": "Kunne ikke koble til serveren",
     "failedToLoad": "Kunne ikke laste ${context}: ${error}",
     "noClientAvailable": "Ingen klient tilgjengelig",
     "authenticationFailed": "Autentisering mislyktes: ${error}",
