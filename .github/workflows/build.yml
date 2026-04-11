@@ -76,26 +76,26 @@ jobs:
 
       - name: Package APKs
         run: |
-          tar -czf plezy-android-arm64-v8a.tar.gz -C build/app/outputs/flutter-apk app-arm64-v8a-release.apk --transform 's/app-arm64-v8a-release.apk/plezy.apk/'
-          tar -czf plezy-android-armeabi-v7a.tar.gz -C build/app/outputs/flutter-apk app-armeabi-v7a-release.apk --transform 's/app-armeabi-v7a-release.apk/plezy.apk/'
-          tar -czf plezy-android-x86_64.tar.gz -C build/app/outputs/flutter-apk app-x86_64-release.apk --transform 's/app-x86_64-release.apk/plezy.apk/'
+          tar -czf oxplayer-android-arm64-v8a.tar.gz -C build/app/outputs/flutter-apk app-arm64-v8a-release.apk --transform 's/app-arm64-v8a-release.apk/oxplayer.apk/'
+          tar -czf oxplayer-android-armeabi-v7a.tar.gz -C build/app/outputs/flutter-apk app-armeabi-v7a-release.apk --transform 's/app-armeabi-v7a-release.apk/oxplayer.apk/'
+          tar -czf oxplayer-android-x86_64.tar.gz -C build/app/outputs/flutter-apk app-x86_64-release.apk --transform 's/app-x86_64-release.apk/oxplayer.apk/'
 
       - name: Attest APKs
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            plezy-android-arm64-v8a.tar.gz
-            plezy-android-armeabi-v7a.tar.gz
-            plezy-android-x86_64.tar.gz
+            oxplayer-android-arm64-v8a.tar.gz
+            oxplayer-android-armeabi-v7a.tar.gz
+            oxplayer-android-x86_64.tar.gz
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
           path: |
-            plezy-android-arm64-v8a.tar.gz
-            plezy-android-armeabi-v7a.tar.gz
-            plezy-android-x86_64.tar.gz
+            oxplayer-android-arm64-v8a.tar.gz
+            oxplayer-android-armeabi-v7a.tar.gz
+            oxplayer-android-x86_64.tar.gz
             build/app/outputs/bundle/release/app-release.aab
 
   build-ios:
@@ -143,18 +143,18 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r plezy-ios.ipa Payload
+          zip -r oxplayer-ios.ipa Payload
 
       - name: Attest IPA
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: plezy-ios.ipa
+          subject-path: oxplayer-ios.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: plezy-ios.ipa
+          path: oxplayer-ios.ipa
 
   build-macos:
     runs-on: macos-26
@@ -286,7 +286,7 @@ jobs:
           mkdir -p dmg-staging
           cp -R build/macos/Build/Products/Release/Plezy.app dmg-staging/
           ln -s /Applications dmg-staging/Applications
-          hdiutil create -format ULMO -srcfolder dmg-staging -volname "Plezy" plezy-macos.dmg
+          hdiutil create -format ULMO -srcfolder dmg-staging -volname "OXPlayer" oxplayer-macos.dmg
 
       - name: Sign DMG for Sparkle (EdDSA)
         if: env.SPARKLE_PRIVATE_KEY != ''
@@ -294,17 +294,17 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           printf -- "-----BEGIN ED25519 PRIVATE KEY-----\n%s\n-----END ED25519 PRIVATE KEY-----\n" "$SPARKLE_PRIVATE_KEY" > ed25519_key.pem
-          OUTPUT=$(dart run auto_updater:sign_update plezy-macos.dmg ed25519_key.pem)
+          OUTPUT=$(dart run auto_updater:sign_update oxplayer-macos.dmg ed25519_key.pem)
           rm ed25519_key.pem
           # Extract edSignature value from output like: sparkle:edSignature="..." length="..."
           SIGNATURE=$(echo "$OUTPUT" | grep -o 'edSignature="[^"]*"' | sed 's/edSignature="//;s/"//')
           echo "MACOS_ED_SIGNATURE=$SIGNATURE" >> $GITHUB_ENV
-          echo "MACOS_DMG_SIZE=$(stat -f%z plezy-macos.dmg)" >> $GITHUB_ENV
+          echo "MACOS_DMG_SIZE=$(stat -f%z oxplayer-macos.dmg)" >> $GITHUB_ENV
 
       - name: Attest macOS DMG
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: plezy-macos.dmg
+          subject-path: oxplayer-macos.dmg
 
       - name: Write macOS signature metadata
         run: |
@@ -316,7 +316,7 @@ jobs:
         with:
           name: macos-dmg
           path: |
-            plezy-macos.dmg
+            oxplayer-macos.dmg
             macos-ed-signature.txt
             macos-dmg-size.txt
 
@@ -426,6 +426,13 @@ jobs:
       - name: Build installer and portables
         run: .\windows\build-installer.ps1 -X64BuildDir "build-x64" -Arm64BuildDir "build-arm64" -Version "${{ steps.version.outputs.version }}"
 
+      - name: Rename Windows artifacts
+        shell: pwsh
+        run: |
+          Move-Item -Path plezy-windows-x64-portable.7z -Destination oxplayer-windows-x64-portable.7z
+          Move-Item -Path plezy-windows-arm64-portable.7z -Destination oxplayer-windows-arm64-portable.7z
+          Move-Item -Path plezy-windows-installer.exe -Destination oxplayer-windows-installer.exe
+
       - name: Sign installer for WinSparkle (EdDSA)
         if: env.SPARKLE_PRIVATE_KEY != ''
         env:
@@ -438,39 +445,39 @@ jobs:
           Push-Location _signer
           dart pub get
           Set-Content -Path ed25519_key.pem -Value $env:SPARKLE_PRIVATE_KEY -Encoding ascii -NoNewline
-          $output = dart run sign.dart ../plezy-windows-installer.exe ed25519_key.pem
+          $output = dart run sign.dart ../oxplayer-windows-installer.exe ed25519_key.pem
           Pop-Location
           Remove-Item _signer -Recurse -Force
           $sig = [regex]::Match($output, 'edSignature="([^"]*)"').Groups[1].Value
           Set-Content -Path win-ed-signature.txt -Value $sig -Encoding ascii -NoNewline
-          Set-Content -Path win-installer-size.txt -Value (Get-Item plezy-windows-installer.exe).Length.ToString() -Encoding ascii -NoNewline
+          Set-Content -Path win-installer-size.txt -Value (Get-Item oxplayer-windows-installer.exe).Length.ToString() -Encoding ascii -NoNewline
 
       - name: Attest Windows artifacts
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            plezy-windows-x64-portable.7z
-            plezy-windows-arm64-portable.7z
-            plezy-windows-installer.exe
+            oxplayer-windows-x64-portable.7z
+            oxplayer-windows-arm64-portable.7z
+            oxplayer-windows-installer.exe
 
       - name: Upload x64 portable
         uses: actions/upload-artifact@v4
         with:
           name: windows-x64-portable
-          path: plezy-windows-x64-portable.7z
+          path: oxplayer-windows-x64-portable.7z
 
       - name: Upload arm64 portable
         uses: actions/upload-artifact@v4
         with:
           name: windows-arm64-portable
-          path: plezy-windows-arm64-portable.7z
+          path: oxplayer-windows-arm64-portable.7z
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
           path: |
-            plezy-windows-installer.exe
+            oxplayer-windows-installer.exe
             win-ed-signature.txt
             win-installer-size.txt
 
@@ -534,6 +541,13 @@ jobs:
       - name: Build Linux Packages
         run: ARCH_SUFFIX=x64 OUTPUT_DIR=$GITHUB_WORKSPACE python3 linux/packaging/build-packages.py
 
+      - name: Rename Linux x64 artifacts
+        run: |
+          mv plezy-linux-x64.tar.gz oxplayer-linux-x64.tar.gz 2>/dev/null || true
+          mv plezy-linux-x64.deb oxplayer-linux-x64.deb
+          mv plezy-linux-x64.rpm oxplayer-linux-x64.rpm
+          mv plezy-linux-x64.pkg.tar.zst oxplayer-linux-x64.pkg.tar.zst
+
       - name: Copy libmpv into bundle
         run: |
           BUNDLE_LIB=build/linux/x64/release/bundle/lib
@@ -561,26 +575,26 @@ jobs:
       - name: Create tarball
         run: |
           cd build/linux/x64/release/bundle
-          tar -czf $GITHUB_WORKSPACE/plezy-linux-x64.tar.gz *
+          tar -czf $GITHUB_WORKSPACE/oxplayer-linux-x64.tar.gz *
 
       - name: Attest Linux x64 artifacts
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            plezy-linux-x64.tar.gz
-            plezy-linux-x64.deb
-            plezy-linux-x64.rpm
-            plezy-linux-x64.pkg.tar.zst
+            oxplayer-linux-x64.tar.gz
+            oxplayer-linux-x64.deb
+            oxplayer-linux-x64.rpm
+            oxplayer-linux-x64.pkg.tar.zst
 
       - name: Upload Linux x64 artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64
           path: |
-            plezy-linux-x64.tar.gz
-            plezy-linux-x64.deb
-            plezy-linux-x64.rpm
-            plezy-linux-x64.pkg.tar.zst
+            oxplayer-linux-x64.tar.gz
+            oxplayer-linux-x64.deb
+            oxplayer-linux-x64.rpm
+            oxplayer-linux-x64.pkg.tar.zst
 
   build-linux-arm64:
     runs-on: ubuntu-24.04-arm
@@ -679,29 +693,43 @@ jobs:
       - name: Create tarball
         run: |
           cd ${{ steps.find-bundle.outputs.bundle_dir }}
-          tar -czf $GITHUB_WORKSPACE/plezy-linux-arm64.tar.gz *
+          tar -czf $GITHUB_WORKSPACE/oxplayer-linux-arm64.tar.gz *
+
+      - name: Rename Linux arm64 artifacts
+        run: |
+          mv plezy-linux-arm64.deb oxplayer-linux-arm64.deb
+          mv plezy-linux-arm64.rpm oxplayer-linux-arm64.rpm
+          mv plezy-linux-arm64.pkg.tar.zst oxplayer-linux-arm64.pkg.tar.zst
 
       - name: Attest Linux arm64 artifacts
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            plezy-linux-arm64.tar.gz
-            plezy-linux-arm64.deb
-            plezy-linux-arm64.rpm
-            plezy-linux-arm64.pkg.tar.zst
+            oxplayer-linux-arm64.tar.gz
+            oxplayer-linux-arm64.deb
+            oxplayer-linux-arm64.rpm
+            oxplayer-linux-arm64.pkg.tar.zst
 
       - name: Upload Linux arm64 artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64
           path: |
-            plezy-linux-arm64.tar.gz
-            plezy-linux-arm64.deb
-            plezy-linux-arm64.rpm
-            plezy-linux-arm64.pkg.tar.zst
+            oxplayer-linux-arm64.tar.gz
+            oxplayer-linux-arm64.deb
+            oxplayer-linux-arm64.rpm
+            oxplayer-linux-arm64.pkg.tar.zst
 
   create-release:
-    needs: [build-android, build-ios, build-macos, package-windows, build-linux-x64, build-linux-arm64]
+    needs:
+      [
+        build-android,
+        build-ios,
+        build-macos,
+        package-windows,
+        build-linux-x64,
+        build-linux-arm64,
+      ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -759,7 +787,7 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
             <channel>
-              <title>Plezy Updates</title>
+              <title>OXPlayer Updates</title>
               <item>
                 <title>Version ${VERSION}</title>
                 <sparkle:version>${BUILD_NUMBER}</sparkle:version>
@@ -770,7 +798,7 @@ jobs:
           # macOS enclosure
           if [ -n "$MACOS_ED_SIG" ]; then
             cat >> appcast.xml << XMLEOF
-                <enclosure url="https://github.com/edde746/plezy/releases/download/${RELEASE_TAG}/plezy-macos.dmg"
+                <enclosure url="https://github.com/edde746/plezy/releases/download/${RELEASE_TAG}/oxplayer-macos.dmg"
                            length="${MACOS_DMG_SIZE}" type="application/octet-stream"
                            sparkle:edSignature="${MACOS_ED_SIG}"
                            sparkle:os="macos" />
@@ -780,7 +808,7 @@ jobs:
           # Windows enclosure
           if [ -n "$WIN_ED_SIG" ]; then
             cat >> appcast.xml << XMLEOF
-                <enclosure url="https://github.com/edde746/plezy/releases/download/${RELEASE_TAG}/plezy-windows-installer.exe"
+                <enclosure url="https://github.com/edde746/plezy/releases/download/${RELEASE_TAG}/oxplayer-windows-installer.exe"
                            length="${WIN_INSTALLER_SIZE}" type="application/octet-stream"
                            sparkle:edSignature="${WIN_ED_SIG}"
                            sparkle:installerArguments="/SILENT /SP-"
@@ -804,20 +832,20 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.release_tag }}
-          name: Plezy ${{ steps.version.outputs.version }} (build ${{ steps.version.outputs.build_number }})
+          name: OXPlayer ${{ steps.version.outputs.version }} (build ${{ steps.version.outputs.build_number }})
           files: |
-            artifacts/android-apk/plezy-android-arm64-v8a.tar.gz
-            artifacts/android-apk/plezy-android-armeabi-v7a.tar.gz
-            artifacts/android-apk/plezy-android-x86_64.tar.gz
+            artifacts/android-apk/oxplayer-android-arm64-v8a.tar.gz
+            artifacts/android-apk/oxplayer-android-armeabi-v7a.tar.gz
+            artifacts/android-apk/oxplayer-android-x86_64.tar.gz
             artifacts/android-apk/app-arm64-v8a-release.apk
             artifacts/android-apk/app-armeabi-v7a-release.apk
             artifacts/android-apk/app-x86_64-release.apk
             artifacts/android-apk/app-release.aab
-            artifacts/ios-ipa/plezy-ios.ipa
-            artifacts/macos-dmg/plezy-macos.dmg
-            artifacts/windows-x64-portable/plezy-windows-x64-portable.7z
-            artifacts/windows-arm64-portable/plezy-windows-arm64-portable.7z
-            artifacts/windows-installer/plezy-windows-installer.exe
+            artifacts/ios-ipa/oxplayer-ios.ipa
+            artifacts/macos-dmg/oxplayer-macos.dmg
+            artifacts/windows-x64-portable/oxplayer-windows-x64-portable.7z
+            artifacts/windows-arm64-portable/oxplayer-windows-arm64-portable.7z
+            artifacts/windows-installer/oxplayer-windows-installer.exe
             artifacts/linux-x64/*
             artifacts/linux-arm64/*
             appcast.xml
