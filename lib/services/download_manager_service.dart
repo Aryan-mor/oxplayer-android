@@ -377,6 +377,48 @@ class DownloadManagerService {
     _processQueue(client);
   }
 
+  Future<bool> queueResolvedLocalDownload({
+    required PlexMetadata metadata,
+    required Future<String?> Function() sourcePathResolver,
+    String? variantSuffix,
+  }) async {
+    final globalKey = metadata.globalKey;
+    final existing = await _database.getDownloadedMedia(globalKey);
+    if (existing != null &&
+        (existing.status == DownloadStatus.queued.index ||
+            existing.status == DownloadStatus.downloading.index ||
+            existing.status == DownloadStatus.completed.index)) {
+      appLogger.i('Resolved local download already exists for $globalKey with status ${existing.status}');
+      return false;
+    }
+
+    if (existing != null) {
+      await _database.deleteDownload(globalKey);
+    }
+
+    await _database.insertDownload(
+      serverId: metadata.serverId!,
+      ratingKey: metadata.ratingKey,
+      globalKey: globalKey,
+      type: metadata.type ?? '',
+      parentRatingKey: metadata.parentRatingKey,
+      grandparentRatingKey: metadata.grandparentRatingKey,
+      status: DownloadStatus.queued.index,
+      mediaIndex: 0,
+    );
+    await saveMetadata(metadata);
+    _emitProgress(globalKey, DownloadStatus.queued, 0);
+
+    unawaited(
+      _processResolvedLocalDownload(
+        metadata: metadata,
+        sourcePathResolver: sourcePathResolver,
+        variantSuffix: variantSuffix,
+      ),
+    );
+    return true;
+  }
+
   /// Process the download queue — prepares and enqueues items with background_downloader.
   /// Non-blocking: returns after all queued items are enqueued (downloads run natively).
   Future<void> _processQueue(PlexClient client) async {
@@ -555,6 +597,58 @@ class DownloadManagerService {
       await _transitionStatus(globalKey, DownloadStatus.failed, errorMessage: e.toString());
       await _database.removeFromQueue(globalKey);
       _pendingDownloadContext.remove(globalKey);
+    }
+  }
+
+  Future<void> _processResolvedLocalDownload({
+    required PlexMetadata metadata,
+    required Future<String?> Function() sourcePathResolver,
+    String? variantSuffix,
+  }) async {
+    final globalKey = metadata.globalKey;
+    try {
+      await _transitionStatus(globalKey, DownloadStatus.downloading);
+
+      final sourcePath = await sourcePathResolver();
+      if (sourcePath == null || sourcePath.isEmpty) {
+        throw Exception('Resolved source path is empty');
+      }
+
+      final absoluteSourcePath = await _storageService.ensureAbsolutePath(sourcePath);
+      final sourceFile = File(absoluteSourcePath);
+      if (!await sourceFile.exists()) {
+        throw Exception('Resolved source file does not exist: $absoluteSourcePath');
+      }
+
+      final ext = path.extension(absoluteSourcePath).replaceFirst('.', '').trim();
+      final extension = ext.isNotEmpty ? ext : 'mp4';
+
+      String targetPath;
+      if (metadata.type == 'movie') {
+        targetPath = await _storageService.getMovieVideoPath(metadata, extension, variantSuffix: variantSuffix);
+      } else if (metadata.type == 'episode') {
+        targetPath = await _storageService.getEpisodeVideoPath(metadata, extension, variantSuffix: variantSuffix);
+      } else {
+        targetPath = await _storageService.getVideoFilePath(metadata.serverId!, metadata.ratingKey, extension);
+      }
+
+      final targetFile = File(targetPath);
+      await targetFile.parent.create(recursive: true);
+      if (await targetFile.exists()) {
+        await targetFile.delete();
+      }
+
+      if (path.normalize(targetFile.path) != path.normalize(sourceFile.path)) {
+        await sourceFile.copy(targetFile.path);
+      }
+
+      final storedPath = await _storageService.toRelativePath(targetFile.path);
+      await _database.updateVideoFilePath(globalKey, storedPath);
+      await _transitionStatus(globalKey, DownloadStatus.completed);
+      appLogger.i('Resolved local download completed for $globalKey at $storedPath');
+    } catch (e) {
+      appLogger.e('Failed to process resolved local download for $globalKey', error: e);
+      await _transitionStatus(globalKey, DownloadStatus.failed, errorMessage: e.toString());
     }
   }
 

@@ -2,9 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:provider/provider.dart';
 
 import '../focus/focus_theme.dart';
 import '../focus/focusable_wrapper.dart';
+import '../models/download_models.dart';
+import '../providers/download_provider.dart';
 import '../theme/mono_tokens.dart';
 import 'app_icon.dart';
 import 'collapsible_text.dart';
@@ -23,6 +26,8 @@ class OxFileOptionCard extends StatelessWidget {
     this.focusNode,
     this.autofocus = false,
     this.onNavigateUp,
+    this.downloadGlobalKey,
+    this.onDownloadTap,
   });
 
   final String title;
@@ -35,6 +40,8 @@ class OxFileOptionCard extends StatelessWidget {
   final FocusNode? focusNode;
   final bool autofocus;
   final VoidCallback? onNavigateUp;
+  final String? downloadGlobalKey;
+  final VoidCallback? onDownloadTap;
 
   @override
   Widget build(BuildContext context) {
@@ -124,6 +131,78 @@ class OxFileOptionCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
+                          if (downloadGlobalKey != null && onDownloadTap != null)
+                            Consumer<DownloadProvider>(
+                              builder: (context, downloadProvider, _) {
+                                final progress = downloadProvider.getProgress(downloadGlobalKey!);
+                                final isQueueing = downloadProvider.isQueueing(downloadGlobalKey!);
+                                Widget icon;
+                                VoidCallback? onPressed = onDownloadTap;
+
+                                if (isQueueing) {
+                                  icon = SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: tokens(context).textMuted,
+                                    ),
+                                  );
+                                  onPressed = null;
+                                } else {
+                                  switch (progress?.status) {
+                                    case DownloadStatus.queued:
+                                      icon = AppIcon(
+                                        Symbols.schedule_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: tokens(context).textMuted,
+                                      );
+                                      onPressed = null;
+                                    case DownloadStatus.downloading:
+                                      icon = SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          value: progress?.progressPercent,
+                                          strokeWidth: 2,
+                                          color: Theme.of(context).colorScheme.primary,
+                                        ),
+                                      );
+                                      onPressed = null;
+                                    case DownloadStatus.completed:
+                                      icon = const AppIcon(
+                                        Symbols.file_download_done_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: Colors.green,
+                                      );
+                                      onPressed = null;
+                                    case DownloadStatus.failed:
+                                      icon = AppIcon(
+                                        Symbols.download_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: Theme.of(context).colorScheme.error,
+                                      );
+                                    default:
+                                      icon = AppIcon(
+                                        Symbols.download_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: Theme.of(context).colorScheme.primary,
+                                      );
+                                  }
+                                }
+
+                                return IconButton(
+                                  onPressed: onPressed,
+                                  icon: icon,
+                                  tooltip: 'Download',
+                                  visualDensity: VisualDensity.compact,
+                                );
+                              },
+                            ),
                         ],
                       ),
                       if (infoLine != null && infoLine!.isNotEmpty) ...[

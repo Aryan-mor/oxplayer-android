@@ -955,6 +955,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (streamUrl == null) {
       playMediaDebugError('Playback stream URL is still empty for metadata=${metadata.ratingKey} file=${selectedFile.id}');
       await mediaRepository.releaseInternalPlaybackSession(reason: 'stream_url_unavailable');
+      if (!mounted) return;
       showErrorSnackBar(context, t.externalPlayer.launchFailed);
       return;
     }
@@ -987,6 +988,32 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       }
       if (mounted) {
         showErrorSnackBar(context, t.externalPlayer.launchFailed);
+      }
+    }
+  }
+
+  Future<void> _queueOxFileDownload(PlexMetadata metadata, OxFileOptionItem option) async {
+    try {
+      final downloadProvider = context.read<DownloadProvider>();
+      final repository = await DataRepository.create();
+      final mediaRepository = MediaRepository(dataRepository: repository);
+      final count = await downloadProvider.queueOxDownload(
+        metadata: metadata,
+        file: option.file,
+        mediaRepository: mediaRepository,
+      );
+      if (!mounted || count <= 0) {
+        return;
+      }
+      showSuccessSnackBar(context, t.downloads.downloadQueued);
+    } on CellularDownloadBlockedException {
+      if (mounted) {
+        showErrorSnackBar(context, t.settings.cellularDownloadBlocked);
+      }
+    } catch (error) {
+      appLogger.e('Failed to queue OX download', error: error);
+      if (mounted) {
+        showErrorSnackBar(context, t.messages.errorLoading(error: error.toString()));
       }
     }
   }
@@ -1438,6 +1465,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       _ => fallback.type ?? 'movie',
     };
     final posterUrl = _resolvePosterUrl(media.posterPath) ?? fallback.thumb;
+    final serverId = fallback.serverId ?? kOxVirtualServerId;
 
     return fallback.copyWith(
       ratingKey: media.id,
@@ -1449,6 +1477,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       year: media.releaseYear,
       thumb: posterUrl,
       art: posterUrl ?? fallback.art,
+      serverId: serverId,
     );
   }
 
@@ -2081,12 +2110,15 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       itemBuilder: (context, index) {
         final option = fileOptions[index];
         final playbackMetadata = _selectedOxOptionParent ?? metadata;
+        final downloadMetadata = buildOxDownloadMetadata(parentMetadata: playbackMetadata, file: option.file);
         return OxFileOptionCard(
           title: option.title,
           badgeLabel: option.badgeLabel,
           infoLine: option.infoLine,
           summary: option.summary,
           imageUrl: playbackMetadata.thumb,
+          downloadGlobalKey: downloadMetadata.globalKey,
+          onDownloadTap: () => _queueOxFileDownload(playbackMetadata, option),
           focusNode: index == 0
               ? _firstEpisodeFocusNode
               : index == fileOptions.length - 1 && fileOptions.length > 1
