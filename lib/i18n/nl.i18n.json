@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "Zoeken mislukt: ${error}",
     "connectionTimeout": "Verbinding time-out tijdens laden ${context}",
-    "connectionFailed": "Kan geen verbinding maken met Plex server",
+    "connectionFailed": "Kan geen verbinding maken met server",
     "failedToLoad": "Kon ${context} niet laden: ${error}",
     "noClientAvailable": "Geen client beschikbaar",
     "authenticationFailed": "Authenticatie mislukt: ${error}",

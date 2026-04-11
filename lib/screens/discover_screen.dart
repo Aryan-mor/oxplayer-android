@@ -19,6 +19,7 @@ import '../widgets/plex_optimized_image.dart' show blurArtwork;
 import '../models/plex_metadata.dart';
 import '../utils/content_utils.dart';
 import '../models/plex_hub.dart';
+import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
 import '../providers/auth_notifier.dart';
 import '../providers/hidden_libraries_provider.dart';
@@ -53,8 +54,9 @@ import 'companion_remote/mobile_remote_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
   final VoidCallback? onBecameVisible;
+  final bool enableOxDiscoverFallback;
 
-  const DiscoverScreen({super.key, this.onBecameVisible});
+  const DiscoverScreen({super.key, this.onBecameVisible, this.enableOxDiscoverFallback = false});
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
@@ -89,10 +91,10 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   bool _isAutoScrollPaused = false;
   bool _isTabVisible = true;
   HiddenLibrariesProvider? _hiddenLibrariesProvider;
-  /// Resolved local file paths for general_video thumbnails, keyed by mediaId.
   final Map<String, String> _videoThumbnails = {};
   final Set<String> _videoThumbnailRetryQueued = <String>{};
   Set<String> _lastSeenHiddenKeys = {};
+  bool _usingOfflineDownloadsFallback = false;
 
   // WatchStateAware: watch on-deck items and their parent shows/seasons
   @override
@@ -464,11 +466,20 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final multiServerProvider = Provider.of<MultiServerProvider>(context, listen: false);
 
       if (!multiServerProvider.hasConnectedServers) {
-        final loadedOxFallback = await _loadOxFallbackContent();
-        if (loadedOxFallback) {
-          appLogger.d('Discover content loaded from OX fallback');
+        if (widget.enableOxDiscoverFallback) {
+          final loadedOxFallback = await _loadOxFallbackContent();
+          if (loadedOxFallback) {
+            appLogger.d('Discover content loaded from OX fallback because app server is connected');
+            return;
+          }
+        }
+
+        final loadedOfflineDownloads = await _loadOfflineDownloadContent();
+        if (loadedOfflineDownloads) {
+          appLogger.d('Discover content loaded from offline downloads fallback because no servers are connected');
           return;
         }
+
         throw Exception('No servers available');
       }
 
@@ -505,6 +516,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
       if (!mounted) return;
       setState(() {
+        _usingOfflineDownloadsFallback = false;
         _onDeck = onDeck;
         _isLoading = false; // Show content, but hubs still loading
 
@@ -579,6 +591,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       appLogger.d('Received ${onDeck.length} on deck items and ${filteredHubs.length} global hubs from all servers');
       if (!mounted) return;
       setState(() {
+        _usingOfflineDownloadsFallback = false;
         _hubs = filteredHubs;
         _areHubsLoading = false;
         _updateHubKeys();
@@ -595,6 +608,82 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
+  Future<bool> _loadOfflineDownloadContent() async {
+    final downloadProvider = context.read<DownloadProvider>();
+    await downloadProvider.ensureInitialized();
+    if (!mounted) return true;
+
+    final completedEntries = downloadProvider.completedDownloads
+      ..sort((a, b) => b.progress.compareTo(a.progress));
+
+    final recentItems = completedEntries
+        .map((entry) => downloadProvider.getMetadata(entry.globalKey))
+        .whereType<PlexMetadata>()
+        .toList(growable: false)
+      ..sort(_sortMetadataByFreshness);
+
+    final downloadedMovies = List<PlexMetadata>.from(downloadProvider.downloadedMovies)
+      ..sort(_sortMetadataByFreshness);
+    final downloadedShows = List<PlexMetadata>.from(downloadProvider.downloadedShows)
+      ..sort(_sortMetadataByFreshness);
+
+    final hubs = <PlexHub>[];
+    if (recentItems.isNotEmpty) {
+      hubs.add(
+        PlexHub(
+          hubKey: 'offline:recent',
+          title: 'Recent Downloads',
+          type: 'mixed',
+          size: recentItems.length,
+          more: false,
+          items: recentItems.take(20).toList(growable: false),
+        ),
+      );
+    }
+    if (downloadedMovies.isNotEmpty) {
+      hubs.add(
+        PlexHub(
+          hubKey: 'offline:movies',
+          title: 'Downloaded Movies',
+          type: 'movie',
+          size: downloadedMovies.length,
+          more: false,
+          items: downloadedMovies.take(20).toList(growable: false),
+        ),
+      );
+    }
+    if (downloadedShows.isNotEmpty) {
+      hubs.add(
+        PlexHub(
+          hubKey: 'offline:series',
+          title: 'Downloaded Series',
+          type: 'show',
+          size: downloadedShows.length,
+          more: false,
+          items: downloadedShows.take(20).toList(growable: false),
+        ),
+      );
+    }
+
+    setState(() {
+      _usingOfflineDownloadsFallback = true;
+      _onDeck = const <PlexMetadata>[];
+      _hubs = hubs;
+      _isLoading = false;
+      _areHubsLoading = false;
+      _errorMessage = null;
+      _updateHubKeys();
+    });
+
+    return true;
+  }
+
+  int _sortMetadataByFreshness(PlexMetadata a, PlexMetadata b) {
+    final aValue = a.updatedAt ?? a.addedAt ?? 0;
+    final bValue = b.updatedAt ?? b.addedAt ?? 0;
+    return bValue.compareTo(aValue);
+  }
+
   Future<bool> _loadOxFallbackContent() async {
     try {
       final repository = await DataRepository.create();
@@ -602,9 +691,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final sections = await repository.fetchOxDiscoverSections(limitPerKind: 20);
       if (!mounted) return true;
 
-      // Collect general_video items that need Telegram thumbnail resolution.
       final videoItemsForThumbnails = <OxLibraryMediaItem>[];
-
       final hubs = <PlexHub>[];
       for (var index = 0; index < sections.length; index++) {
         final section = sections[index];
@@ -640,6 +727,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       }
 
       setState(() {
+        _usingOfflineDownloadsFallback = false;
         _onDeck = const <PlexMetadata>[];
         _hubs = hubs;
         _isLoading = false;
@@ -648,7 +736,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         _updateHubKeys();
       });
 
-      // Resolve Telegram thumbnails in the background after the initial render.
       if (videoItemsForThumbnails.isNotEmpty) {
         unawaited(_resolveVideoThumbnails(mediaRepository, videoItemsForThumbnails));
       }
@@ -660,15 +747,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  /// Resolves Telegram thumbnails for [general_video] items in the background.
-  ///
-  /// For each item, downloads the thumbnail via [MediaRepository], caches it
-  /// locally, and updates the matching hub card so the image appears without a
-  /// full reload.
-  Future<void> _resolveVideoThumbnails(
-    MediaRepository mediaRepository,
-    List<OxLibraryMediaItem> items,
-  ) async {
+  Future<void> _resolveVideoThumbnails(MediaRepository mediaRepository, List<OxLibraryMediaItem> items) async {
     for (final item in items) {
       if (!mounted) return;
       final localPath = await mediaRepository.fetchVideoThumbnail(item);
@@ -678,7 +757,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       }
       if (!mounted) continue;
 
-      // Update the resolved thumbnail and rebuild the matching hub item.
       setState(() {
         _videoThumbnails[item.globalId] = localPath;
         _hubs = _hubs.map((hub) {
@@ -704,10 +782,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  void _scheduleVideoThumbnailRetry(
-    MediaRepository mediaRepository,
-    OxLibraryMediaItem item,
-  ) {
+  void _scheduleVideoThumbnailRetry(MediaRepository mediaRepository, OxLibraryMediaItem item) {
     if (_videoThumbnails.containsKey(item.globalId)) return;
     if (_videoThumbnailRetryQueued.contains(item.globalId)) return;
 
@@ -753,7 +828,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       _ => 'movie',
     };
 
-    // general_video items have no TMDB poster; use the Telegram-resolved local path if available.
     final String? posterUrl;
     if (kind == 'general_video') {
       posterUrl = _videoThumbnails[item.globalId];
@@ -787,7 +861,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     return 'https://image.tmdb.org/t/p/w500$normalized';
   }
 
-  /// Resolve the library globalKey for a hub (for sorting by library order).
   String? _hubLibraryGlobalKey(PlexHub hub) {
     final serverId = hub.serverId;
     if (serverId == null) return null;
@@ -796,15 +869,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     return buildGlobalKey(serverId, sectionId.toString());
   }
 
-  /// Refresh only the Continue Watching section in the background
-  /// This is called when returning to the home screen to avoid blocking UI
   Future<void> _refreshContinueWatching() async {
     appLogger.d('Refreshing Continue Watching in background from all servers');
 
     try {
       final multiServerProvider = context.read<MultiServerProvider>();
       if (!multiServerProvider.hasConnectedServers) {
-        appLogger.w('No servers available for background refresh');
+        appLogger.w('No connected servers available for continue watching refresh');
         return;
       }
 
@@ -814,88 +885,53 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         hiddenLibraryKeys: hiddenLibrariesProvider.hiddenLibraryKeys,
       );
 
-      if (mounted) {
-        setState(() {
-          _onDeck = onDeck;
-          // Reset hero index if needed
-          if (_currentHeroIndex >= onDeck.length) {
-            _currentHeroIndex = 0;
-            if (_heroController.hasClients && onDeck.isNotEmpty) {
-              _heroController.jumpToPage(0);
-            }
+      if (!mounted) return;
+
+      setState(() {
+        _onDeck = onDeck;
+        if (_currentHeroIndex >= onDeck.length) {
+          _currentHeroIndex = 0;
+          if (_heroController.hasClients && onDeck.isNotEmpty) {
+            _heroController.jumpToPage(0);
           }
-        });
-
-        // Sync to Android TV Watch Next row
-        if (Platform.isAndroid) {
-          _syncWatchNext(onDeck);
         }
+      });
 
-        appLogger.d('Continue Watching refreshed successfully');
+      if (Platform.isAndroid) {
+        _syncWatchNext(onDeck);
       }
+
+      appLogger.d('Continue Watching refreshed successfully');
     } catch (e) {
       appLogger.w('Failed to refresh Continue Watching', error: e);
-      // Silently fail - don't show error to user for background refresh
     }
   }
 
-  /// Sync On Deck items to Android TV Watch Next row
-  Future<void> _syncWatchNext(List<PlexMetadata> onDeck) async {
-    try {
-      await WatchNextService().syncFromOnDeck(onDeck, (serverId) => context.getClientForServer(serverId));
-    } catch (e) {
-      appLogger.w('Failed to sync Watch Next', error: e);
+  void _syncWatchNext(List<PlexMetadata> onDeck) {
+    final watchNext = WatchNextService();
+
+    if (onDeck.isEmpty) {
+      unawaited(watchNext.clear());
+      return;
     }
+
+    unawaited(
+      watchNext.syncFromOnDeck(onDeck, (serverId) => context.getClientForServer(serverId)),
+    );
   }
 
-  // Public method to refresh content (for normal navigation)
-  @override
-  void refresh() {
-    appLogger.d('DiscoverScreen.refresh() called');
-    // Only refresh Continue Watching in background, not full screen reload
-    _refreshContinueWatching();
-  }
-
-  // Public method to fully reload all content (for profile switches)
-  @override
-  void fullRefresh() {
-    appLogger.d('DiscoverScreen.fullRefresh() called - reloading all content');
-    // Reload all content including On Deck and content hubs
-    _loadContent();
-  }
-
-  /// Get icon for hub based on its title
   IconData _getHubIcon(String title) {
     final lowerTitle = title.toLowerCase();
 
-    // Trending/Popular content
-    if (lowerTitle.contains('trending')) {
-      return Symbols.trending_up_rounded;
-    }
-    if (lowerTitle.contains('popular') || lowerTitle.contains('imdb')) {
-      return Symbols.whatshot_rounded;
-    }
-
-    // Seasonal/Time-based
-    if (lowerTitle.contains('seasonal')) {
-      return Symbols.calendar_month_rounded;
-    }
-    if (lowerTitle.contains('newly') || lowerTitle.contains('new release')) {
-      return Symbols.new_releases_rounded;
-    }
-    if (lowerTitle.contains('recently released') || lowerTitle.contains('recent')) {
+    if (lowerTitle.contains('recent') || lowerTitle.contains('latest') || lowerTitle.contains('new')) {
       return Symbols.schedule_rounded;
     }
-
-    // Top/Rated content
-    if (lowerTitle.contains('top rated') || lowerTitle.contains('highest rated')) {
-      return Symbols.star_rounded;
+    if (lowerTitle.contains('trending') || lowerTitle.contains('popular')) {
+      return Symbols.local_fire_department_rounded;
     }
     if (lowerTitle.contains('top ')) {
       return Symbols.military_tech_rounded;
     }
-
-    // Genre-specific
     if (lowerTitle.contains('thriller')) {
       return Symbols.warning_amber_rounded;
     }
@@ -923,8 +959,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     if (lowerTitle.contains('adventure') || lowerTitle.contains('äventyr')) {
       return Symbols.explore_rounded;
     }
-
-    // Watchlist/Playlists
     if (lowerTitle.contains('playlist') || lowerTitle.contains('watchlist')) {
       return Symbols.playlist_play_rounded;
     }
@@ -934,29 +968,30 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     if (lowerTitle.contains('watched') || lowerTitle.contains('played')) {
       return Symbols.visibility_rounded;
     }
-
-    // Network/Studio
     if (lowerTitle.contains('network') || lowerTitle.contains('more from')) {
       return Symbols.tv_rounded;
     }
-
-    // Actor/Director
     if (lowerTitle.contains('actor') || lowerTitle.contains('director')) {
       return Symbols.person_rounded;
     }
-
-    // Year-based (80s, 90s, etc.)
     if (lowerTitle.contains('80') || lowerTitle.contains('90') || lowerTitle.contains('00')) {
       return Symbols.history_rounded;
     }
-
-    // Rediscover/Start Watching
     if (lowerTitle.contains('rediscover') || lowerTitle.contains('start watching')) {
       return Symbols.play_arrow_rounded;
     }
 
-    // Default icon for other hubs
     return Symbols.auto_awesome_rounded;
+  }
+
+  @override
+  void refresh() {
+    _loadContent();
+  }
+
+  @override
+  void fullRefresh() {
+    _loadContent();
   }
 
   /// Get the set of hub titles that appear more than once (duplicates)
@@ -1305,6 +1340,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                         items: _onDeck,
                       ),
                       icon: Symbols.play_circle_rounded,
+                      isOffline: _usingOfflineDownloadsFallback,
                       onRefresh: updateItem,
                       onRemoveFromContinueWatching: _refreshContinueWatching,
                       isInContinueWatching: true,
@@ -1321,6 +1357,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       key: i < _hubKeys.length ? _hubKeys[i] : null,
                       hub: _hubs[i],
                       icon: _getHubIcon(_hubs[i].title),
+                      isOffline: _usingOfflineDownloadsFallback,
                       showServerName: showServerNameOnHubs || duplicateHubTitles.contains(_hubs[i].title),
                       onRefresh: updateItem,
                       // Hub index is i + 1 if continue watching exists, otherwise i

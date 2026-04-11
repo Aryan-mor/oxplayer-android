@@ -664,7 +664,10 @@ class DownloadProvider extends ChangeNotifier {
       final queued = await _downloadManager.queueResolvedLocalDownload(
         metadata: downloadMetadata,
         variantSuffix: buildOxDownloadVariantSuffix(file),
-        sourcePathResolver: () => mediaRepository.resolveFilePathForOfflineDownload(file),
+        sourcePathResolver: (onProgress) => mediaRepository.resolveFilePathForOfflineDownloadWithProgress(
+          file,
+          onProgress: onProgress,
+        ),
       );
       if (!queued) {
         return 0;

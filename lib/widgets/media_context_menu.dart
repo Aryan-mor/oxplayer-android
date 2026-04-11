@@ -58,6 +58,8 @@ class MediaContextMenu extends StatefulWidget {
   final Widget child;
   final bool isInContinueWatching;
   final String? collectionId; // The collection ID if displaying within a collection
+  final bool showExternalPlaybackAction;
+  final bool showDownloadAction;
 
   const MediaContextMenu({
     super.key,
@@ -69,6 +71,8 @@ class MediaContextMenu extends StatefulWidget {
     required this.child,
     this.isInContinueWatching = false,
     this.collectionId,
+    this.showExternalPlaybackAction = true,
+    this.showDownloadAction = true,
   });
 
   @override
@@ -278,7 +282,7 @@ class MediaContextMenuState extends State<MediaContextMenu> {
       }
 
       // Play in External Player (for episodes and movies)
-      if (mediaType == PlexMediaType.episode || mediaType == PlexMediaType.movie) {
+      if (widget.showExternalPlaybackAction && (mediaType == PlexMediaType.episode || mediaType == PlexMediaType.movie)) {
         menuActions.add(
           _MenuAction(
             value: 'play_external',
@@ -289,10 +293,11 @@ class MediaContextMenuState extends State<MediaContextMenu> {
       }
 
       // Download options (for episodes, movies, shows, and seasons)
-      if (mediaType == PlexMediaType.episode ||
-          mediaType == PlexMediaType.movie ||
-          mediaType == PlexMediaType.show ||
-          mediaType == PlexMediaType.season) {
+        if (widget.showDownloadAction &&
+          (mediaType == PlexMediaType.episode ||
+            mediaType == PlexMediaType.movie ||
+            mediaType == PlexMediaType.show ||
+            mediaType == PlexMediaType.season)) {
         final downloadProvider = Provider.of<DownloadProvider>(context, listen: false);
         final globalKey = metadata.globalKey;
         final isDownloaded = downloadProvider.isDownloaded(globalKey);

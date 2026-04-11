@@ -21,7 +21,7 @@ class AppRouter extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (auth.apiAccessToken != null && auth.apiAccessToken!.isNotEmpty) {
+        if (auth.hasPersistedSession) {
           return const OrientationAwareSetup();
         }
         return const AuthScreen();

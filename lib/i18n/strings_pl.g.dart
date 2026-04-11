@@ -677,7 +677,7 @@ class _TranslationsErrorsPl implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Wyszukiwanie nie powiodło się: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Limit czasu połączenia przy ładowaniu ${context}';
-	@override String get connectionFailed => 'Nie można połączyć z serwerem Plex';
+	@override String get connectionFailed => 'Nie można połączyć z serwerem';
 	@override String failedToLoad({required Object context, required Object error}) => 'Nie udało się załadować ${context}: ${error}';
 	@override String get noClientAvailable => 'Brak dostępnego klienta';
 	@override String authenticationFailed({required Object error}) => 'Uwierzytelnienie nie powiodło się: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsPl {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} min pozostało',
 			'errors.searchFailed' => ({required Object error}) => 'Wyszukiwanie nie powiodło się: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Limit czasu połączenia przy ładowaniu ${context}',
-			'errors.connectionFailed' => 'Nie można połączyć z serwerem Plex',
+			'errors.connectionFailed' => 'Nie można połączyć z serwerem',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Nie udało się załadować ${context}: ${error}',
 			'errors.noClientAvailable' => 'Brak dostępnego klienta',
 			'errors.authenticationFailed' => ({required Object error}) => 'Uwierzytelnienie nie powiodło się: ${error}',

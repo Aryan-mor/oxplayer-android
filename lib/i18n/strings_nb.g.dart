@@ -677,7 +677,7 @@ class _TranslationsErrorsNb implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Søk mislyktes: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Tidsavbrudd ved lasting av ${context}';
-	@override String get connectionFailed => 'Kunne ikke koble til Plex-server';
+	@override String get connectionFailed => 'Kunne ikke koble til serveren';
 	@override String failedToLoad({required Object context, required Object error}) => 'Kunne ikke laste ${context}: ${error}';
 	@override String get noClientAvailable => 'Ingen klient tilgjengelig';
 	@override String authenticationFailed({required Object error}) => 'Autentisering mislyktes: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsNb {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} min igjen',
 			'errors.searchFailed' => ({required Object error}) => 'Søk mislyktes: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Tidsavbrudd ved lasting av ${context}',
-			'errors.connectionFailed' => 'Kunne ikke koble til Plex-server',
+			'errors.connectionFailed' => 'Kunne ikke koble til serveren',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Kunne ikke laste ${context}: ${error}',
 			'errors.noClientAvailable' => 'Ingen klient tilgjengelig',
 			'errors.authenticationFailed' => ({required Object error}) => 'Autentisering mislyktes: ${error}',

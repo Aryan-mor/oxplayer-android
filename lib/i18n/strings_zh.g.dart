@@ -677,7 +677,7 @@ class _TranslationsErrorsZh implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => '搜索失败: ${error}';
 	@override String connectionTimeout({required Object context}) => '加载 ${context} 时连接超时';
-	@override String get connectionFailed => '无法连接到 Plex 服务器';
+	@override String get connectionFailed => '无法连接到服务器';
 	@override String failedToLoad({required Object context, required Object error}) => '无法加载 ${context}: ${error}';
 	@override String get noClientAvailable => '没有可用客户端';
 	@override String authenticationFailed({required Object error}) => '验证失败: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsZh {
 			'discover.minutesLeft' => ({required Object minutes}) => '剩余 ${minutes} 分钟',
 			'errors.searchFailed' => ({required Object error}) => '搜索失败: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => '加载 ${context} 时连接超时',
-			'errors.connectionFailed' => '无法连接到 Plex 服务器',
+			'errors.connectionFailed' => '无法连接到服务器',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => '无法加载 ${context}: ${error}',
 			'errors.noClientAvailable' => '没有可用客户端',
 			'errors.authenticationFailed' => ({required Object error}) => '验证失败: ${error}',

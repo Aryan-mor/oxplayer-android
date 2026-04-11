@@ -677,7 +677,7 @@ class _TranslationsErrorsDa implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Søgning mislykkedes: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Forbindelsestimeout ved indlæsning af ${context}';
-	@override String get connectionFailed => 'Kunne ikke forbinde til Plex-server';
+	@override String get connectionFailed => 'Kunne ikke forbinde til serveren';
 	@override String failedToLoad({required Object context, required Object error}) => 'Kunne ikke indlæse ${context}: ${error}';
 	@override String get noClientAvailable => 'Ingen klient tilgængelig';
 	@override String authenticationFailed({required Object error}) => 'Godkendelse mislykkedes: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsDa {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} min tilbage',
 			'errors.searchFailed' => ({required Object error}) => 'Søgning mislykkedes: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Forbindelsestimeout ved indlæsning af ${context}',
-			'errors.connectionFailed' => 'Kunne ikke forbinde til Plex-server',
+			'errors.connectionFailed' => 'Kunne ikke forbinde til serveren',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Kunne ikke indlæse ${context}: ${error}',
 			'errors.noClientAvailable' => 'Ingen klient tilgængelig',
 			'errors.authenticationFailed' => ({required Object error}) => 'Godkendelse mislykkedes: ${error}',

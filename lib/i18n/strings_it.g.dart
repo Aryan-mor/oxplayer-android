@@ -677,7 +677,7 @@ class _TranslationsErrorsIt implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Ricerca fallita: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Timeout connessione durante caricamento di ${context}';
-	@override String get connectionFailed => 'Impossibile connettersi al server Plex.';
+	@override String get connectionFailed => 'Impossibile connettersi al server.';
 	@override String failedToLoad({required Object context, required Object error}) => 'Impossibile caricare ${context}: ${error}';
 	@override String get noClientAvailable => 'Nessun client disponibile';
 	@override String authenticationFailed({required Object error}) => 'Autenticazione fallita: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsIt {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} minuti rimanenti',
 			'errors.searchFailed' => ({required Object error}) => 'Ricerca fallita: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Timeout connessione durante caricamento di ${context}',
-			'errors.connectionFailed' => 'Impossibile connettersi al server Plex.',
+			'errors.connectionFailed' => 'Impossibile connettersi al server.',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Impossibile caricare ${context}: ${error}',
 			'errors.noClientAvailable' => 'Nessun client disponibile',
 			'errors.authenticationFailed' => ({required Object error}) => 'Autenticazione fallita: ${error}',

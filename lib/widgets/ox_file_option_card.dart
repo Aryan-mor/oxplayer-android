@@ -158,7 +158,9 @@ class OxFileOptionCard extends StatelessWidget {
                                         size: 18,
                                         color: tokens(context).textMuted,
                                       );
-                                      onPressed = null;
+                                      onPressed = () async {
+                                        await downloadProvider.pauseDownload(downloadGlobalKey!);
+                                      };
                                     case DownloadStatus.downloading:
                                       icon = SizedBox(
                                         width: 18,
@@ -169,7 +171,9 @@ class OxFileOptionCard extends StatelessWidget {
                                           color: Theme.of(context).colorScheme.primary,
                                         ),
                                       );
-                                      onPressed = null;
+                                      onPressed = () async {
+                                        await downloadProvider.pauseDownload(downloadGlobalKey!);
+                                      };
                                     case DownloadStatus.completed:
                                       icon = const AppIcon(
                                         Symbols.file_download_done_rounded,
@@ -198,7 +202,10 @@ class OxFileOptionCard extends StatelessWidget {
                                 return IconButton(
                                   onPressed: onPressed,
                                   icon: icon,
-                                  tooltip: 'Download',
+                                  tooltip: (progress?.status == DownloadStatus.queued ||
+                                          progress?.status == DownloadStatus.downloading)
+                                      ? 'Pause download'
+                                      : 'Download',
                                   visualDensity: VisualDensity.compact,
                                 );
                               },

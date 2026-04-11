@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "搜索失败: ${error}",
     "connectionTimeout": "加载 ${context} 时连接超时",
-    "connectionFailed": "无法连接到 Plex 服务器",
+    "connectionFailed": "无法连接到服务器",
     "failedToLoad": "无法加载 ${context}: ${error}",
     "noClientAvailable": "没有可用客户端",
     "authenticationFailed": "验证失败: ${error}",

@@ -677,7 +677,7 @@ class _TranslationsErrorsRu implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Ошибка поиска: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Таймаут подключения при загрузке ${context}';
-	@override String get connectionFailed => 'Не удаётся подключиться к серверу Plex';
+	@override String get connectionFailed => 'Не удаётся подключиться к серверу';
 	@override String failedToLoad({required Object context, required Object error}) => 'Не удалось загрузить ${context}: ${error}';
 	@override String get noClientAvailable => 'Клиент недоступен';
 	@override String authenticationFailed({required Object error}) => 'Ошибка аутентификации: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsRu {
 			'discover.minutesLeft' => ({required Object minutes}) => 'Осталось ${minutes} мин',
 			'errors.searchFailed' => ({required Object error}) => 'Ошибка поиска: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Таймаут подключения при загрузке ${context}',
-			'errors.connectionFailed' => 'Не удаётся подключиться к серверу Plex',
+			'errors.connectionFailed' => 'Не удаётся подключиться к серверу',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Не удалось загрузить ${context}: ${error}',
 			'errors.noClientAvailable' => 'Клиент недоступен',
 			'errors.authenticationFailed' => ({required Object error}) => 'Ошибка аутентификации: ${error}',

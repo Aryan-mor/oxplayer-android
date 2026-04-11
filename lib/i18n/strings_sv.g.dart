@@ -677,7 +677,7 @@ class _TranslationsErrorsSv implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Sökning misslyckades: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Anslutnings-timeout vid laddning ${context}';
-	@override String get connectionFailed => 'Kan inte ansluta till Plex-server';
+	@override String get connectionFailed => 'Kan inte ansluta till servern';
 	@override String failedToLoad({required Object context, required Object error}) => 'Misslyckades att ladda ${context}: ${error}';
 	@override String get noClientAvailable => 'Ingen klient tillgänglig';
 	@override String authenticationFailed({required Object error}) => 'Autentisering misslyckades: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsSv {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} min kvar',
 			'errors.searchFailed' => ({required Object error}) => 'Sökning misslyckades: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Anslutnings-timeout vid laddning ${context}',
-			'errors.connectionFailed' => 'Kan inte ansluta till Plex-server',
+			'errors.connectionFailed' => 'Kan inte ansluta till servern',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Misslyckades att ladda ${context}: ${error}',
 			'errors.noClientAvailable' => 'Ingen klient tillgänglig',
 			'errors.authenticationFailed' => ({required Object error}) => 'Autentisering misslyckades: ${error}',

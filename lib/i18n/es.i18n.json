@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "Error en la búsqueda: ${error}",
     "connectionTimeout": "Tiempo de conexión agotado al cargar ${context}",
-    "connectionFailed": "No se pudo conectar con el servidor Plex",
+    "connectionFailed": "No se pudo conectar con el servidor",
     "failedToLoad": "Error al cargar ${context}: ${error}",
     "noClientAvailable": "No hay cliente disponible",
     "authenticationFailed": "Error de autenticación: ${error}",

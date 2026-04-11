@@ -36,6 +36,7 @@ class AuthNotifier extends ChangeNotifier {
   bool get hasTelegramSession => _hasTelegramSession;
   bool get telegramSessionValidatedInProcess => _telegramSessionValidatedInProcess;
   bool get isLoggedIn => (_apiAccessToken?.isNotEmpty ?? false);
+  bool get hasPersistedSession => _hasTelegramSession || (_apiAccessToken?.isNotEmpty ?? false);
   String? get apiAccessToken => _apiAccessToken;
   String? get preferredSubtitleLanguage => _preferredSubtitleLanguage;
 

@@ -677,7 +677,7 @@ class _TranslationsErrorsNl implements TranslationsErrorsEn {
 	// Translations
 	@override String searchFailed({required Object error}) => 'Zoeken mislukt: ${error}';
 	@override String connectionTimeout({required Object context}) => 'Verbinding time-out tijdens laden ${context}';
-	@override String get connectionFailed => 'Kan geen verbinding maken met Plex server';
+	@override String get connectionFailed => 'Kan geen verbinding maken met server';
 	@override String failedToLoad({required Object context, required Object error}) => 'Kon ${context} niet laden: ${error}';
 	@override String get noClientAvailable => 'Geen client beschikbaar';
 	@override String authenticationFailed({required Object error}) => 'Authenticatie mislukt: ${error}';
@@ -1793,7 +1793,7 @@ extension on TranslationsNl {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} min over',
 			'errors.searchFailed' => ({required Object error}) => 'Zoeken mislukt: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Verbinding time-out tijdens laden ${context}',
-			'errors.connectionFailed' => 'Kan geen verbinding maken met Plex server',
+			'errors.connectionFailed' => 'Kan geen verbinding maken met server',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Kon ${context} niet laden: ${error}',
 			'errors.noClientAvailable' => 'Geen client beschikbaar',
 			'errors.authenticationFailed' => ({required Object error}) => 'Authenticatie mislukt: ${error}',

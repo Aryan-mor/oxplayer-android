@@ -549,6 +549,11 @@ class _SetupScreenState extends State<SetupScreen> {
   // Per-server connection status: serverId -> (name, connected?)
   final Map<String, (String name, bool? connected)> _serverStatus = {};
 
+  Future<bool> _isApiReachable({required bool hasNetwork}) async {
+    if (!hasNetwork) return false;
+    return DataRepository.probeApiHealth();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -565,6 +570,7 @@ class _SetupScreenState extends State<SetupScreen> {
     final storage = await StorageService.getInstance();
     final registry = ServerRegistry(storage);
     final authNotifier = context.read<AuthNotifier>();
+    final hasPersistedSession = authNotifier.hasPersistedSession;
 
     // Check network connectivity early to fast-path airplane mode.
     // Timeout guards against connectivity_plus hanging on some Android TV devices after force-close.
@@ -604,17 +610,25 @@ class _SetupScreenState extends State<SetupScreen> {
             : 'Connected to server.',
         );
       } on OxBootstrapUnauthorized {
-        await authNotifier.clearSession();
-        if (mounted) {
-          Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+        final apiReachable = await _isApiReachable(hasNetwork: hasNetwork);
+        if (apiReachable) {
+          await authNotifier.clearSession();
+          if (mounted) {
+            Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+          }
+          return;
         }
-        return;
+        pendingOxApiRecovery = true;
       } on TdlibInteractiveLoginRequired {
-        await authNotifier.clearSession();
-        if (mounted) {
-          Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+        final apiReachable = await _isApiReachable(hasNetwork: hasNetwork);
+        if (apiReachable) {
+          await authNotifier.clearSession();
+          if (mounted) {
+            Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+          }
+          return;
         }
-        return;
+        pendingOxApiRecovery = true;
       } catch (e, stackTrace) {
         pendingOxApiRecovery = true;
         appLogger.w('Failed to validate OX bootstrap session, continuing with offline fallback', error: e, stackTrace: stackTrace);
@@ -635,13 +649,18 @@ class _SetupScreenState extends State<SetupScreen> {
           appLogger.w('Plex token rejected while OX bootstrap is valid; continuing without Plex server connections.');
           await registry.clearAllServers();
         } else {
-          await storage.clearCredentials();
-          if (mounted) {
-            await context.read<AuthNotifier>().clearSession();
-            if (!mounted) return;
-            Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+          final apiReachable = await _isApiReachable(hasNetwork: hasNetwork);
+          if (!apiReachable && hasPersistedSession) {
+            pendingOxApiRecovery = true;
+          } else {
+            await storage.clearCredentials();
+            if (mounted) {
+              await context.read<AuthNotifier>().clearSession();
+              if (!mounted) return;
+              Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+            }
+            return;
           }
-          return;
         }
       }
     }
@@ -650,6 +669,31 @@ class _SetupScreenState extends State<SetupScreen> {
 
     // Load all configured servers
     final servers = await registry.getServers();
+
+    if (!mounted) return;
+
+    // No network — skip connection attempts and go straight to offline mode.
+    // Important: this must happen before the empty-server redirect so persisted
+    // local sessions don't bounce between setup and auth while offline.
+    if (!hasNetwork) {
+      if (servers.isNotEmpty || hasPersistedSession) {
+        _setStatus(t.common.startingOfflineMode);
+        await context.read<DownloadProvider>().ensureInitialized();
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          fadeRoute(
+            const MainScreen(
+              isOfflineMode: true,
+                enableOxDiscoverFallback: true,
+            ),
+          ),
+        );
+      } else {
+        Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
+      }
+      return;
+    }
 
     if (servers.isEmpty) {
       if (mounted) {
@@ -676,6 +720,19 @@ class _SetupScreenState extends State<SetupScreen> {
               const MainScreen(
                 isOfflineMode: true,
                 pendingOxApiRecovery: true,
+                enableOxDiscoverFallback: true,
+              ),
+            ),
+          );
+        } else if (hasPersistedSession) {
+          await context.read<DownloadProvider>().ensureInitialized();
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            fadeRoute(
+              const MainScreen(
+                isOfflineMode: true,
+                enableOxDiscoverFallback: true,
               ),
             ),
           );
@@ -683,17 +740,6 @@ class _SetupScreenState extends State<SetupScreen> {
           Navigator.pushReplacement(context, fadeRoute(const AppRouter()));
         }
       }
-      return;
-    }
-
-    if (!mounted) return;
-
-    // No network — skip connection attempts and go straight to offline mode
-    if (!hasNetwork) {
-      _setStatus(t.common.startingOfflineMode);
-      await context.read<DownloadProvider>().ensureInitialized();
-      if (!mounted) return;
-      Navigator.pushReplacement(context, fadeRoute(const MainScreen(isOfflineMode: true)));
       return;
     }
 
@@ -755,6 +801,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 : MainScreen(
                     isOfflineMode: true,
                     pendingOxApiRecovery: pendingOxApiRecovery,
+                    enableOxDiscoverFallback: true,
                   ),
           ),
         );
@@ -779,6 +826,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 : MainScreen(
                     isOfflineMode: true,
                     pendingOxApiRecovery: pendingOxApiRecovery,
+                    enableOxDiscoverFallback: true,
                   ),
           ),
         );

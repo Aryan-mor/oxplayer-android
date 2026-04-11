@@ -131,6 +131,57 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
   /// Whether a reconnection attempt is in progress
   bool _isReconnecting = false;
 
+  String get _effectiveOfflineStatusLabel {
+    if (widget.showReconnectAction) {
+      return t.common.reconnect;
+    }
+
+    final provider = _offlineModeProvider;
+    if (_isOffline) {
+      if (provider != null) {
+        if (!provider.hasNetworkConnection) {
+          return t.common.startingOfflineMode;
+        }
+        if (!widget.pendingOxApiRecovery &&
+            widget.offlineStatusLabel != null &&
+            provider.hasNetworkConnection &&
+            !provider.hasServerConnection) {
+          return widget.offlineStatusLabel!;
+        }
+        if (!provider.hasServerConnection) {
+          return t.errors.connectionFailed;
+        }
+      }
+      if (!widget.pendingOxApiRecovery && widget.offlineStatusLabel != null) {
+        return widget.offlineStatusLabel!;
+      }
+      return t.common.startingOfflineMode;
+    }
+
+    return widget.offlineStatusLabel ?? 'Connected to server';
+  }
+
+  IconData get _effectiveOfflineStatusIcon {
+    if (widget.showReconnectAction) {
+      return _isReconnecting ? Symbols.sync_rounded : Symbols.wifi_rounded;
+    }
+
+    final provider = _offlineModeProvider;
+    if (_isOffline) {
+      if (provider != null && !provider.hasNetworkConnection) {
+        return Symbols.wifi_off_rounded;
+      }
+      if (!widget.pendingOxApiRecovery &&
+          widget.offlineStatusLabel != null &&
+          (provider == null || !provider.hasServerConnection)) {
+        return Symbols.cloud_done_rounded;
+      }
+      return Symbols.cloud_off_rounded;
+    }
+
+    return Symbols.cloud_done_rounded;
+  }
+
   Timer? _oxApiRecoveryTimer;
 
   /// Prevents double-pushing the profile selection screen
@@ -606,7 +657,11 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
     return [
       for (final tab in _getVisibleTabs(offline))
         switch (tab.id) {
-          NavigationTabId.discover => DiscoverScreen(key: _discoverKey, onBecameVisible: _onDiscoverBecameVisible),
+          NavigationTabId.discover => DiscoverScreen(
+              key: _discoverKey,
+              onBecameVisible: _onDiscoverBecameVisible,
+              enableOxDiscoverFallback: widget.enableOxDiscoverFallback,
+            ),
           NavigationTabId.libraries => LibrariesScreen(key: _librariesKey, onLibraryOrderChanged: _onLibraryOrderChanged),
           NavigationTabId.liveTv => LiveTvScreen(key: _liveTvKey),
           NavigationTabId.search => SearchScreen(key: _searchKey),
@@ -1075,7 +1130,8 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
                               isSidebarFocused: _isSidebarFocused,
                               alwaysExpanded: alwaysExpanded,
                               isReconnecting: _isReconnecting,
-                              offlineStatusLabel: widget.offlineStatusLabel,
+                              offlineStatusLabel: _effectiveOfflineStatusLabel,
+                              offlineStatusIcon: _effectiveOfflineStatusIcon,
                               onDestinationSelected: (tab) {
                                 _selectTab(tab);
                                 _focusContent();
@@ -1129,10 +1185,10 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
                         else if (widget.showReconnectAction)
                           Icon(Symbols.wifi_rounded, size: 18, color: Theme.of(context).colorScheme.primary)
                         else
-                          Icon(Symbols.cloud_done_rounded, size: 18, color: Theme.of(context).colorScheme.primary),
+                          Icon(_effectiveOfflineStatusIcon, size: 18, color: Theme.of(context).colorScheme.primary),
                         const SizedBox(width: 8),
                         Text(
-                          widget.showReconnectAction ? t.common.reconnect : (widget.offlineStatusLabel ?? 'Connected to server'),
+                          _effectiveOfflineStatusLabel,
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,

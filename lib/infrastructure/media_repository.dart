@@ -218,6 +218,15 @@ class MediaRepository {
         if (qualities.isNotEmpty) {
           summaryParts.add(qualities.join(' / '));
         }
+        if (fileOptions.length == 1) {
+          final onlyOption = fileOptions.first;
+          if ((onlyOption.infoLine ?? '').trim().isNotEmpty) {
+            summaryParts.add(onlyOption.infoLine!.trim());
+          }
+          if ((onlyOption.summary ?? '').trim().isNotEmpty) {
+            summaryParts.add(onlyOption.summary!.trim());
+          }
+        }
 
         final episodeTitle = episodeNumber > 0 ? 'Episode $episodeNumber' : 'Episode';
         episodeItems.add(
@@ -307,6 +316,13 @@ class MediaRepository {
   }
 
   Future<String?> resolveFilePathForOfflineDownload(OxLibraryMediaDetailFile file) {
+    return resolveFilePathForOfflineDownloadWithProgress(file);
+  }
+
+  Future<String?> resolveFilePathForOfflineDownloadWithProgress(
+    OxLibraryMediaDetailFile file, {
+    void Function(int downloadedBytes, int totalBytes)? onProgress,
+  }) {
     return dataRepository.resolveOxMediaFilePathForPlayback(
       mediaId: file.id,
       fileUniqueId: file.fileUniqueId,
@@ -315,6 +331,7 @@ class MediaRepository {
       locatorMessageId: file.locatorMessageId,
       locatorRemoteFileId: file.locatorRemoteFileId,
       allowQuickStart: false,
+      onProgress: onProgress,
     );
   }
 

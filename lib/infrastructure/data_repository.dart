@@ -369,6 +369,29 @@ class DataRepository {
     }
   }
 
+  static Future<bool> probeApiHealth({Duration timeout = const Duration(seconds: 3)}) async {
+    try {
+      final config = await AppConfig.load();
+      if (config.apiBaseUrl.trim().isEmpty) {
+        return false;
+      }
+
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: config.apiBaseUrl,
+          connectTimeout: timeout,
+          receiveTimeout: timeout,
+          sendTimeout: timeout,
+        ),
+      );
+      final response = await dio.get<Map<String, dynamic>>('/health');
+      final data = response.data;
+      return response.statusCode == 200 && data?['status'] == 'ok';
+    } catch (_) {
+      return false;
+    }
+  }
+
   AppConfig get config => _config;
 
   Stream<String?> get qrLoginPayload => _tdlib.qrLoginPayload;
@@ -731,6 +754,7 @@ class DataRepository {
     required int? locatorMessageId,
     required String? locatorRemoteFileId,
     bool allowQuickStart = true,
+    void Function(int downloadedBytes, int totalBytes)? onProgress,
   }) async {
     playMediaDebugInfo(
       'Resolving OX playback path for mediaId=$mediaId locatorType=$locatorType locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId',
@@ -777,7 +801,7 @@ class DataRepository {
         'Quick-start playback disabled for mediaId=$mediaId. Waiting for full Telegram download for fileId=${resolved.file.id}',
       );
     }
-    final downloadedPath = await _downloadTelegramFileFully(resolved.file.id);
+    final downloadedPath = await _downloadTelegramFileFully(resolved.file.id, onProgress: onProgress);
     if (downloadedPath == null || downloadedPath.isEmpty) {
       playMediaDebugError(
         'Full Telegram download failed for mediaId=$mediaId fileId=${resolved.file.id}',
@@ -1531,20 +1555,46 @@ class DataRepository {
     return null;
   }
 
-  Future<String?> _downloadTelegramFileFully(int fileId) async {
-    final fileResult = await _tdlib.send(
-      td.DownloadFile(
-        fileId: fileId,
-        priority: 5,
-        offset: 0,
-        limit: 0,
-        synchronous: true,
-      ),
-    );
-    if (fileResult is! td.File) return null;
-    final srcPath = fileResult.local.path.trim();
-    if (srcPath.isEmpty) return null;
-    return srcPath;
+  Future<String?> _downloadTelegramFileFully(
+    int fileId, {
+    void Function(int downloadedBytes, int totalBytes)? onProgress,
+  }) async {
+    try {
+      await _tdlib.send(
+        td.DownloadFile(
+          fileId: fileId,
+          priority: 5,
+          offset: 0,
+          limit: 0,
+          synchronous: false,
+        ),
+      );
+    } catch (_) {}
+
+    const pollInterval = Duration(milliseconds: 320);
+    int lastDownloaded = -1;
+    int lastTotal = -1;
+
+    while (true) {
+      final fileResult = await _tdlib.send(td.GetFile(fileId: fileId));
+      if (fileResult is! td.File) return null;
+
+      final totalBytes = fileResult.size > 0 ? fileResult.size : fileResult.local.downloadedSize;
+      final downloadedBytes = fileResult.local.downloadedSize;
+
+      if (onProgress != null && (downloadedBytes != lastDownloaded || totalBytes != lastTotal)) {
+        lastDownloaded = downloadedBytes;
+        lastTotal = totalBytes;
+        onProgress(downloadedBytes, totalBytes);
+      }
+
+      final srcPath = fileResult.local.path.trim();
+      if (srcPath.isNotEmpty && fileResult.local.isDownloadingCompleted) {
+        return srcPath;
+      }
+
+      await Future<void>.delayed(pollInterval);
+    }
   }
 
   Future<String?> _waitForReadableVideoPrefix(int fileId) async {

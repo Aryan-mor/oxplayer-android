@@ -34,6 +34,7 @@ import '../i18n/strings.g.dart';
 class HubSection extends StatefulWidget {
   final PlexHub hub;
   final IconData icon;
+  final bool isOffline;
   final void Function(String)? onRefresh;
   final VoidCallback? onRemoveFromContinueWatching;
   final bool isInContinueWatching;
@@ -58,6 +59,7 @@ class HubSection extends StatefulWidget {
     super.key,
     required this.hub,
     required this.icon,
+    this.isOffline = false,
     this.onRefresh,
     this.onRemoveFromContinueWatching,
     this.isInContinueWatching = false,
@@ -308,7 +310,13 @@ class HubSectionState extends State<HubSection> {
   }
 
   Future<void> _navigateToItem(dynamic item) async {
-    await navigateToMediaItem(context, item, onRefresh: widget.onRefresh, playDirectly: widget.isInContinueWatching);
+    await navigateToMediaItem(
+      context,
+      item,
+      onRefresh: widget.onRefresh,
+      isOffline: widget.isOffline,
+      playDirectly: widget.isInContinueWatching,
+    );
   }
 
   void _navigateToHubDetail(BuildContext context) {
@@ -482,6 +490,7 @@ class HubSectionState extends State<HubSection> {
                               onRefresh: widget.onRefresh,
                               onRemoveFromContinueWatching: widget.onRemoveFromContinueWatching,
                               forceGridMode: true,
+                              isOffline: widget.isOffline,
                               isInContinueWatching: widget.isInContinueWatching,
                               mixedHubContext: isMixedHub,
                             ),

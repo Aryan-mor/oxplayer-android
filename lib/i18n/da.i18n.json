@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "Søgning mislykkedes: ${error}",
     "connectionTimeout": "Forbindelsestimeout ved indlæsning af ${context}",
-    "connectionFailed": "Kunne ikke forbinde til Plex-server",
+    "connectionFailed": "Kunne ikke forbinde til serveren",
     "failedToLoad": "Kunne ikke indlæse ${context}: ${error}",
     "noClientAvailable": "Ingen klient tilgængelig",
     "authenticationFailed": "Godkendelse mislykkedes: ${error}",

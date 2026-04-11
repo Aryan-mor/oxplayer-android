@@ -488,7 +488,7 @@
   "errors": {
     "searchFailed": "Ошибка поиска: ${error}",
     "connectionTimeout": "Таймаут подключения при загрузке ${context}",
-    "connectionFailed": "Не удаётся подключиться к серверу Plex",
+    "connectionFailed": "Не удаётся подключиться к серверу",
     "failedToLoad": "Не удалось загрузить ${context}: ${error}",
     "noClientAvailable": "Клиент недоступен",
     "authenticationFailed": "Ошибка аутентификации: ${error}",

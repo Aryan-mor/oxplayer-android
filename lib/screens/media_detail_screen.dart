@@ -434,6 +434,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
   /// Build action buttons row (play, shuffle, download, mark watched)
   Widget _buildActionButtons(PlexMetadata metadata) {
+    final showSingleFileVideoActions = _shouldShowSingleFileVideoActions(metadata);
+    final singleOxDownloadOption = _singleOxFileOption(metadata);
+    final downloadTrackingMetadata = singleOxDownloadOption != null
+        ? buildOxDownloadMetadata(parentMetadata: metadata, file: singleOxDownloadOption.file)
+        : metadata;
     final playButtonLabel = _getPlayButtonLabel(metadata);
     final playButtonIcon = _isStartingPrimaryPlayback
         ? const SizedBox(
@@ -549,26 +554,28 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       onKeyEvent: _handlePlayButtonKeyEvent,
       child: Row(
         children: [
-          SizedBox(
-            height: 48,
-            child: FilledButton(
-              focusNode: _playButtonFocusNode,
-              autofocus: isKeyboardMode,
+          if (showSingleFileVideoActions) ...[
+            SizedBox(
+              height: 48,
+              child: FilledButton(
+                focusNode: _playButtonFocusNode,
+                autofocus: isKeyboardMode,
                 onPressed: _isStartingPrimaryPlayback ? null : onPlayPressed,
-              style: actionButtonStyle(padding: const EdgeInsets.symmetric(horizontal: 16)),
-              child: playButtonLabel.isNotEmpty
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        playButtonIcon,
-                        const SizedBox(width: 8),
-                        Text(playButtonLabel, style: const TextStyle(fontSize: 16)),
-                      ],
-                    )
-                  : playButtonIcon,
+                style: actionButtonStyle(padding: const EdgeInsets.symmetric(horizontal: 16)),
+                child: playButtonLabel.isNotEmpty
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          playButtonIcon,
+                          const SizedBox(width: 8),
+                          Text(playButtonLabel, style: const TextStyle(fontSize: 16)),
+                        ],
+                      )
+                    : playButtonIcon,
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
+            const SizedBox(width: 12),
+          ],
           // Trailer button (only if trailer is available)
           if (primaryTrailer != null) ...[
             IconButton.filledTonal(
@@ -596,10 +603,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
             const SizedBox(width: 12),
           ],
           // Download button (hide in offline mode - already downloaded)
-          if (!widget.isOffline)
+          if (!widget.isOffline && showSingleFileVideoActions)
             Consumer<DownloadProvider>(
               builder: (context, downloadProvider, _) {
-                final globalKey = metadata.globalKey;
+                final globalKey = downloadTrackingMetadata.globalKey;
                 final progress = downloadProvider.getProgress(globalKey);
                 final isQueueing = downloadProvider.isQueueing(globalKey);
 
@@ -628,8 +635,13 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                       : 'Queued';
 
                   return IconButton.filledTonal(
-                    onPressed: null,
-                    tooltip: tooltip,
+                    onPressed: () async {
+                      await downloadProvider.pauseDownload(globalKey);
+                      if (context.mounted) {
+                        showAppSnackBar(context, 'Download paused');
+                      }
+                    },
+                    tooltip: 'Pause download',
                     icon: const AppIcon(Symbols.schedule_rounded, fill: 1),
                     iconSize: 20,
                     style: actionButtonStyle(),
@@ -640,13 +652,16 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                 if (progress?.status == DownloadStatus.downloading) {
                   // Show episode count in tooltip for shows/seasons
                   final currentFile = progress?.currentFile;
-                  final tooltip = currentFile != null && currentFile.contains('episodes')
-                      ? 'Downloading $currentFile'
-                      : 'Downloading...';
-
                   return IconButton.filledTonal(
-                    onPressed: null,
-                    tooltip: tooltip,
+                    onPressed: () async {
+                      await downloadProvider.pauseDownload(globalKey);
+                      if (context.mounted) {
+                        showAppSnackBar(context, 'Download paused');
+                      }
+                    },
+                    tooltip: currentFile != null && currentFile.contains('episodes')
+                        ? 'Pause download ($currentFile)'
+                        : 'Pause download',
                     icon: _buildRadialProgress(progress?.progressPercent),
                     iconSize: 20,
                     style: actionButtonStyle(),
@@ -675,6 +690,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                 if (progress?.status == DownloadStatus.failed) {
                   return IconButton.filledTonal(
                     onPressed: () async {
+                      if (singleOxDownloadOption != null) {
+                        await downloadProvider.deleteDownload(globalKey);
+                        await _queueOxFileDownload(metadata, singleOxDownloadOption);
+                        return;
+                      }
+
                       final client = _getClientForMetadata(context);
                       if (client == null) return;
 
@@ -720,6 +741,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                           showSuccessSnackBar(context, t.downloads.downloadDeleted);
                         }
                       } else if (retry && context.mounted) {
+                        if (singleOxDownloadOption != null) {
+                          await downloadProvider.deleteDownload(globalKey);
+                          await _queueOxFileDownload(metadata, singleOxDownloadOption);
+                          return;
+                        }
+
                         final client = _getClientForMetadata(context);
                         if (client == null) return;
 
@@ -809,6 +836,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                 // State 9: Not downloaded (default - can download)
                 return IconButton.filledTonal(
                   onPressed: () async {
+                    if (singleOxDownloadOption != null) {
+                      await _queueOxFileDownload(metadata, singleOxDownloadOption);
+                      return;
+                    }
+
                     final client = _getClientForMetadata(context);
                     if (client == null) return;
 
@@ -893,6 +925,8 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               key: _contextMenuKey,
               item: metadata,
               onRefresh: (_) => _loadFullMetadata(),
+              showExternalPlaybackAction: showSingleFileVideoActions,
+              showDownloadAction: showSingleFileVideoActions,
               child: Builder(
                 builder: (buttonContext) => IconButton.filledTonal(
                   onPressed: () {
@@ -1253,6 +1287,20 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     return _isOxLibraryMetadata(metadata) && metadata.isMovie && (_oxFileOptionsByParentKey[metadata.ratingKey]?.isNotEmpty ?? false);
   }
 
+  bool _shouldShowSingleFileVideoActions(PlexMetadata metadata) {
+    if (!metadata.mediaType.isVideo) {
+      return false;
+    }
+
+    if (_isOxLibraryMetadata(metadata)) {
+      final optionCount = _oxFileOptionsByParentKey[metadata.ratingKey]?.length ?? 0;
+      return optionCount == 1;
+    }
+
+    final versionCount = metadata.mediaVersions?.length;
+    return versionCount == 1;
+  }
+
   bool _isShowingOxFileOptions(PlexMetadata metadata) {
     if (!_isOxLibraryMetadata(metadata)) {
       return false;
@@ -1272,6 +1320,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       return const <OxFileOptionItem>[];
     }
     return _oxFileOptionsByParentKey[key] ?? const <OxFileOptionItem>[];
+  }
+
+  OxFileOptionItem? _singleOxFileOption(PlexMetadata metadata) {
+    final options = _oxFileOptionsByParentKey[metadata.ratingKey] ?? const <OxFileOptionItem>[];
+    return options.length == 1 ? options.first : null;
   }
 
   List<PlexMetadata> _currentOxEpisodeTabs() {
@@ -1300,6 +1353,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     final options = _oxFileOptionsByParentKey[episode.ratingKey] ?? const <OxFileOptionItem>[];
     if (options.isEmpty) {
       showErrorSnackBar(context, t.messages.fileInfoNotAvailable);
+      return;
+    }
+    if (options.length == 1) {
+      unawaited(_playOxFileOption(episode, options.first));
       return;
     }
 
@@ -2385,6 +2442,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       itemBuilder: (context, index) {
         final episode = _episodes[index];
         final isOxEpisode = _isOxLibraryMetadata(episode);
+        final singleOxOption = isOxEpisode ? _singleOxFileOption(episode) : null;
         String? localPosterPath;
         if (widget.isOffline && episode.serverId != null) {
           final artworkRef = context.read<DownloadProvider>().getArtworkPaths(episode.globalKey);
@@ -2415,8 +2473,16 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                 }
               : null,
           localPosterPath: localPosterPath,
+          downloadGlobalKey: singleOxOption != null
+              ? buildOxDownloadMetadata(parentMetadata: episode, file: singleOxOption.file).globalKey
+              : null,
+          onDownloadTap: singleOxOption != null ? () => _queueOxFileDownload(episode, singleOxOption) : null,
           onTap: () async {
             if (isOxEpisode) {
+              if (singleOxOption != null) {
+                await _playOxFileOption(episode, singleOxOption);
+                return;
+              }
               _enterOxFileOptions(episode);
               return;
             }

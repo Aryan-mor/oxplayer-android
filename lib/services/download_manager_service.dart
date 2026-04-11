@@ -379,7 +379,7 @@ class DownloadManagerService {
 
   Future<bool> queueResolvedLocalDownload({
     required PlexMetadata metadata,
-    required Future<String?> Function() sourcePathResolver,
+    required Future<String?> Function(void Function(int downloadedBytes, int totalBytes)? onProgress) sourcePathResolver,
     String? variantSuffix,
   }) async {
     final globalKey = metadata.globalKey;
@@ -602,14 +602,29 @@ class DownloadManagerService {
 
   Future<void> _processResolvedLocalDownload({
     required PlexMetadata metadata,
-    required Future<String?> Function() sourcePathResolver,
+    required Future<String?> Function(void Function(int downloadedBytes, int totalBytes)? onProgress) sourcePathResolver,
     String? variantSuffix,
   }) async {
     final globalKey = metadata.globalKey;
     try {
       await _transitionStatus(globalKey, DownloadStatus.downloading);
 
-      final sourcePath = await sourcePathResolver();
+      final sourcePath = await sourcePathResolver((downloadedBytes, totalBytes) {
+        final safeTotalBytes = totalBytes <= 0 ? downloadedBytes : totalBytes;
+        final progress = safeTotalBytes <= 0 ? 0 : ((downloadedBytes / safeTotalBytes) * 100).round().clamp(0, 100);
+        if (_disposed) return;
+        _progressController.add(
+          DownloadProgress(
+            globalKey: globalKey,
+            status: DownloadStatus.downloading,
+            progress: progress,
+            downloadedBytes: downloadedBytes,
+            totalBytes: safeTotalBytes,
+            currentFile: 'video',
+          ),
+        );
+        unawaited(_database.updateDownloadProgress(globalKey, progress, downloadedBytes, safeTotalBytes));
+      });
       if (sourcePath == null || sourcePath.isEmpty) {
         throw Exception('Resolved source path is empty');
       }
@@ -644,7 +659,18 @@ class DownloadManagerService {
 
       final storedPath = await _storageService.toRelativePath(targetFile.path);
       await _database.updateVideoFilePath(globalKey, storedPath);
-      await _transitionStatus(globalKey, DownloadStatus.completed);
+      final finalBytes = await targetFile.length();
+      _progressController.add(
+        DownloadProgress(
+          globalKey: globalKey,
+          status: DownloadStatus.completed,
+          progress: 100,
+          downloadedBytes: finalBytes,
+          totalBytes: finalBytes,
+          currentFile: 'video',
+        ),
+      );
+      await _transitionStatus(globalKey, DownloadStatus.completed, progress: 100);
       appLogger.i('Resolved local download completed for $globalKey at $storedPath');
     } catch (e) {
       appLogger.e('Failed to process resolved local download for $globalKey', error: e);

@@ -1523,8 +1523,8 @@ class TranslationsErrorsEn {
 	/// en: 'Connection timeout while loading ${context}'
 	String connectionTimeout({required Object context}) => 'Connection timeout while loading ${context}';
 
-	/// en: 'Unable to connect to Plex server'
-	String get connectionFailed => 'Unable to connect to Plex server';
+	/// en: 'Unable to connect to server'
+	String get connectionFailed => 'Unable to connect to server';
 
 	/// en: 'Failed to load ${context}: ${error}'
 	String failedToLoad({required Object context, required Object error}) => 'Failed to load ${context}: ${error}';
@@ -3500,7 +3500,7 @@ extension on Translations {
 			'discover.minutesLeft' => ({required Object minutes}) => '${minutes} min left',
 			'errors.searchFailed' => ({required Object error}) => 'Search failed: ${error}',
 			'errors.connectionTimeout' => ({required Object context}) => 'Connection timeout while loading ${context}',
-			'errors.connectionFailed' => 'Unable to connect to Plex server',
+			'errors.connectionFailed' => 'Unable to connect to server',
 			'errors.failedToLoad' => ({required Object context, required Object error}) => 'Failed to load ${context}: ${error}',
 			'errors.noClientAvailable' => 'No client available',
 			'errors.authenticationFailed' => ({required Object error}) => 'Authentication failed: ${error}',
