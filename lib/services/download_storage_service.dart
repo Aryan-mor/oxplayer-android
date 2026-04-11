@@ -72,6 +72,18 @@ class DownloadStorageService {
     return 'S${season}E$ep - $episodeName';
   }
 
+  String _applyVariantSuffix(String baseName, String? variantSuffix) {
+    final trimmed = (variantSuffix ?? '').trim();
+    if (trimmed.isEmpty) {
+      return baseName;
+    }
+    final safeSuffix = _sanitizeFileName(trimmed);
+    if (safeSuffix.isEmpty) {
+      return baseName;
+    }
+    return '$baseName [$safeSuffix]';
+  }
+
   /// Check if using custom download path
   bool isUsingCustomPath() => _customDownloadPath != null;
 
@@ -291,9 +303,9 @@ class DownloadStorageService {
   }
 
   /// Get movie video file path: .../Movie Name (YYYY)/Movie Name (YYYY).{ext}
-  Future<String> getMovieVideoPath(PlexMetadata movie, String extension) async {
+  Future<String> getMovieVideoPath(PlexMetadata movie, String extension, {String? variantSuffix}) async {
     final movieDir = await getMovieDirectory(movie);
-    final fileName = _getMovieFolderName(movie);
+    final fileName = _applyVariantSuffix(_getMovieFolderName(movie), variantSuffix);
     return path.join(movieDir.path, '$fileName.$extension');
   }
 
@@ -342,9 +354,10 @@ class DownloadStorageService {
 
   /// Get episode video file path: .../Season XX/S{XX}E{XX} - {Title}.{ext}
   /// [showYear]: Pass the show's premiere year (not episode year)
-  Future<String> getEpisodeVideoPath(PlexMetadata episode, String extension, {int? showYear}) async {
+  Future<String> getEpisodeVideoPath(PlexMetadata episode, String extension, {int? showYear, String? variantSuffix}) async {
     final base = await _getEpisodeBasePath(episode, showYear: showYear);
-    return path.join(base.seasonDirPath, '${base.fileName}.$extension');
+    final fileName = _applyVariantSuffix(base.fileName, variantSuffix);
+    return path.join(base.seasonDirPath, '$fileName.$extension');
   }
 
   /// Get episode thumbnail path: .../Season XX/S{XX}E{XX} - {Title}.jpg

@@ -3,9 +3,11 @@ import 'dart:io';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:oxplayer/utils/content_utils.dart';
+import '../infrastructure/data_repository.dart';
 import '../models/download_models.dart';
 import '../models/plex_media_version.dart';
 import '../models/plex_metadata.dart';
+import '../infrastructure/media_repository.dart';
 import '../utils/download_version_utils.dart';
 import '../services/download_manager_service.dart';
 import '../services/download_storage_service.dart';
@@ -627,6 +629,47 @@ class DownloadProvider extends ChangeNotifier {
       } else {
         throw Exception('Cannot download ${metadata.type}');
       }
+    } finally {
+      _queueing.remove(globalKey);
+      notifyListeners();
+    }
+  }
+
+  Future<int> queueOxDownload({
+    required PlexMetadata metadata,
+    required OxLibraryMediaDetailFile file,
+    required MediaRepository mediaRepository,
+  }) async {
+    final downloadMetadata = buildOxDownloadMetadata(parentMetadata: metadata, file: file);
+    final globalKey = downloadMetadata.globalKey;
+
+    if (await DownloadManagerService.shouldBlockDownloadOnCellular()) {
+      throw CellularDownloadBlockedException();
+    }
+
+    final existing = _downloads[globalKey];
+    if (existing != null &&
+        (existing.status == DownloadStatus.queued ||
+            existing.status == DownloadStatus.downloading ||
+            existing.status == DownloadStatus.completed)) {
+      return 0;
+    }
+
+    try {
+      _queueing.add(globalKey);
+      _metadata[globalKey] = downloadMetadata;
+      _downloads[globalKey] = DownloadProgress(globalKey: globalKey, status: DownloadStatus.queued);
+      notifyListeners();
+
+      final queued = await _downloadManager.queueResolvedLocalDownload(
+        metadata: downloadMetadata,
+        variantSuffix: buildOxDownloadVariantSuffix(file),
+        sourcePathResolver: () => mediaRepository.resolveFilePathForOfflineDownload(file),
+      );
+      if (!queued) {
+        return 0;
+      }
+      return 1;
     } finally {
       _queueing.remove(globalKey);
       notifyListeners();

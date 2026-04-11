@@ -2,6 +2,40 @@ import '../models/plex_metadata.dart';
 import '../utils/formatters.dart';
 import 'data_repository.dart';
 
+const String kOxVirtualServerId = 'ox';
+
+String buildOxDownloadRatingKey(OxLibraryMediaDetailFile file) => 'ox-download:${file.id}';
+
+String buildOxDownloadVariantSuffix(OxLibraryMediaDetailFile file) {
+  final parts = <String>[];
+  final quality = (file.quality ?? '').trim();
+  final language = (file.videoLanguage ?? file.language ?? '').trim().toUpperCase();
+  if (quality.isNotEmpty) {
+    parts.add(quality);
+  }
+  if (language.isNotEmpty) {
+    parts.add(language);
+  }
+  return parts.isNotEmpty ? parts.join(' ') : 'File ${file.id}';
+}
+
+PlexMetadata buildOxDownloadMetadata({
+  required PlexMetadata parentMetadata,
+  required OxLibraryMediaDetailFile file,
+}) {
+  final ratingKey = buildOxDownloadRatingKey(file);
+  final type = parentMetadata.mediaType == PlexMediaType.movie ? 'movie' : 'episode';
+  final serverId = parentMetadata.serverId ?? kOxVirtualServerId;
+  final title = (parentMetadata.title ?? '').trim();
+  return parentMetadata.copyWith(
+    ratingKey: ratingKey,
+    key: 'ox-download:$ratingKey',
+    type: type,
+    title: title.isNotEmpty ? title : (type == 'movie' ? 'Movie' : 'Episode'),
+    serverId: serverId,
+  );
+}
+
 class OxFileOptionItem {
   const OxFileOptionItem({
     required this.key,
@@ -130,6 +164,7 @@ class MediaRepository {
     required OxLibraryMediaDetail detail,
     required PlexMetadata fallback,
   }) {
+    final serverId = fallback.serverId ?? kOxVirtualServerId;
     final series = fallback.copyWith(
       ratingKey: detail.media.id,
       key: 'ox-library:${detail.media.id}',
@@ -138,6 +173,7 @@ class MediaRepository {
       summary: detail.media.summary,
       rating: detail.media.voteAverage,
       year: detail.media.releaseYear,
+      serverId: serverId,
     );
 
     final groupedFiles = <int, Map<int, List<OxLibraryMediaDetailFile>>>{};
@@ -203,7 +239,7 @@ class MediaRepository {
             parentRatingKey: seasonRatingKey,
             parentIndex: seasonNumber,
             index: episodeNumber > 0 ? episodeNumber : null,
-            serverId: fallback.serverId,
+            serverId: serverId,
             serverName: fallback.serverName,
           ),
         );
@@ -222,7 +258,7 @@ class MediaRepository {
             grandparentThumb: series.thumb,
             grandparentArt: series.art,
             parentRatingKey: detail.media.id,
-            serverId: fallback.serverId,
+            serverId: serverId,
             serverName: fallback.serverName,
           ),
           episodes: episodeItems,
@@ -259,6 +295,18 @@ class MediaRepository {
   }
 
   Future<String?> resolveFilePathForInternalPlayback(OxLibraryMediaDetailFile file) {
+    return dataRepository.resolveOxMediaFilePathForPlayback(
+      mediaId: file.id,
+      fileUniqueId: file.fileUniqueId,
+      locatorType: file.locatorType,
+      locatorChatId: file.locatorChatId,
+      locatorMessageId: file.locatorMessageId,
+      locatorRemoteFileId: file.locatorRemoteFileId,
+      allowQuickStart: false,
+    );
+  }
+
+  Future<String?> resolveFilePathForOfflineDownload(OxLibraryMediaDetailFile file) {
     return dataRepository.resolveOxMediaFilePathForPlayback(
       mediaId: file.id,
       fileUniqueId: file.fileUniqueId,
