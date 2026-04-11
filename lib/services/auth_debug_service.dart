@@ -293,7 +293,3 @@ void locatorDebugSuccess(String message) {
 void locatorDebugError(String message) {
   debugLogError(message, type: LogType.locator);
 }
-
-void playMediaDebugDedup(String key, AuthDebugLevel level, String message) {
-  debugLogDedup(key, level, message, type: LogType.playMedia);
-}
