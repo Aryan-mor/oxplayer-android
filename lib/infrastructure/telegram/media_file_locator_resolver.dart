@@ -6,6 +6,7 @@ import 'tdlib_facade.dart';
 
 const Duration _kResolveSendTimeout = Duration(seconds: 8);
 const Duration _kResolveOverallTimeout = Duration(seconds: 25);
+const String _kMediaLocatorSearchTagPrefix = '#oxm_';
 
 class ResolvedTelegramMediaFile {
   const ResolvedTelegramMediaFile({
@@ -88,6 +89,7 @@ Future<ResolvedTelegramMediaFile?> _resolveTelegramMediaFileImpl({
     _ExtractedFromMessage? byMessage;
     byMessage = await _resolveFileByMessage(
       tdlib: tdlib,
+      mediaFileId: mediaFileId,
       chatId: locatorChatId,
       messageId: locatorMessageId,
       fileUniqueId: fileUniqueId,
@@ -165,6 +167,7 @@ Future<ResolvedTelegramMediaFile?> _resolveTelegramMediaFileImpl({
 
 Future<_ExtractedFromMessage?> _resolveFileByMessage({
   required TdlibFacade tdlib,
+  required String mediaFileId,
   required int chatId,
   required int messageId,
   String? fileUniqueId,
@@ -264,6 +267,124 @@ Future<_ExtractedFromMessage?> _resolveFileByMessage({
         'Telegram recent history fallback crashed for chatCandidate=$chatCandidate: $error',
       );
     }
+
+    final tagMatch = await _findMessageBySearchTagReply(
+      tdlib: tdlib,
+      mediaFileId: mediaFileId,
+      chatId: chatCandidate,
+      fileUniqueId: fileUniqueId,
+      onDiagnostic: onDiagnostic,
+    );
+    if (tagMatch != null) {
+      return tagMatch;
+    }
+  }
+
+  return null;
+}
+
+Future<_ExtractedFromMessage?> _findMessageBySearchTagReply({
+  required TdlibFacade tdlib,
+  required String mediaFileId,
+  required int chatId,
+  String? fileUniqueId,
+  void Function(String message)? onDiagnostic,
+}) async {
+  final query = _buildMediaLocatorSearchTag(mediaFileId);
+  try {
+    onDiagnostic?.call(
+      'Trying Telegram bot reply search fallback for chatCandidate=$chatId query=$query',
+    );
+    final result = await _sendWithTimeout(
+      tdlib: tdlib,
+      request: td.SearchChatMessages(
+        chatId: chatId,
+        query: query,
+        senderId: null,
+        fromMessageId: 0,
+        offset: 0,
+        limit: 20,
+        filter: null,
+        messageThreadId: 0,
+      ),
+    );
+    if (result is! td.Messages || result.messages.isEmpty) {
+      onDiagnostic?.call(
+        'Telegram bot reply search fallback found no tag messages for chatCandidate=$chatId query=$query',
+      );
+      return null;
+    }
+
+    final trimmedFileUniqueId = fileUniqueId?.trim() ?? '';
+    for (final tagMessage in result.messages) {
+      final tagMessageFile = _extractFileFromMessage(tagMessage);
+      if (tagMessageFile != null) {
+        if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(tagMessage) != trimmedFileUniqueId) {
+          onDiagnostic?.call(
+            'Telegram bot reply search fallback skipped tagMessageId=${tagMessage.id} because direct message fileUniqueId did not match',
+          );
+        } else {
+          onDiagnostic?.call(
+            'Telegram bot reply search fallback matched direct tagMessageId=${tagMessage.id} resolvedChatId=$chatId resolvedMessageId=${tagMessage.id} fileId=${tagMessageFile.id}',
+          );
+          return _ExtractedFromMessage(
+            file: tagMessageFile,
+            locatorMessageId: tagMessage.id,
+            resolutionReason: 'bot_reply_search_tag_direct_message',
+            resolvedChatId: chatId,
+          );
+        }
+      }
+
+      final replyTo = tagMessage.replyTo;
+      if (replyTo is! td.MessageReplyToMessage) continue;
+      onDiagnostic?.call(
+        'Telegram bot reply search fallback inspecting tagMessageId=${tagMessage.id} replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}',
+      );
+      try {
+        final replied = await _sendWithTimeout(
+          tdlib: tdlib,
+          request: td.GetMessage(
+            chatId: replyTo.chatId,
+            messageId: replyTo.messageId,
+          ),
+        );
+        if (replied is! td.Message) continue;
+        if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(replied) != trimmedFileUniqueId) {
+          onDiagnostic?.call(
+            'Telegram bot reply search fallback skipped replyMessageId=${replyTo.messageId} because fileUniqueId did not match',
+          );
+          continue;
+        }
+        final file = _extractFileFromMessage(replied);
+        if (file == null) continue;
+        onDiagnostic?.call(
+          'Telegram bot reply search fallback matched tagMessageId=${tagMessage.id} resolvedChatId=${replyTo.chatId} resolvedMessageId=${replied.id} fileId=${file.id}',
+        );
+        return _ExtractedFromMessage(
+          file: file,
+          locatorMessageId: replied.id,
+          resolutionReason: 'bot_reply_search_tag',
+          resolvedChatId: replyTo.chatId,
+        );
+      } on td.TdError catch (error) {
+        onDiagnostic?.call(
+          'Telegram bot reply search fallback failed for replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: code=${error.code} message=${error.message}',
+        );
+      } catch (error) {
+        onDiagnostic?.call(
+          'Telegram bot reply search fallback crashed for replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: $error',
+        );
+      }
+    }
+  } on td.TdError catch (error) {
+    onDiagnostic?.call(
+      'Telegram bot reply search fallback failed for chatCandidate=$chatId query=$query: code=${error.code} message=${error.message}',
+    );
+  } catch (error) {
+    onDiagnostic?.call(
+      'Telegram bot reply search fallback crashed for chatCandidate=$chatId query=$query: $error',
+    );
   }
 
   return null;
@@ -316,6 +437,10 @@ td.File? _extractFileFromMessage(td.Message message) {
   if (content is td.MessageAnimation) return content.animation.animation;
   if (content is td.MessageVideoNote) return content.videoNote.video;
   return null;
+}
+
+String _buildMediaLocatorSearchTag(String mediaFileId) {
+  return '$_kMediaLocatorSearchTagPrefix${mediaFileId.trim()}';
 }
 
 String? _messageFileUniqueId(td.Message message) {

@@ -321,6 +321,18 @@ class _ResolvedPlayableTelegramFile {
   final String? resolutionReason;
 }
 
+class OxMediaRecoveryResult {
+  const OxMediaRecoveryResult({
+    required this.ok,
+    this.status,
+    this.attempts,
+  });
+
+  final bool ok;
+  final String? status;
+  final int? attempts;
+}
+
 class DataRepository {
   static const MethodChannel _mediaToolsChannel =
       MethodChannel('de.aryanmo.oxplayer/media_tools');
@@ -344,6 +356,8 @@ class DataRepository {
   bool _tdlibInitialized = false;
   final Set<String> _thumbnailRecoveryInFlight = <String>{};
   final Map<String, DateTime> _lastThumbnailRecoveryRequestAt = <String, DateTime>{};
+  final Set<String> _locatorHealInFlight = <String>{};
+  final Map<String, DateTime> _lastLocatorHealRequestAt = <String, DateTime>{};
 
   static Future<DataRepository> create() async {
     final existing = _sharedCreateFuture;
@@ -748,6 +762,20 @@ class DataRepository {
     final id = mediaId.trim();
     if (id.isEmpty) return false;
 
+    final result = await requestOxMediaRecoveryDetailed(id);
+    if (result == null) {
+      return false;
+    }
+    if (result.ok) return true;
+
+    final status = result.status;
+    return status == 'succeeded';
+  }
+
+  Future<OxMediaRecoveryResult?> requestOxMediaRecoveryDetailed(String mediaId) async {
+    final id = mediaId.trim();
+    if (id.isEmpty) return null;
+
     try {
       final dio = _authorizedApiClient();
       final response = await dio.post<Map<String, dynamic>>(
@@ -756,12 +784,86 @@ class DataRepository {
       );
       final body = response.data ?? const <String, dynamic>{};
       final ok = _readOptionalBool(body['ok']) ?? false;
-      if (ok) return true;
-
       final status = _readOptionalTrimmed(body['status']);
-      return status == 'succeeded';
+      final attempts = _readOptionalInt(body['attempts']);
+      return OxMediaRecoveryResult(ok: ok, status: status, attempts: attempts);
     } catch (_) {
-      return false;
+      return null;
+    }
+  }
+
+  Future<OxMediaRecoveryResult?> readOxMediaRecoveryStatus(String mediaId) async {
+    final id = mediaId.trim();
+    if (id.isEmpty) return null;
+
+    try {
+      final dio = _authorizedApiClient();
+      final response = await dio.get<Map<String, dynamic>>('/me/recover-from-backup/$id/status');
+      final body = response.data ?? const <String, dynamic>{};
+      return OxMediaRecoveryResult(
+        ok: _readOptionalBool(body['ok']) ?? false,
+        status: _readOptionalTrimmed(body['status']),
+        attempts: _readOptionalInt(body['attempts']),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _requestLocatorHeal({
+    required String mediaId,
+    required int locatorChatId,
+    required int locatorMessageId,
+    required String reason,
+  }) async {
+    final now = DateTime.now();
+    final lastAttempt = _lastLocatorHealRequestAt[mediaId];
+    if (_locatorHealInFlight.contains(mediaId)) {
+      locatorDebugInfo(
+        'Locator heal already in flight for mediaId=$mediaId reason=$reason',
+      );
+      return;
+    }
+    if (lastAttempt != null && now.difference(lastAttempt) < const Duration(seconds: 30)) {
+      locatorDebugInfo(
+        'Locator heal throttled for mediaId=$mediaId reason=$reason',
+      );
+      return;
+    }
+
+    _locatorHealInFlight.add(mediaId);
+    _lastLocatorHealRequestAt[mediaId] = now;
+    try {
+      final dio = _authorizedApiClient();
+      final response = await dio.post<Map<String, dynamic>>(
+        '/me/library/media/locator-heal',
+        data: <String, dynamic>{
+          'mediaFileId': mediaId,
+          'locatorChatId': locatorChatId,
+          'locatorMessageId': locatorMessageId,
+          'resolutionReason': reason,
+        },
+      );
+      final ok = response.data?['ok'] == true;
+      if (ok) {
+        locatorDebugSuccess(
+          'Locator heal succeeded for mediaId=$mediaId locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId reason=$reason',
+        );
+      } else {
+        locatorDebugError(
+          'Locator heal did not succeed for mediaId=$mediaId locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId reason=$reason body=${response.data}',
+        );
+      }
+    } on DioException catch (error) {
+      locatorDebugError(
+        'Locator heal request failed for mediaId=$mediaId locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId reason=$reason status=${error.response?.statusCode} body=${error.response?.data} error=${error.message}',
+      );
+    } catch (error) {
+      locatorDebugError(
+        'Locator heal crashed for mediaId=$mediaId locatorChatId=$locatorChatId locatorMessageId=$locatorMessageId reason=$reason error=$error',
+      );
+    } finally {
+      _locatorHealInFlight.remove(mediaId);
     }
   }
 
@@ -1065,6 +1167,7 @@ class DataRepository {
         type: LogType.telegramThumbnail,
       );
       return _resolveThumbnailMessage(
+        mediaId: mediaId,
         chatId: locatorChatId,
         messageId: locatorMessageId,
         exactChatIdOnly: false,
@@ -1160,6 +1263,7 @@ class DataRepository {
     return null;
   }
   Future<_ThumbnailMessageLookupResult> _resolveThumbnailMessage({
+    String? mediaId,
     required int chatId,
     required int messageId,
     bool exactChatIdOnly = false,
@@ -1227,6 +1331,30 @@ class DataRepository {
         if (historyMatch != null) {
           return historyMatch;
         }
+
+        if (mediaId != null && mediaId.trim().isNotEmpty) {
+          final tagMatch = await _findMessageBySearchTagReply(
+            mediaId: mediaId,
+            chatId: chatCandidate,
+            fileUniqueId: trimmedFileUniqueId,
+            onDiagnostic: onDiagnostic,
+          );
+          if (tagMatch != null) {
+            return tagMatch;
+          }
+        }
+      }
+    } else if (mediaId != null && mediaId.trim().isNotEmpty) {
+      for (final chatCandidate in chatCandidates) {
+        final tagMatch = await _findMessageBySearchTagReply(
+          mediaId: mediaId,
+          chatId: chatCandidate,
+          fileUniqueId: null,
+          onDiagnostic: onDiagnostic,
+        );
+        if (tagMatch != null) {
+          return tagMatch;
+        }
       }
     }
 
@@ -1285,6 +1413,107 @@ class DataRepository {
     return null;
   }
 
+  Future<_ThumbnailMessageLookupResult?> _findMessageBySearchTagReply({
+    required String mediaId,
+    required int chatId,
+    required String? fileUniqueId,
+    void Function(String message)? onDiagnostic,
+  }) async {
+    final query = _buildMediaLocatorSearchTag(mediaId);
+    try {
+      onDiagnostic?.call(
+        'Trying Telegram bot reply search fallback for chatCandidate=$chatId query=$query',
+      );
+      final result = await _tdlib.send(
+        td.SearchChatMessages(
+          chatId: chatId,
+          query: query,
+          senderId: null,
+          fromMessageId: 0,
+          offset: 0,
+          limit: 20,
+          filter: null,
+          messageThreadId: 0,
+        ),
+      );
+      if (result is! td.Messages || result.messages.isEmpty) {
+        onDiagnostic?.call(
+          'Telegram bot reply search fallback found no tag messages for chatCandidate=$chatId query=$query',
+        );
+        return null;
+      }
+
+      final trimmedFileUniqueId = fileUniqueId?.trim() ?? '';
+      for (final tagMessage in result.messages) {
+        final directFile = _messagePlayableFile(tagMessage);
+        if (directFile != null) {
+          if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(tagMessage) != trimmedFileUniqueId) {
+            onDiagnostic?.call(
+              'Telegram bot reply search fallback skipped tagMessageId=${tagMessage.id} because direct message fileUniqueId did not match',
+            );
+          } else {
+            onDiagnostic?.call(
+              'Telegram bot reply search fallback matched direct tagMessageId=${tagMessage.id} resolvedChatId=$chatId resolvedMessageId=${tagMessage.id} fileId=${directFile.id}',
+            );
+            return _ThumbnailMessageLookupResult(
+              message: tagMessage,
+              resolvedChatId: chatId,
+              resolvedMessageId: tagMessage.id,
+              resolutionReason: 'bot_reply_search_tag_direct_message',
+            );
+          }
+        }
+
+        final replyTo = tagMessage.replyTo;
+        if (replyTo is! td.MessageReplyToMessage) continue;
+        onDiagnostic?.call(
+          'Telegram bot reply search fallback inspecting tagMessageId=${tagMessage.id} replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}',
+        );
+        try {
+          final replied = await _tdlib.send(
+            td.GetMessage(chatId: replyTo.chatId, messageId: replyTo.messageId),
+          );
+          if (replied is! td.Message) continue;
+          if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(replied) != trimmedFileUniqueId) {
+            onDiagnostic?.call(
+              'Telegram bot reply search fallback skipped replyMessageId=${replyTo.messageId} because fileUniqueId did not match',
+            );
+            continue;
+          }
+          final file = _messagePlayableFile(replied);
+          if (file == null) continue;
+          onDiagnostic?.call(
+            'Telegram bot reply search fallback matched tagMessageId=${tagMessage.id} resolvedChatId=${replyTo.chatId} resolvedMessageId=${replied.id} fileId=${file.id}',
+          );
+          return _ThumbnailMessageLookupResult(
+            message: replied,
+            resolvedChatId: replyTo.chatId,
+            resolvedMessageId: replied.id,
+            resolutionReason: 'bot_reply_search_tag',
+          );
+        } on td.TdError catch (error) {
+          onDiagnostic?.call(
+            'Telegram bot reply search fallback failed for replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: code=${error.code} message=${error.message}',
+          );
+        } catch (error) {
+          onDiagnostic?.call(
+            'Telegram bot reply search fallback crashed for replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: $error',
+          );
+        }
+      }
+    } on td.TdError catch (error) {
+      onDiagnostic?.call(
+        'Telegram bot reply search fallback failed for chatCandidate=$chatId query=$query: code=${error.code} message=${error.message}',
+      );
+    } catch (error) {
+      onDiagnostic?.call(
+        'Telegram bot reply search fallback crashed for chatCandidate=$chatId query=$query: $error',
+      );
+    }
+
+    return null;
+  }
+
   Future<_ResolvedPlayableTelegramFile?> _resolvePlayableTelegramFileFromLocator({
     required String mediaId,
     required String? fileUniqueId,
@@ -1297,6 +1526,7 @@ class DataRepository {
         locatorChatId != null &&
         locatorMessageId != null) {
       final lookup = await _resolveThumbnailMessage(
+        mediaId: mediaId,
         chatId: locatorChatId,
         messageId: locatorMessageId,
         exactChatIdOnly: false,
@@ -1325,6 +1555,22 @@ class DataRepository {
           } else {
             locatorDebugInfo(
               'Stored locator direct lookup resolved exact message for mediaFileId=$mediaId chatId=$locatorChatId messageId=$locatorMessageId fileId=${file.id}',
+            );
+          }
+          final healedChatId = lookup.resolvedChatId;
+          final healedMessageId = lookup.resolvedMessageId;
+          final shouldHeal =
+              healedChatId != null &&
+              healedMessageId != null &&
+              (healedChatId != locatorChatId || healedMessageId != locatorMessageId);
+          if (shouldHeal) {
+            unawaited(
+              _requestLocatorHeal(
+                mediaId: mediaId,
+                locatorChatId: healedChatId,
+                locatorMessageId: healedMessageId,
+                reason: lookup.resolutionReason ?? 'direct_locator_candidate',
+              ),
             );
           }
           return _ResolvedPlayableTelegramFile(
@@ -1379,6 +1625,8 @@ class DataRepository {
 
     return null;
   }
+
+  String _buildMediaLocatorSearchTag(String mediaId) => '#oxm_${mediaId.trim()}';
 
   Iterable<int> _candidateTelegramChatIds(int chatId, {bool exactOnly = false}) sync* {
     final emitted = <int>{};

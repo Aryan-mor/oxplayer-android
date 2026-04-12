@@ -75,6 +75,18 @@ class OxSeriesDetailView {
   final PlexMetadata? firstEpisode;
 }
 
+class OxPlaybackRecoveryResult {
+  const OxPlaybackRecoveryResult({
+    required this.streamUrl,
+    required this.selectedFile,
+    this.usedRecovery = false,
+  });
+
+  final Uri? streamUrl;
+  final OxLibraryMediaDetailFile selectedFile;
+  final bool usedRecovery;
+}
+
 class MediaRepository {
   const MediaRepository({required this.dataRepository});
 
@@ -343,6 +355,68 @@ class MediaRepository {
       locatorChatId: file.locatorChatId,
       locatorMessageId: file.locatorMessageId,
       locatorRemoteFileId: file.locatorRemoteFileId,
+    );
+  }
+
+  Future<OxPlaybackRecoveryResult> resolveStreamUrlForInternalPlaybackWithRecovery({
+    required OxLibraryMediaDetailFile file,
+    String? detailGlobalId,
+  }) async {
+    var selectedFile = file;
+    var streamUrl = await resolveStreamUrlForInternalPlayback(selectedFile);
+    if (streamUrl != null) {
+      return OxPlaybackRecoveryResult(streamUrl: streamUrl, selectedFile: selectedFile);
+    }
+
+    final recovery = await dataRepository.requestOxMediaRecoveryDetailed(selectedFile.id);
+    var recovered = recovery?.ok == true || recovery?.status == 'succeeded';
+    var status = recovery?.status;
+
+    if (!recovered && (status == 'pending' || status == 'in_progress')) {
+      final deadline = DateTime.now().add(const Duration(seconds: 75));
+      while (DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        final current = await dataRepository.readOxMediaRecoveryStatus(selectedFile.id);
+        if (current == null) {
+          continue;
+        }
+        status = current.status;
+        if (current.ok || status == 'succeeded') {
+          recovered = true;
+          break;
+        }
+        if (status == 'failed') {
+          break;
+        }
+      }
+    }
+
+    if (!recovered || detailGlobalId == null || detailGlobalId.isEmpty) {
+      return OxPlaybackRecoveryResult(
+        streamUrl: null,
+        selectedFile: selectedFile,
+        usedRecovery: recovery != null,
+      );
+    }
+
+    final refreshedDetail = await fetchLibraryMediaDetail(detailGlobalId);
+    final refreshedFile =
+        refreshedDetail.files.where((candidate) => candidate.id == selectedFile.id).firstOrNull ??
+        selectPreferredFile(refreshedDetail);
+    if (refreshedFile == null) {
+      return OxPlaybackRecoveryResult(
+        streamUrl: null,
+        selectedFile: selectedFile,
+        usedRecovery: true,
+      );
+    }
+
+    selectedFile = refreshedFile;
+    streamUrl = await resolveStreamUrlForInternalPlayback(selectedFile);
+    return OxPlaybackRecoveryResult(
+      streamUrl: streamUrl,
+      selectedFile: selectedFile,
+      usedRecovery: true,
     );
   }
 

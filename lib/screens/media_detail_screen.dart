@@ -959,24 +959,16 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       'Selected OX file id=${selectedFile.id} canStream=${selectedFile.canStream} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
     );
 
-    Uri? streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
-
-    if (streamUrl == null) {
-      playMediaDebugInfo('Initial stream URL resolution failed for file=${selectedFile.id}. Requesting media recovery.');
-      final recovered = await mediaRepository.requestMediaRecovery(selectedFile.id);
-      playMediaDebugInfo('Media recovery result for file=${selectedFile.id}: recovered=$recovered');
-      if (recovered && detailGlobalId != null && detailGlobalId.isNotEmpty) {
-        final refreshedDetail = await mediaRepository.fetchLibraryMediaDetail(detailGlobalId);
-        final refreshedFile = refreshedDetail.files.where((candidate) => candidate.id == selectedFile.id).firstOrNull ??
-            mediaRepository.selectPreferredFile(refreshedDetail);
-        if (refreshedFile != null) {
-          selectedFile = refreshedFile;
-          playMediaDebugInfo(
-            'Retrying stream URL resolution with refreshed file id=${selectedFile.id} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
-          );
-          streamUrl = await mediaRepository.resolveStreamUrlForInternalPlayback(selectedFile);
-        }
-      }
+    final playbackResolution = await mediaRepository.resolveStreamUrlForInternalPlaybackWithRecovery(
+      file: selectedFile,
+      detailGlobalId: detailGlobalId,
+    );
+    selectedFile = playbackResolution.selectedFile;
+    final streamUrl = playbackResolution.streamUrl;
+    if (playbackResolution.usedRecovery) {
+      playMediaDebugInfo(
+        'Playback flow used background recovery for file=${selectedFile.id} locatorType=${selectedFile.locatorType} locatorChatId=${selectedFile.locatorChatId} locatorMessageId=${selectedFile.locatorMessageId}',
+      );
     }
 
     if (!mounted) return;
