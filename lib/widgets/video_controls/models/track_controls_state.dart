@@ -45,7 +45,6 @@ class TrackControlsState {
   final String? mediaTitle;
   final Future<void> Function()? onSubtitleDownloaded;
   final Future<void> Function(SubtitleTrack track)? onExternalSubtitleReady;
-  final Future<void> Function()? onSearchSubtitles;
 
   const TrackControlsState({
     this.availableVersions = const [],
@@ -86,6 +85,5 @@ class TrackControlsState {
     this.mediaTitle,
     this.onSubtitleDownloaded,
     this.onExternalSubtitleReady,
-    this.onSearchSubtitles,
   });
 }

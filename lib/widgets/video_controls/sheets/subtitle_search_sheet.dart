@@ -44,6 +44,8 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
   String _languageCode = 'en';
   String _languageName = 'English';
   final _titleController = TextEditingController();
+  late final TextEditingController _seasonController;
+  late final TextEditingController _episodeController;
   Timer? _debounceTimer;
 
   List<SubdlSearchResult>? _results;
@@ -56,10 +58,22 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
   @override
   void initState() {
     super.initState();
+    final (s, e) = widget.metadata.subdlSeasonEpisodeNumbers;
+    _seasonController = TextEditingController(text: s != null ? '$s' : '');
+    _episodeController = TextEditingController(text: e != null ? '$e' : '');
+    final initialTitle = (widget.mediaTitle ?? widget.metadata.displayTitle).trim();
+    if (initialTitle.isNotEmpty) {
+      _titleController.text = initialTitle;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_bootstrap());
     });
   }
+
+  bool get _isTvSearchContext =>
+      widget.metadata.mediaType == PlexMediaType.episode ||
+      widget.metadata.mediaType == PlexMediaType.season ||
+      widget.metadata.mediaType == PlexMediaType.show;
 
   Future<void> _bootstrap() async {
     await _loadSavedLanguage();
@@ -97,7 +111,17 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
   void dispose() {
     _debounceTimer?.cancel();
     _titleController.dispose();
+    _seasonController.dispose();
+    _episodeController.dispose();
     super.dispose();
+  }
+
+  int? _optionalPositiveInt(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+    final v = int.tryParse(t);
+    if (v == null || v < 0) return null;
+    return v;
   }
 
   Future<void> _search() async {
@@ -109,13 +133,18 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
 
     try {
       final title = _titleController.text.trim();
+      final seasonOv = _isTvSearchContext ? _optionalPositiveInt(_seasonController.text) : null;
+      final episodeOv = _isTvSearchContext ? _optionalPositiveInt(_episodeController.text) : null;
       playMediaDebugInfo(
-        'Subtitle search UI requested: lang=${_languageCode.toUpperCase()}, title=${title.isEmpty ? '<default>' : title}',
+        'Subtitle search UI requested: lang=${_languageCode.toUpperCase()}, title=${title.isEmpty ? '<default>' : title}'
+        '${_isTvSearchContext ? ', S=${seasonOv ?? '-'} E=${episodeOv ?? '-'}' : ''}',
       );
       final results = await SubdlService().search(
         metadata: widget.metadata,
         languageCode: _languageCode,
         titleOverride: title.isEmpty ? null : title,
+        seasonNumberOverride: seasonOv,
+        episodeNumberOverride: episodeOv,
       );
       if (!mounted) return;
       setState(() {
@@ -134,7 +163,7 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
     }
   }
 
-  void _onTitleChanged(String _) {
+  void _scheduleDebouncedSearch() {
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 500), _search);
   }
@@ -242,7 +271,7 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
                       hintText: widget.mediaTitle ?? 'Title',
                       prefixIcon: const Icon(Symbols.search_rounded, size: 20),
                     ),
-                    onChanged: _onTitleChanged,
+                    onChanged: (_) => _scheduleDebouncedSearch(),
                     textInputAction: TextInputAction.search,
                     onSubmitted: (_) => _search(),
                   ),
@@ -250,6 +279,42 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
               ],
             ),
           ),
+          if (_isTvSearchContext)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _seasonController,
+                      keyboardType: TextInputType.number,
+                      decoration: pillInputDecoration(
+                        context,
+                        hintText: 'Season',
+                        prefixIcon: const Icon(Symbols.numbers_rounded, size: 20),
+                      ),
+                      onChanged: (_) => _scheduleDebouncedSearch(),
+                      textInputAction: TextInputAction.next,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _episodeController,
+                      keyboardType: TextInputType.number,
+                      decoration: pillInputDecoration(
+                        context,
+                        hintText: 'Episode',
+                        prefixIcon: const Icon(Symbols.tv_rounded, size: 20),
+                      ),
+                      onChanged: (_) => _scheduleDebouncedSearch(),
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (_) => _search(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Expanded(child: _buildResults()),
         ],
       ),

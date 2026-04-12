@@ -107,6 +107,8 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   PlexMetadata? _selectedOxOptionParent;
   List<FocusNode> _oxOptionTabFocusNodes = [];
   final ScrollController _oxOptionTabsScrollController = ScrollController();
+  /// OX library item is [GENERAL_VIDEO] (mapped to Plex `movie`); drives hero banner + Telegram thumb.
+  bool _isOxGeneralVideoDetail = false;
 
   late final FocusNode _playButtonFocusNode;
   late final FocusNode _ratingChipFocusNode;
@@ -947,6 +949,28 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     return metadata.key?.startsWith('ox-library:') == true;
   }
 
+  bool _hasDetailHeroBackdrop(PlexMetadata metadata) {
+    if (metadata.backgroundSquare != null && metadata.backgroundSquare!.trim().isNotEmpty) return true;
+    if (metadata.art != null && metadata.art!.trim().isNotEmpty) return true;
+    if (_isOxGeneralVideoDetail && metadata.thumb != null && metadata.thumb!.trim().isNotEmpty) return true;
+    return false;
+  }
+
+  bool _isPlexLibraryImagePath(String path) {
+    return path.trim().startsWith('/library/');
+  }
+
+  bool _isLocalFilesystemHeroImagePath(String? path) {
+    if (path == null || path.isEmpty) return false;
+    if (path.startsWith('http://') || path.startsWith('https://')) return false;
+    if (_isPlexLibraryImagePath(path)) return false;
+    try {
+      return File(path).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _playOxFileWithRepository({
     required MediaRepository mediaRepository,
     required PlexMetadata metadata,
@@ -1436,6 +1460,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         _showEpisodesDirectly = shouldShowEpisodesDirectly;
         _selectedSeasonIndex = selectedSeasonIndex;
         _extras = null;
+        _isOxGeneralVideoDetail = false;
         _isLoadingMetadata = false;
         _isLoadingSeasons = false;
         _isLoadingEpisodes = false;
@@ -1450,6 +1475,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         _oxFileOptionsByParentKey.clear();
         _selectedOxOptionParent = null;
         _showEpisodesDirectly = true;
+        _isOxGeneralVideoDetail = false;
         _isLoadingMetadata = false;
         _isLoadingSeasons = false;
         _isLoadingEpisodes = false;
@@ -1472,7 +1498,14 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       final repository = await DataRepository.create();
       final mediaRepository = MediaRepository(dataRepository: repository);
       final detail = await mediaRepository.fetchLibraryMediaDetail(widget.metadata.ratingKey);
-      final metadata = _mapOxDetailToPlexMetadata(detail, fallback: widget.metadata);
+      final isGeneralVideo = detail.media.type.toUpperCase() == 'GENERAL_VIDEO';
+      var metadata = _mapOxDetailToPlexMetadata(detail, fallback: widget.metadata);
+      if (isGeneralVideo) {
+        final telegramThumb = await mediaRepository.fetchVideoThumbnailForOxDetail(detail);
+        if (telegramThumb != null) {
+          metadata = metadata.copyWith(thumb: telegramThumb, art: telegramThumb);
+        }
+      }
       final fileOptions = mediaRepository.buildMovieFileOptions(detail);
       _oxFileOptionsByParentKey
         ..clear()
@@ -1482,6 +1515,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       if (!mounted) return;
       setState(() {
         _fullMetadata = metadata;
+        _isOxGeneralVideoDetail = isGeneralVideo;
         _selectedOxOptionParent = null;
         _isLoadingMetadata = false;
         _isLoadingEpisodes = false;
@@ -1493,6 +1527,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         _oxFileOptionsByParentKey.clear();
         _selectedOxOptionParent = null;
         _fullMetadata = widget.metadata;
+        _isOxGeneralVideoDetail = false;
         _isLoadingMetadata = false;
         _isLoadingEpisodes = false;
         _isLoadingSeasonEpisodes = false;
@@ -1552,6 +1587,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   Future<void> _loadFullMetadata() async {
     setState(() {
       _isLoadingMetadata = true;
+      _isOxGeneralVideoDetail = false;
     });
 
     if (_isOxLibraryMetadata(widget.metadata)) {
@@ -2908,11 +2944,19 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                         SizedBox(
                           height: headerHeight,
                           width: double.infinity,
-                          child: (metadata.art != null || metadata.backgroundSquare != null)
+                          child: _hasDetailHeroBackdrop(metadata)
                               ? Builder(
                                   builder: (context) {
                                     final containerAspect = size.width / headerHeight;
-                                    final heroArtPath = metadata.heroArt(containerAspectRatio: containerAspect);
+                                    var heroArtPath = metadata.heroArt(containerAspectRatio: containerAspect);
+                                    if ((heroArtPath == null || heroArtPath.isEmpty) &&
+                                        _isOxGeneralVideoDetail &&
+                                        metadata.thumb != null) {
+                                      heroArtPath = metadata.thumb;
+                                    }
+                                    if (heroArtPath == null || heroArtPath.isEmpty) {
+                                      return const PlaceholderContainer();
+                                    }
 
                                     // Check for offline local file first
                                     if (widget.isOffline && widget.metadata.serverId != null) {
@@ -2929,6 +2973,17 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                       }
                                       // Offline but no local file - show placeholder
                                       return const PlaceholderContainer();
+                                    }
+
+                                    // OX Telegram thumbnails (and other absolute local paths) are not Plex URLs
+                                    if (_isLocalFilesystemHeroImagePath(heroArtPath)) {
+                                      return blurArtwork(
+                                        Image.file(
+                                          File(heroArtPath),
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) => const PlaceholderContainer(),
+                                        ),
+                                      );
                                     }
 
                                     // Online - use network image

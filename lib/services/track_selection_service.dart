@@ -7,6 +7,7 @@ import '../models/plex_metadata.dart';
 import '../models/plex_user_profile.dart';
 import '../utils/app_logger.dart';
 import '../utils/language_codes.dart';
+import '../utils/subtitle_uri_utils.dart';
 
 // ============================================================================
 // Track Matching Utilities
@@ -503,13 +504,54 @@ class TrackSelectionService {
       return SubtitleTrack.off;
     }
 
-    return findBestTrackMatch<SubtitleTrack>(
-      availableTracks,
-      preferred,
-      (t) => t.id,
-      (t) => t.title,
-      (t) => t.language,
-    );
+    final validTracks = availableTracks.where((t) => t.id != 'auto' && t.id != 'no').toList();
+    if (validTracks.isEmpty) return null;
+
+    // ExoPlayer uses ids like external_0 while our [SubtitleTrack.uri] uses id external:<uri>.
+    // Match by normalized file/http source before falling back to language-only (which would
+    // pick the first track sharing the same language).
+    final preferredSources = subtitlePreferredSourceUris(preferred);
+    for (final track in validTracks) {
+      for (final pref in preferredSources) {
+        if (subtitleSourceUrisEqual(track.uri, pref)) {
+          return track;
+        }
+      }
+    }
+
+    // Exact id/title/language (mpv and some backends keep stable ids).
+    for (final track in validTracks) {
+      if (track.id == preferred.id && track.title == preferred.title && track.language == preferred.language) {
+        return track;
+      }
+    }
+    // Title + language (skip generic language-only from [findBestTrackMatch] — it picks the
+    // first track for that language and breaks multi-sub same-language cases on ExoPlayer).
+    final prefTitle = preferred.title;
+    if (prefTitle != null && prefTitle.isNotEmpty) {
+      for (final track in validTracks) {
+        if (track.title == prefTitle && track.language == preferred.language) {
+          return track;
+        }
+      }
+    }
+
+    // Last resort: language match only when it uniquely identifies a track, or when the
+    // preferred track is external and only one external matches the language.
+    final prefLang = preferred.language;
+    if (prefLang == null || prefLang.isEmpty) return null;
+
+    final langMatches = validTracks.where((t) => languageMatches(t.language, prefLang)).toList();
+    if (langMatches.length == 1) {
+      return langMatches.first;
+    }
+    if (preferred.isExternal && langMatches.isNotEmpty) {
+      final ext = langMatches.where((t) => t.isExternal).toList();
+      if (ext.length == 1) {
+        return ext.first;
+      }
+    }
+    return null;
   }
 
   /// Find a track matching a preferred language from a list of tracks
@@ -627,7 +669,7 @@ class TrackSelectionService {
   TrackSelectionResult<SubtitleTrack> selectSubtitleTrack(
     List<SubtitleTrack> availableTracks,
     SubtitleTrack? preferredSubtitleTrack,
-    AudioTrack? selectedAudioTrack,
+    AudioTrack? _,
   ) {
     // Priority 1: Try preferred track from navigation
     if (preferredSubtitleTrack != null) {

@@ -47,6 +47,7 @@ import '../../utils/snackbar_helper.dart';
 import '../../infrastructure/subtitles/subdl_service.dart';
 import 'icons.dart';
 import '../../utils/app_logger.dart';
+import '../../utils/subtitle_uri_utils.dart';
 import '../../i18n/strings.g.dart';
 import '../../focus/focusable_button.dart';
 import '../../focus/input_mode_tracker.dart';
@@ -322,6 +323,9 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
   List<SubdlSearchResult> _subtitleTrialResults = const [];
   int _subtitleTrialIndex = 0;
   bool _subtitleTrialLoading = false;
+  /// While true, external subs from SubDL trial always go through [addSubtitleTrack] so ExoPlayer
+  /// loads the new file (same path reuse would otherwise only re-select a stale track).
+  bool _applyingTrialSubtitle = false;
   SubtitleTrack? _subtitleTrialBaselineTrack;
   // Skip marker button focus node (for TV D-pad navigation)
   late final FocusNode _skipMarkerFocusNode;
@@ -661,6 +665,8 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
 
   bool get _subtitleTrialActive => _subtitleTrialResults.isNotEmpty;
 
+  /// Legacy Android-only entry (native SubDL dialog); subtitle search now uses [SubtitleSearchSheet] for all platforms.
+  // ignore: unused_element
   Future<void> _startSubtitleSearchTrial() async {
     try {
       playMediaDebugInfo('Subtitle trial search started from player controls.');
@@ -709,6 +715,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       return;
     }
     setState(() => _subtitleTrialLoading = true);
+    _applyingTrialSubtitle = true;
     try {
       playMediaDebugInfo(
         'Subtitle trial applying ${_subtitleTrialIndex + 1}/${_subtitleTrialResults.length}: ${entry.displayLabel}',
@@ -717,7 +724,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
         rawDownload: entry.rawDownload,
         displayLabel: entry.displayLabel,
         languageCode: entry.languageCode,
-        fixedFileBaseName: 'subtitle_trial_active',
       );
       final displayTitle = _truncateSubtitleLabel(downloaded.displayLabel);
       await _onExternalSubtitleReady(
@@ -746,6 +752,8 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       }
       setState(() => _subtitleTrialLoading = false);
       showErrorSnackBar(context, t.videoControls.subtitleDownloadFailed);
+    } finally {
+      _applyingTrialSubtitle = false;
     }
   }
 
@@ -764,6 +772,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     showSuccessSnackBar(context, t.videoControls.subtitleDownloaded);
     if (confirmedSub != null) {
       await _maybePersistDownloadedSubdlTrack(confirmedSub);
+      widget.onSubtitleTrackChanged?.call(confirmedSub);
     }
   }
 
@@ -1315,7 +1324,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       mediaTitle: widget.metadata.displayTitle,
       onSubtitleDownloaded: _onSubtitleDownloaded,
       onExternalSubtitleReady: _onExternalSubtitleReady,
-      onSearchSubtitles: _startSubtitleSearchTrial,
     );
   }
 
@@ -2799,16 +2807,30 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
   Future<void> _onExternalSubtitleReady(SubtitleTrack track) async {
     final uri = track.uri;
     if (uri == null || uri.isEmpty) {
+      playMediaDebugError('External subtitle: empty uri, skip');
       return;
     }
 
-    final existingTrack = widget.player.state.tracks.subtitle.firstWhere(
-      (subtitle) => subtitle.uri == uri,
-      orElse: () => SubtitleTrack.off,
+    final beforeCount = widget.player.state.tracks.subtitle.length;
+    final beforeSel = widget.player.state.track.subtitle;
+    playMediaDebugInfo(
+      'External sub: trialApply=$_applyingTrialSubtitle trialPanel=$_subtitleTrialActive '
+      'uriTail=${uri.length > 72 ? uri.substring(uri.length - 72) : uri} '
+      'tracksBefore=$beforeCount selectedBefore=${beforeSel?.id ?? "null"}',
     );
-    if (existingTrack.id != 'no') {
-      await widget.player.selectSubtitleTrack(existingTrack);
-      return;
+
+    if (!_applyingTrialSubtitle) {
+      for (final subtitle in widget.player.state.tracks.subtitle) {
+        if (subtitleTrackRefersToCandidateUri(track, subtitle.uri)) {
+          playMediaDebugInfo('External sub: reusing loaded track id=${subtitle.id} uri=${subtitle.uri}');
+          await widget.player.selectSubtitleTrack(subtitle);
+          await widget.player.setProperty('sub-visibility', 'yes');
+          if (mounted) {
+            setState(() => _subtitlesVisible = true);
+          }
+          return;
+        }
+      }
     }
 
     await widget.player.addSubtitleTrack(
@@ -2817,6 +2839,27 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       language: track.language,
       select: true,
     );
+
+    for (var attempt = 1; attempt <= 4; attempt++) {
+      await Future<void>.delayed(Duration(milliseconds: 80 * attempt));
+      if (!mounted) {
+        return;
+      }
+      final sub = widget.player.state.track.subtitle;
+      final n = widget.player.state.tracks.subtitle.length;
+      playMediaDebugInfo(
+        'External sub: after add poll#$attempt tracks=$n selected=${sub?.id ?? "null"} title=${sub?.title ?? ""} extUri=${sub?.uri ?? ""}',
+      );
+      if (sub != null && sub.id != 'no') {
+        break;
+      }
+    }
+
+    await widget.player.setProperty('sub-visibility', 'yes');
+    if (mounted) {
+      setState(() => _subtitlesVisible = true);
+    }
+
     if (!_subtitleTrialActive) {
       await _maybePersistDownloadedSubdlTrack(track);
     }

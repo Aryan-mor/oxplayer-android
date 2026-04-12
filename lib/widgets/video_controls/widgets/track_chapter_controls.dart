@@ -103,7 +103,6 @@ class TrackChapterControls extends StatelessWidget {
   Future<void> Function()? get onSubtitleDownloaded => trackControlsState.onSubtitleDownloaded;
   Future<void> Function(SubtitleTrack track)? get onExternalSubtitleReady =>
       trackControlsState.onExternalSubtitleReady;
-  Future<void> Function()? get onSearchSubtitles => trackControlsState.onSearchSubtitles;
 
   /// Handle key event for button navigation
   KeyEventResult _handleButtonKeyEvent(FocusNode _, KeyEvent event, int index, int totalButtons) {
@@ -272,7 +271,6 @@ class TrackChapterControls extends StatelessWidget {
                         mediaTitle: mediaTitle,
                         onSubtitleDownloaded: onSubtitleDownloaded,
                         onExternalSubtitleReady: onExternalSubtitleReady,
-                        onSearchSubtitles: onSearchSubtitles,
                         onAudioTrackChanged: onAudioTrackChanged,
                         onSubtitleTrackChanged: onSubtitleTrackChanged,
                         onSecondarySubtitleTrackChanged: onSecondarySubtitleTrackChanged,

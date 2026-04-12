@@ -1,6 +1,8 @@
 package de.aryanmo.oxplayer
 
 import android.content.Context
+import android.util.Log
+import kotlin.math.min
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -58,20 +60,53 @@ class SubdlApiClient(
         normalizeImdb(imdbId)?.let { builder.addQueryParameter("imdb_id", it) }
         tmdbId?.trim()?.takeIf { it.isNotEmpty() }?.let { builder.addQueryParameter("tmdb_id", it) }
 
-        val request = Request.Builder().url(builder.build()).get().build()
+        val builtUrl = builder.build()
+        val redactedUrl = builtUrl.toString().replace(Regex("api_key=[^&]+"), "api_key=***")
+        Log.i(TAG, "SubDL GET $redactedUrl")
+        Log.i(
+            TAG,
+            "SubDL query: film_name=$trimmedName type=$contentType languages=$languages year=$year " +
+                "season_number=$seasonNumber episode_number=$episodeNumber imdb_id=${normalizeImdb(imdbId)} tmdb_id=${tmdbId?.trim()}",
+        )
+
+        val request = Request.Builder().url(builtUrl).get().build()
         return try {
             okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
+                    Log.w(TAG, "SubDL HTTP ${response.code} bodyHead=${body.take(200)}")
                     return SearchOutcome(emptyList(), "HTTP ${response.code}: ${response.message}")
                 }
                 val root = JSONObject(body)
                 val ok = root.optBoolean("status", false)
                 if (!ok) {
                     val err = root.optString("error").ifBlank { "Search failed." }
+                    Log.w(TAG, "SubDL status=false error=$err")
                     return SearchOutcome(emptyList(), err)
                 }
+                val resultsArr = root.optJSONArray("results")
+                if (resultsArr != null && resultsArr.length() > 0) {
+                    val parts = ArrayList<String>(min(4, resultsArr.length()))
+                    for (i in 0 until min(4, resultsArr.length())) {
+                        val o = resultsArr.optJSONObject(i) ?: continue
+                        parts.add(
+                            "name=${o.optString("name")} year=${o.optString("year")} type=${o.optString("type")} sd_id=${o.optString("sd_id")}",
+                        )
+                    }
+                    Log.i(TAG, "SubDL results(${resultsArr.length()}): ${parts.joinToString(" | ")}")
+                } else {
+                    Log.i(TAG, "SubDL results: none (subtitles are tied to film_name match only)")
+                }
                 val subtitles = root.optJSONArray("subtitles") ?: return SearchOutcome(emptyList(), null)
+                Log.i(TAG, "SubDL subtitles count=${subtitles.length()}")
+                for (i in 0 until min(12, subtitles.length())) {
+                    val item = subtitles.optJSONObject(i) ?: continue
+                    Log.i(
+                        TAG,
+                        "  [$i] release=${item.optString("release_name")} ep=${item.opt("episode")} " +
+                            "season=${item.opt("season")} lang=${item.optString("lang")}",
+                    )
+                }
                 val out = ArrayList<SubtitleEntry>(subtitles.length())
                 for (index in 0 until subtitles.length()) {
                     val item = subtitles.optJSONObject(index) ?: continue
@@ -81,6 +116,7 @@ class SubdlApiClient(
                 SearchOutcome(out, null)
             }
         } catch (error: Exception) {
+            Log.e(TAG, "SubDL search exception", error)
             SearchOutcome(emptyList(), error.message ?: "Network error.")
         }
     }
@@ -104,6 +140,7 @@ class SubdlApiClient(
     }
 
     companion object {
+        private const val TAG = "SubdlApiClient"
         private const val API_BASE = "https://api.subdl.com/api/v1/subtitles"
 
         private fun defaultClient(): OkHttpClient =

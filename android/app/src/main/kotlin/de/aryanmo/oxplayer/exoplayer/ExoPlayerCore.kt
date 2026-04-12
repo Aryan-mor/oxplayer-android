@@ -911,12 +911,24 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
             delegate?.onPropertyChange("aid", selectedAudioId)
         }
 
-        if (selectedSubId != null) {
+        val waitingForExternal =
+            pendingSubtitleId != null &&
+                pendingSubtitleId.startsWith("external_") &&
+                !subtitleTrackSelectionMap.containsKey(pendingSubtitleId)
+        val externalPreferredButExoMismatch =
+            pendingSubtitleId != null &&
+                pendingSubtitleId.startsWith("external_") &&
+                subtitleTrackSelectionMap.containsKey(pendingSubtitleId) &&
+                selectedSubId != null &&
+                selectedSubId != pendingSubtitleId
+
+        if (selectedSubId != null && !waitingForExternal && !externalPreferredButExoMismatch) {
             selectedSubtitleTrackId = selectedSubId
             delegate?.onPropertyChange("sid", selectedSubId)
         } else if (
             textGroups.isNotEmpty() &&
-            (pendingSubtitleId == null || pendingSubtitleId == "no" || !subtitleTrackSelectionMap.containsKey(pendingSubtitleId))
+            (pendingSubtitleId == null || pendingSubtitleId == "no" ||
+                (!subtitleTrackSelectionMap.containsKey(pendingSubtitleId) && !pendingSubtitleId.startsWith("external_")))
         ) {
             selectedSubtitleTrackId = "no"
             delegate?.onPropertyChange("sid", "no")
@@ -927,7 +939,14 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
             pendingSubtitleId != selectedSubId &&
             subtitleTrackSelectionMap.containsKey(pendingSubtitleId)
         ) {
+            emitLog("info", "sub", "emitTrackList: pending selectSubtitleTrack($pendingSubtitleId) exoSelected=$selectedSubId textGroups=${textGroups.size}")
             selectSubtitleTrack(pendingSubtitleId)
+        } else if (pendingSubtitleId != null && pendingSubtitleId != "no" && pendingSubtitleId != selectedSubId) {
+            emitLog(
+                "warn",
+                "sub",
+                "emitTrackList: pending NOT applied id=$pendingSubtitleId exoSelected=$selectedSubId inMap=${subtitleTrackSelectionMap.containsKey(pendingSubtitleId)} textGroups=${textGroups.size} mapKeys=${subtitleTrackSelectionMap.keys}"
+            )
         }
 
         delegate?.onPropertyChange("track-list", trackList)
@@ -1380,6 +1399,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
 
         val currentPosition = player.currentPosition.coerceAtLeast(0L)
         val wasPlaying = player.playWhenReady
+        emitLog("info", "sub", "addSubtitleTrack begin id=$subtitleId select=$select index=$index uriTail=${uri.takeLast(64)}")
         player.setMediaItem(buildMediaItem(currentUri), currentPosition)
         player.prepare()
         player.playWhenReady = wasPlaying
@@ -1389,6 +1409,44 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
         }
 
         emitTrackList()
+
+        // After setMediaItem+prepare(), text tracks may not exist in currentTracks yet, so emitTrackList()
+        // can run before subtitleTrackSelectionMap contains our id — then pending select is skipped and
+        // TEXT may stay disabled. Re-run selection on the next frame (and once more after a short delay).
+        if (select) {
+            val pendingId = subtitleId
+            val trySelect: (String) -> Boolean = { reason ->
+                emitTrackList()
+                if (subtitleTrackSelectionMap.containsKey(pendingId)) {
+                    emitLog("info", "sub", "addSubtitleTrack: selectSubtitleTrack($pendingId) reason=$reason")
+                    selectSubtitleTrack(pendingId)
+                    true
+                } else {
+                    false
+                }
+            }
+            handler.post {
+                if (!trySelect("handler_post")) {
+                    handler.postDelayed({
+                        if (!trySelect("handler_postDelayed250")) {
+                            handler.postDelayed({
+                                if (!trySelect("handler_postDelayed700")) {
+                                    handler.postDelayed({
+                                        if (!trySelect("handler_postDelayed1500")) {
+                                            emitLog(
+                                                "warn",
+                                                "sub",
+                                                "addSubtitleTrack: could not map $pendingId after retry; keys=${subtitleTrackSelectionMap.keys}"
+                                            )
+                                        }
+                                    }, 800)
+                                }
+                            }, 450)
+                        }
+                    }, 250)
+                }
+            }
+        }
     }
 
     private fun detectSubtitleMimeType(uri: String): String {

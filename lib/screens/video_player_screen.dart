@@ -1249,14 +1249,34 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         if (!widget.isOffline) {
           final subdlSettings = await SettingsService.getInstance();
           final sid = widget.metadata.serverId ?? '';
-          final persisted = await subdlSettings.getPersistedSubdlSubtitleForPlayback(sid, widget.metadata.ratingKey);
-          if (persisted != null) {
-            restoredSubdl = SubtitleTrack.uri(
-              Uri.file(persisted.path).toString(),
-              title: persisted.title,
-              language: persisted.language,
+          final subdlState = await subdlSettings.getPersistedSubdlPlaybackState(sid, widget.metadata.ratingKey);
+          for (final e in subdlState.entries) {
+            externalSubsMerged.add(
+              SubtitleTrack.uri(
+                Uri.file(e.path).toString(),
+                title: e.title,
+                language: e.language?.toLowerCase(),
+              ),
             );
-            externalSubsMerged.add(restoredSubdl);
+          }
+          final prefPath = subdlState.preferredPath;
+          if (prefPath != null && prefPath.isNotEmpty) {
+            final norm = p.normalize(prefPath);
+            ({String path, String? title, String? language})? hit;
+            for (final e in subdlState.entries) {
+              if (p.normalize(e.path) == norm) {
+                hit = e;
+                break;
+              }
+            }
+            hit ??= subdlState.entries.isNotEmpty ? subdlState.entries.last : null;
+            if (hit != null) {
+              restoredSubdl = SubtitleTrack.uri(
+                Uri.file(hit.path).toString(),
+                title: hit.title,
+                language: hit.language?.toLowerCase(),
+              );
+            }
           }
         }
 
@@ -2678,7 +2698,20 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
   Future<void> _onAudioTrackChanged(AudioTrack track) async => _trackManager?.onAudioTrackChanged(track);
 
-  Future<void> _onSubtitleTrackChanged(SubtitleTrack track) async => _trackManager?.onSubtitleTrackChanged(track);
+  Future<void> _onSubtitleTrackChanged(SubtitleTrack track) async {
+    if (_trackManager != null) {
+      _trackManager!.preferredSubtitleTrack = track.id == 'no' ? null : track;
+    }
+    await _trackManager?.onSubtitleTrackChanged(track);
+    if (!widget.isOffline && track.uri != null && track.uri!.isNotEmpty) {
+      final settings = await SettingsService.getInstance();
+      await settings.updatePersistedSubdlLastSelectedFromUri(
+        widget.metadata.serverId ?? '',
+        widget.metadata.ratingKey,
+        track.uri!,
+      );
+    }
+  }
 
   void _onSecondarySubtitleTrackChanged(SubtitleTrack track) => _trackManager?.onSecondarySubtitleTrackChanged(track);
 

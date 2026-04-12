@@ -845,6 +845,8 @@ class SettingsService extends BaseSharedPreferencesService {
     return s.toLowerCase();
   }
 
+  static const int _persistedSubdlMaxEntries = 24;
+
   String _persistedSubdlCompoundKey(String serverId, String ratingKey) => '$serverId::$ratingKey';
 
   Map<String, dynamic> _readPersistedSubdlMap() {
@@ -862,7 +864,159 @@ class SettingsService extends BaseSharedPreferencesService {
     return dir;
   }
 
-  /// Remember a SubDL (local file) subtitle for this item so the next playback can auto-attach it.
+  /// Legacy single-file map → v2 bundle with [entries] + [lastPath].
+  Map<String, dynamic> _migrateSubdlBundleValue(dynamic raw) {
+    if (raw is! Map) {
+      return {'v': 2, 'entries': <Map<String, dynamic>>[], 'lastPath': null};
+    }
+    final m = Map<String, dynamic>.from(raw);
+    if (m['v'] == 2 && m['entries'] is List) {
+      return m;
+    }
+    final path = m['path'] as String?;
+    if (path != null && path.isNotEmpty) {
+      return {
+        'v': 2,
+        'entries': [
+          {
+            'path': path,
+            'title': m['title'],
+            'language': m['language'],
+            't': 0,
+          },
+        ],
+        'lastPath': path,
+      };
+    }
+    return {'v': 2, 'entries': <Map<String, dynamic>>[], 'lastPath': null};
+  }
+
+  List<Map<String, dynamic>> _parseSubdlEntryMaps(Map<String, dynamic> bundle) {
+    final list = bundle['entries'];
+    if (list is! List) return [];
+    return list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
+  Map<String, dynamic> _serializeSubdlBundle({
+    required List<Map<String, dynamic>> entryMaps,
+    required String? lastPath,
+  }) {
+    return {'v': 2, 'entries': entryMaps, 'lastPath': lastPath};
+  }
+
+  String? _newestPersistedSubdlPath(List<Map<String, dynamic>> entryMaps) {
+    if (entryMaps.isEmpty) return null;
+    Map<String, dynamic>? best;
+    var bestT = -1;
+    for (final em in entryMaps) {
+      final t = (em['t'] as num?)?.toInt() ?? 0;
+      if (t >= bestT) {
+        bestT = t;
+        best = em;
+      }
+    }
+    return best?['path'] as String?;
+  }
+
+  bool _isPathUnderDirectory(String filePath, String dirPath) {
+    final f = p.normalize(filePath);
+    final d = p.normalize(dirPath);
+    if (Platform.isWindows) {
+      final fl = f.toLowerCase();
+      final dl = d.toLowerCase();
+      final sep = Platform.pathSeparator;
+      return fl == dl || fl.startsWith('$dl$sep');
+    }
+    final sep = Platform.pathSeparator;
+    return f == d || f.startsWith('$d$sep');
+  }
+
+  String? _uriToLocalAbsolutePath(String uri) {
+    final trimmed = uri.trim();
+    final u = Uri.tryParse(trimmed);
+    if (u != null && u.scheme == 'file') {
+      try {
+        return p.normalize(u.toFilePath(windows: Platform.isWindows));
+      } catch (_) {
+        return null;
+      }
+    }
+    if (!trimmed.contains('://')) {
+      return p.normalize(trimmed);
+    }
+    return null;
+  }
+
+  /// Saved SubDL files for an item (paths on disk) and which file to select on open.
+  Future<({List<({String path, String? title, String? language})> entries, String? preferredPath})>
+      getPersistedSubdlPlaybackState(String serverId, String ratingKey) async {
+    final key = _persistedSubdlCompoundKey(serverId, ratingKey);
+    final map = _readPersistedSubdlMap();
+    final raw = map[key];
+    if (raw == null) {
+      return (entries: <({String path, String? title, String? language})>[], preferredPath: null);
+    }
+
+    var bundle = _migrateSubdlBundleValue(raw);
+    var entryMaps = _parseSubdlEntryMaps(bundle);
+    var lastPath = bundle['lastPath'] as String?;
+    var changed = false;
+
+    final kept = <Map<String, dynamic>>[];
+    for (final em in entryMaps) {
+      final path = em['path'] as String?;
+      if (path == null || path.isEmpty) {
+        changed = true;
+        continue;
+      }
+      if (!await File(path).exists()) {
+        changed = true;
+        continue;
+      }
+      kept.add(em);
+    }
+    if (kept.length != entryMaps.length) {
+      entryMaps = kept;
+      changed = true;
+    }
+    if (lastPath != null && lastPath.isNotEmpty && !await File(lastPath).exists()) {
+      lastPath = _newestPersistedSubdlPath(entryMaps);
+      changed = true;
+    }
+
+    if (changed) {
+      bundle = _serializeSubdlBundle(entryMaps: entryMaps, lastPath: lastPath);
+      if (entryMaps.isEmpty) {
+        map.remove(key);
+      } else {
+        map[key] = bundle;
+      }
+      await prefs.setString(_keyPersistedSubdlMap, json.encode(map));
+    }
+
+    final out = <({String path, String? title, String? language})>[];
+    for (final em in entryMaps) {
+      final path = em['path'] as String?;
+      if (path == null) continue;
+      out.add((path: path, title: em['title'] as String?, language: em['language'] as String?));
+    }
+
+    String? preferred = lastPath;
+    if (preferred != null && preferred.isNotEmpty) {
+      final norm = p.normalize(preferred);
+      final found = out.any((e) => p.normalize(e.path) == norm);
+      if (!found) {
+        preferred = out.isNotEmpty ? out.last.path : null;
+      }
+    } else if (out.isNotEmpty) {
+      preferred = out.last.path;
+    }
+
+    return (entries: out, preferredPath: preferred);
+  }
+
+  /// Remember a SubDL (local file) subtitle for this item so later sessions can re-attach it.
+  /// Multiple downloads are kept (up to [_persistedSubdlMaxEntries]); the new file becomes the preferred track.
   Future<void> setPersistedSubdlSubtitle({
     required String serverId,
     required String ratingKey,
@@ -878,34 +1032,64 @@ class SettingsService extends BaseSharedPreferencesService {
     if (!const {'.srt', '.vtt', '.ass', '.ssa'}.contains(ext)) {
       ext = '.srt';
     }
-    final destPath = p.join(dir.path, '$safe$ext');
+    final destPath = p.join(dir.path, '${safe}_${DateTime.now().millisecondsSinceEpoch}$ext');
     await src.copy(destPath);
+
     final map = _readPersistedSubdlMap();
-    map[_persistedSubdlCompoundKey(serverId, ratingKey)] = {
+    final key = _persistedSubdlCompoundKey(serverId, ratingKey);
+    var bundle = _migrateSubdlBundleValue(map[key]);
+    var entryMaps = _parseSubdlEntryMaps(bundle);
+    final normDest = p.normalize(destPath);
+    entryMaps = entryMaps.where((em) => p.normalize(em['path'] as String? ?? '') != normDest).toList();
+
+    entryMaps.add({
       'path': destPath,
       'title': title,
       'language': language,
-    };
+      't': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    while (entryMaps.length > _persistedSubdlMaxEntries) {
+      entryMaps.sort((a, b) => ((a['t'] as num?)?.toInt() ?? 0).compareTo((b['t'] as num?)?.toInt() ?? 0));
+      final removed = entryMaps.removeAt(0);
+      final oldPath = removed['path'] as String?;
+      if (oldPath != null) {
+        try {
+          await File(oldPath).delete();
+        } catch (_) {}
+      }
+    }
+
+    bundle = _serializeSubdlBundle(entryMaps: entryMaps, lastPath: destPath);
+    map[key] = bundle;
     await prefs.setString(_keyPersistedSubdlMap, json.encode(map));
   }
 
-  Future<({String path, String? title, String? language})?> getPersistedSubdlSubtitleForPlayback(
-    String serverId,
-    String ratingKey,
-  ) async {
-    final key = _persistedSubdlCompoundKey(serverId, ratingKey);
-    final map = _readPersistedSubdlMap();
-    final raw = map[key];
-    if (raw is! Map) return null;
-    final path = raw['path'] as String?;
-    if (path == null || path.isEmpty) return null;
-    final f = File(path);
-    if (!await f.exists()) {
-      map.remove(key);
-      await prefs.setString(_keyPersistedSubdlMap, json.encode(map));
-      return null;
+  /// When the user selects a subtitle that lives in our persisted SubDL cache, remember it for the next open.
+  Future<void> updatePersistedSubdlLastSelectedFromUri(String serverId, String ratingKey, String uri) async {
+    final path = _uriToLocalAbsolutePath(uri);
+    if (path == null) return;
+    final dir = await _persistedSubdlDirectory();
+    if (!_isPathUnderDirectory(path, dir.path)) {
+      return;
     }
-    return (path: path, title: raw['title'] as String?, language: raw['language'] as String?);
+
+    final map = _readPersistedSubdlMap();
+    final key = _persistedSubdlCompoundKey(serverId, ratingKey);
+    final raw = map[key];
+    if (raw == null) return;
+
+    var bundle = _migrateSubdlBundleValue(raw);
+    var entryMaps = _parseSubdlEntryMaps(bundle);
+    final norm = p.normalize(path);
+    final known = entryMaps.any((em) => p.normalize(em['path'] as String? ?? '') == norm);
+    if (!known) {
+      return;
+    }
+
+    bundle['lastPath'] = path;
+    map[key] = bundle;
+    await prefs.setString(_keyPersistedSubdlMap, json.encode(map));
   }
 
   // Click on Video Player Settings

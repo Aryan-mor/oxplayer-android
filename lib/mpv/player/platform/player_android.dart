@@ -155,12 +155,26 @@ class PlayerAndroid extends PlayerBase {
 
   @override
   Future<void> selectSubtitleTrack(SubtitleTrack track) async {
+    if (track.id != 'no') {
+      _hiddenSubtitleTrackId = null;
+    }
     await invoke('selectSubtitleTrack', {'trackId': track.id});
   }
 
   @override
   Future<void> addSubtitleTrack({required String uri, String? title, String? language, bool select = false}) async {
-    await invoke('addSubtitleTrack', {'uri': uri, 'title': title, 'language': language, 'select': select});
+    appLogger.i(
+      'ExoPlayer addSubtitleTrack select=$select title=${title ?? ""} uriLen=${uri.length}',
+    );
+    try {
+      if (select) {
+        _hiddenSubtitleTrackId = null;
+      }
+      await invoke('addSubtitleTrack', {'uri': uri, 'title': title, 'language': language, 'select': select});
+    } catch (e, st) {
+      appLogger.e('ExoPlayer addSubtitleTrack failed', error: e, stackTrace: st);
+      rethrow;
+    }
   }
 
   // ============================================

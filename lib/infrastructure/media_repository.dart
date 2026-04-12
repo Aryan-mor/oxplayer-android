@@ -446,4 +446,22 @@ class MediaRepository {
       messageId: item.thumbnailSourceMessageId,
     );
   }
+
+  /// Telegram-derived thumbnail for an OX [general_video] detail (detail list items carry locator fields on files).
+  Future<String?> fetchVideoThumbnailForOxDetail(OxLibraryMediaDetail detail) {
+    if (detail.media.type.toUpperCase() != 'GENERAL_VIDEO') {
+      return Future<String?>.value(null);
+    }
+    final file = selectPreferredFile(detail);
+    return dataRepository.fetchVideoThumbnail(
+      mediaId: detail.media.id,
+      fileUniqueId: (file == null || file.fileUniqueId.isEmpty) ? null : file.fileUniqueId,
+      locatorType: file?.locatorType,
+      locatorChatId: file?.locatorChatId,
+      locatorMessageId: file?.locatorMessageId,
+      locatorRemoteFileId: file?.locatorRemoteFileId,
+      chatId: null,
+      messageId: null,
+    );
+  }
 }

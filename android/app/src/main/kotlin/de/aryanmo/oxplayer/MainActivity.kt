@@ -40,6 +40,7 @@ import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.android.TransparencyMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.Locale
 import de.aryanmo.oxplayer.exoplayer.ExoPlayerPlugin
@@ -51,6 +52,21 @@ import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** Flutter may send Dart [int] as [Long] on the platform channel; [MethodCall.argument]<Int> returns null. */
+private fun MethodCall.optionalInt(key: String): Int? {
+    val raw = argument<Any>(key) ?: return null
+    return when (raw) {
+        is Int -> raw
+        is Long -> raw.toInt()
+        is Short -> raw.toInt()
+        is Byte -> raw.toInt()
+        is Double -> raw.toInt()
+        is Float -> raw.toInt()
+        is Number -> raw.toInt()
+        else -> null
+    }
+}
 
 class MainActivity : FlutterActivity() {
 
@@ -346,9 +362,9 @@ class MainActivity : FlutterActivity() {
                     val filmName = call.argument<String>("filmName")?.trim().orEmpty()
                     val contentType = call.argument<String>("contentType")?.trim().orEmpty()
                     val languages = call.argument<String>("languages")?.trim().orEmpty()
-                    val year = call.argument<Int>("year")
-                    val seasonNumber = call.argument<Int>("seasonNumber")
-                    val episodeNumber = call.argument<Int>("episodeNumber")
+                    val year = call.optionalInt("year")
+                    val seasonNumber = call.optionalInt("seasonNumber")
+                    val episodeNumber = call.optionalInt("episodeNumber")
                     val imdbId = call.argument<String>("imdbId")?.trim()
                     val tmdbId = call.argument<String>("tmdbId")?.trim()
 
@@ -359,6 +375,10 @@ class MainActivity : FlutterActivity() {
 
                     Thread {
                         try {
+                            Log.i(
+                                TAG,
+                                "searchSubdl (channel): film=$filmName type=$contentType lang=$languages year=$year S=$seasonNumber E=$episodeNumber imdb=$imdbId tmdb=$tmdbId",
+                            )
                             val outcome = subdlClient.search(
                                 apiKey = apiKey,
                                 filmName = filmName,
@@ -401,9 +421,9 @@ class MainActivity : FlutterActivity() {
                     val filmName = call.argument<String>("filmName")?.trim().orEmpty()
                     val contentType = call.argument<String>("contentType")?.trim().orEmpty()
                     val preferredLanguageCode = call.argument<String>("preferredLanguageCode")?.trim()
-                    val year = call.argument<Int>("year")
-                    val seasonNumber = call.argument<Int>("seasonNumber")
-                    val episodeNumber = call.argument<Int>("episodeNumber")
+                    val year = call.optionalInt("year")
+                    val seasonNumber = call.optionalInt("seasonNumber")
+                    val episodeNumber = call.optionalInt("episodeNumber")
                     val imdbId = call.argument<String>("imdbId")?.trim()
                     val tmdbId = call.argument<String>("tmdbId")?.trim()
 
@@ -430,9 +450,9 @@ class MainActivity : FlutterActivity() {
                     val filmName = call.argument<String>("filmName")?.trim().orEmpty()
                     val contentType = call.argument<String>("contentType")?.trim().orEmpty()
                     val preferredLanguageCode = call.argument<String>("preferredLanguageCode")?.trim()
-                    val year = call.argument<Int>("year")
-                    val seasonNumber = call.argument<Int>("seasonNumber")
-                    val episodeNumber = call.argument<Int>("episodeNumber")
+                    val year = call.optionalInt("year")
+                    val seasonNumber = call.optionalInt("seasonNumber")
+                    val episodeNumber = call.optionalInt("episodeNumber")
                     val imdbId = call.argument<String>("imdbId")?.trim()
                     val tmdbId = call.argument<String>("tmdbId")?.trim()
 
@@ -790,6 +810,10 @@ class MainActivity : FlutterActivity() {
             notifyFlutterSubtitleSearchLanguage(selectedLanguage)
             val parsedSeason = seasonEditText.text?.toString()?.trim()?.toIntOrNull()
             val parsedEpisode = episodeEditText.text?.toString()?.trim()?.toIntOrNull()
+            Log.i(
+                TAG,
+                "SubDL picker runSearch: film=$filmName rawSeason=${seasonEditText.text} rawEpisode=${episodeEditText.text} -> S=$parsedSeason E=$parsedEpisode lang=$selectedLanguage type=$contentType year=$year",
+            )
             positiveButton()?.isEnabled = false
 
             lifecycleScope.launch {
@@ -807,6 +831,7 @@ class MainActivity : FlutterActivity() {
                     )
                 }
                 positiveButton()?.isEnabled = true
+                Log.i(TAG, "SubDL picker outcome: err=${outcome.errorMessage} count=${outcome.subtitles.size}")
                 if (outcome.errorMessage != null) {
                     Toast.makeText(
                         this@MainActivity,
@@ -922,6 +947,10 @@ class MainActivity : FlutterActivity() {
             notifyFlutterSubtitleSearchLanguage(selectedLanguage)
             val parsedSeason = seasonEditText.text?.toString()?.trim()?.toIntOrNull()
             val parsedEpisode = episodeEditText.text?.toString()?.trim()?.toIntOrNull()
+            Log.i(
+                TAG,
+                "SubDL dialog runSearch: film=$filmName rawSeason=${seasonEditText.text} rawEpisode=${episodeEditText.text} -> S=$parsedSeason E=$parsedEpisode lang=$selectedLanguage type=$contentType year=$year imdb=$imdbId tmdb=$tmdbId",
+            )
             positiveButton()?.isEnabled = false
 
             lifecycleScope.launch {
@@ -939,6 +968,7 @@ class MainActivity : FlutterActivity() {
                     )
                 }
                 positiveButton()?.isEnabled = true
+                Log.i(TAG, "SubDL dialog outcome: err=${outcome.errorMessage} count=${outcome.subtitles.size}")
                 if (outcome.errorMessage != null) {
                     Toast.makeText(
                         this@MainActivity,

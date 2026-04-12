@@ -454,6 +454,31 @@ class PlexMetadata with MultiServerFields {
     return null;
   }
 
+  /// SubDL `season_number` / `episode_number` (Plex field semantics differ by type).
+  ///
+  /// **Episode:** [parentIndex] = season, [index] = episode in that season.
+  /// **Season:** [index] = season number; [parentIndex] is not the season index.
+  /// **Show / movie / other:** no episode context.
+  (int? seasonNumber, int? episodeNumber) get subdlSeasonEpisodeNumbers {
+    switch (mediaType) {
+      case PlexMediaType.episode:
+        return (parentIndex, index);
+      case PlexMediaType.season:
+        return (index, null);
+      case PlexMediaType.show:
+      case PlexMediaType.movie:
+      case PlexMediaType.artist:
+      case PlexMediaType.album:
+      case PlexMediaType.track:
+      case PlexMediaType.collection:
+      case PlexMediaType.playlist:
+      case PlexMediaType.clip:
+      case PlexMediaType.photo:
+      case PlexMediaType.unknown:
+        return (null, null);
+    }
+  }
+
   /// Returns the appropriate image path based on episode poster mode.
   /// For episodes:
   ///   - seriesPoster: grandparentThumb (series poster)

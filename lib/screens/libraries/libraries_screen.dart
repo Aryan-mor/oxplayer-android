@@ -976,24 +976,39 @@ class _LibrariesScreenState extends State<LibrariesScreen>
                 // Tab content
                 if (selectedLibrary != null)
                   SliverFillRemaining(
-                    child: TabBarView(
-                      key: ValueKey(_selectedLibraryGlobalKey),
-                      controller: tabController,
-                      // Disable swipe on desktop - trackpad scrolling triggers accidental tab switches
-                      // See: https://github.com/flutter/flutter/issues/11132
-                      physics: PlatformDetector.isDesktop(context) ? const NeverScrollableScrollPhysics() : null,
-                      // Wrap each tab in ClipRect so horizontal overflow (e.g. hub rows
-                      // with Clip.none) doesn't bleed into adjacent tabs during swipe transitions.
-                      // The TabBarView's own clipBehavior only clips at the viewport level,
-                      // not per-page, so we need per-child clipping.
+                    // Tab pages host their own scroll views (browse grid, hub lists, etc.).
+                    // hasScrollBody: false + Expanded mirrors downloads_screen so TabBarView always
+                    // gets a definite height; without this, nested scrollables on some form factors
+                    // (e.g. Android TV) can see zero viewport and appear permanently empty.
+                    hasScrollBody: false,
+                    child: Column(
                       children: [
-                        for (int i = 0; i < _visibleTabs.length; i++)
-                          ClipRect(child: _buildTabContent(
-                            _visibleTabs[i],
-                            library: selectedLibrary,
-                            isActive: tabController.index == i,
-                            tabIndex: i,
-                          )),
+                        Expanded(
+                          child: TabBarView(
+                            key: ValueKey(_selectedLibraryGlobalKey),
+                            controller: tabController,
+                            // Disable swipe on desktop/TV — trackpad / remote gestures can change tabs
+                            // accidentally. See: https://github.com/flutter/flutter/issues/11132
+                            physics: (PlatformDetector.isDesktop(context) || PlatformDetector.isTV())
+                                ? const NeverScrollableScrollPhysics()
+                                : null,
+                            // Wrap each tab in ClipRect so horizontal overflow (e.g. hub rows
+                            // with Clip.none) doesn't bleed into adjacent tabs during swipe transitions.
+                            // The TabBarView's own clipBehavior only clips at the viewport level,
+                            // not per-page, so we need per-child clipping.
+                            children: [
+                              for (int i = 0; i < _visibleTabs.length; i++)
+                                ClipRect(
+                                  child: _buildTabContent(
+                                    _visibleTabs[i],
+                                    library: selectedLibrary,
+                                    isActive: tabController.index == i,
+                                    tabIndex: i,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
