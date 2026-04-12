@@ -358,6 +358,8 @@ class DataRepository {
   final Map<String, DateTime> _lastThumbnailRecoveryRequestAt = <String, DateTime>{};
   final Set<String> _locatorHealInFlight = <String>{};
   final Map<String, DateTime> _lastLocatorHealRequestAt = <String, DateTime>{};
+  /// Cache for `SearchPublicChat` → TDLib chat id (main / provider bot DMs).
+  final Map<String, int?> _locatorEnvSearchChatIdByUsername = <String, int?>{};
 
   static Future<DataRepository> create() async {
     final existing = _sharedCreateFuture;
@@ -1059,6 +1061,9 @@ class DataRepository {
         return cachedFile.path;
       }
 
+      final locatorTagSearchChats = await _locatorTagTelegramSearchChatIdsForEnv(
+        (message) => debugLogInfo(message, type: LogType.telegramThumbnail),
+      );
       final directResolvedFile = await resolveTelegramMediaFile(
         tdlib: _tdlib,
         mediaFileId: mediaId,
@@ -1067,6 +1072,7 @@ class DataRepository {
         locatorChatId: locatorChatId,
         locatorMessageId: locatorMessageId,
         locatorRemoteFileId: locatorRemoteFileId,
+        locatorTagTelegramSearchChatIds: locatorTagSearchChats,
         onDiagnostic: (message) => debugLogInfo(message, type: LogType.telegramThumbnail),
       );
       if (directResolvedFile != null) {
@@ -1262,6 +1268,63 @@ class DataRepository {
 
     return null;
   }
+  Future<int?> _cachedTdlibChatIdForEnvBotUsername(
+    String rawUsername,
+    void Function(String message)? onDiagnostic,
+  ) async {
+    final key = rawUsername.trim().replaceFirst(RegExp(r'^@+'), '').toLowerCase();
+    if (key.isEmpty) {
+      return null;
+    }
+    if (_locatorEnvSearchChatIdByUsername.containsKey(key)) {
+      return _locatorEnvSearchChatIdByUsername[key];
+    }
+    try {
+      final resolved = await _tdlib.send(td.SearchPublicChat(username: key));
+      if (resolved is td.Chat) {
+        _locatorEnvSearchChatIdByUsername[key] = resolved.id;
+        onDiagnostic?.call('Resolved @$key to TDLib chatId=${resolved.id} for locator SearchPublicChat');
+        return resolved.id;
+      }
+    } on td.TdError catch (error) {
+      onDiagnostic?.call(
+        'SearchPublicChat failed for @$key: code=${error.code} message=${error.message}',
+      );
+    } catch (error) {
+      onDiagnostic?.call('SearchPublicChat crashed for @$key: $error');
+    }
+    _locatorEnvSearchChatIdByUsername[key] = null;
+    return null;
+  }
+
+  Future<List<int>> _locatorTagTelegramSearchChatIdsForEnv(void Function(String message)? onDiagnostic) async {
+    final out = <int>[];
+    final seen = <int>{};
+    for (final raw in <String>[_config.botUsername, _config.providerBotUsername]) {
+      final id = await _cachedTdlibChatIdForEnvBotUsername(raw, onDiagnostic);
+      if (id != null && seen.add(id)) {
+        out.add(id);
+      }
+    }
+    return out;
+  }
+
+  Future<void> _openChatsBestEffortForLocator(Iterable<int> chatIds, void Function(String message)? onDiagnostic) async {
+    final seen = <int>{};
+    for (final id in chatIds) {
+      if (id == 0 || !seen.add(id)) continue;
+      try {
+        await _tdlib.send(td.OpenChat(chatId: id));
+      } on td.TdError catch (error) {
+        onDiagnostic?.call(
+          'OpenChat best-effort failed for chatId=$id: code=${error.code} message=${error.message}',
+        );
+      } catch (error) {
+        onDiagnostic?.call('OpenChat best-effort crashed for chatId=$id: $error');
+      }
+    }
+  }
+
   Future<_ThumbnailMessageLookupResult> _resolveThumbnailMessage({
     String? mediaId,
     required int chatId,
@@ -1274,6 +1337,8 @@ class DataRepository {
     final chatCandidates = _candidateTelegramChatIds(chatId, exactOnly: exactChatIdOnly)
         .toList(growable: false);
     final messageCandidates = _candidateTelegramMessageIds(messageId).toList(growable: false);
+
+    await _openChatsBestEffortForLocator(chatCandidates, onDiagnostic);
 
     onDiagnostic?.call(
       'Stored locator direct lookup prepared for mediaFileId=n/a chatCandidates=$chatCandidates messageCandidates=$messageCandidates locatorRemoteFileId=n/a',
@@ -1318,42 +1383,53 @@ class DataRepository {
     }
 
     final trimmedFileUniqueId = fileUniqueId?.trim() ?? '';
-    if (trimmedFileUniqueId.isNotEmpty) {
-      for (final chatCandidate in chatCandidates) {
-        onDiagnostic?.call(
-          'Trying Telegram recent history fallback for chatCandidate=$chatCandidate fileUniqueId=$trimmedFileUniqueId',
-        );
-        final historyMatch = await _findMessageInRecentHistoryByFileUniqueId(
-          chatId: chatCandidate,
-          fileUniqueId: trimmedFileUniqueId,
-          onDiagnostic: onDiagnostic,
-        );
-        if (historyMatch != null) {
-          return historyMatch;
-        }
+    final trimmedMediaId = mediaId?.trim() ?? '';
+    final hasFileUnique = trimmedFileUniqueId.isNotEmpty;
+    final hasMediaId = trimmedMediaId.isNotEmpty;
 
-        if (mediaId != null && mediaId.trim().isNotEmpty) {
-          final tagMatch = await _findMessageBySearchTagReply(
-            mediaId: mediaId,
-            chatId: chatCandidate,
-            fileUniqueId: trimmedFileUniqueId,
-            onDiagnostic: onDiagnostic,
-          );
-          if (tagMatch != null) {
-            return tagMatch;
-          }
-        }
-      }
-    } else if (mediaId != null && mediaId.trim().isNotEmpty) {
-      for (final chatCandidate in chatCandidates) {
+    if (hasMediaId) {
+      final envSearchChats = await _locatorTagTelegramSearchChatIdsForEnv(onDiagnostic);
+      final seenEnv = <int>{};
+      for (final searchChatId in envSearchChats) {
+        if (!seenEnv.add(searchChatId)) continue;
+        await _openChatsBestEffortForLocator([searchChatId], onDiagnostic);
+        onDiagnostic?.call(
+          'Trying Telegram SearchChatMessages for locator tag (BOT_USERNAME / PROVIDER_BOT_USERNAME) chatId=$searchChatId mediaId=$trimmedMediaId',
+        );
         final tagMatch = await _findMessageBySearchTagReply(
-          mediaId: mediaId,
-          chatId: chatCandidate,
-          fileUniqueId: null,
+          mediaId: trimmedMediaId,
+          chatId: searchChatId,
+          fileUniqueId: hasFileUnique ? trimmedFileUniqueId : null,
           onDiagnostic: onDiagnostic,
         );
         if (tagMatch != null) {
           return tagMatch;
+        }
+      }
+
+      final globalTag = await _findLocatorTagViaGlobalSearchMessages(
+        mediaId: trimmedMediaId,
+        fileUniqueId: hasFileUnique ? trimmedFileUniqueId : null,
+        onDiagnostic: onDiagnostic,
+      );
+      if (globalTag != null) {
+        return globalTag;
+      }
+    }
+
+    if (hasFileUnique || hasMediaId) {
+      for (final chatCandidate in chatCandidates) {
+        onDiagnostic?.call(
+          'Trying Telegram GetChatHistory locator fallback for chatCandidate=$chatCandidate fileUniqueId=${hasFileUnique ? trimmedFileUniqueId : '(none)'} mediaId=${hasMediaId ? trimmedMediaId : '(none)'}',
+        );
+        final historyMatch = await _paginatedHistoryLocatorFallback(
+          chatId: chatCandidate,
+          fileUniqueId: hasFileUnique ? trimmedFileUniqueId : null,
+          mediaId: hasMediaId ? trimmedMediaId : null,
+          onDiagnostic: onDiagnostic,
+        );
+        if (historyMatch != null) {
+          return historyMatch;
         }
       }
     }
@@ -1368,45 +1444,185 @@ class DataRepository {
     );
   }
 
-  Future<_ThumbnailMessageLookupResult?> _findMessageInRecentHistoryByFileUniqueId({
-    required int chatId,
-    required String fileUniqueId,
+  /// TDLib server search across non-secret chats — often finds `#oxm_*` when per-chat [SearchChatMessages] is empty.
+  Future<_ThumbnailMessageLookupResult?> _findLocatorTagViaGlobalSearchMessages({
+    required String mediaId,
+    required String? fileUniqueId,
     void Function(String message)? onDiagnostic,
   }) async {
-    try {
-      final result = await _tdlib.send(
-        td.GetChatHistory(
-          chatId: chatId,
-          fromMessageId: 0,
-          offset: 0,
-          limit: 60,
-          onlyLocal: false,
-        ),
-      );
-      if (result is! td.Messages) return null;
+    final trimmed = mediaId.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    final queries = <String>{_buildMediaLocatorSearchTag(trimmed), 'oxm_$trimmed'}.toList(growable: false);
+    final trimmedFu = fileUniqueId?.trim() ?? '';
 
-      for (final message in result.messages) {
-        if (_messageFileUniqueId(message) != fileUniqueId) continue;
+    for (final query in queries) {
+      try {
+        onDiagnostic?.call('Trying Telegram SearchMessages (all non-secret chats) query=$query');
+        final raw = await _tdlib.send(
+          td.SearchMessages(
+            chatList: null,
+            query: query,
+            offset: '',
+            limit: 50,
+            filter: null,
+            minDate: 0,
+            maxDate: 0,
+          ),
+        );
+        if (raw is! td.FoundMessages) {
+          onDiagnostic?.call('SearchMessages unexpected result type=${raw.runtimeType} query=$query');
+          continue;
+        }
         onDiagnostic?.call(
-          'Telegram recent history fallback matched chatCandidate=$chatId resolvedMessageId=${message.id} fileId=${_messagePlayableFileId(message)}',
+          'SearchMessages query=$query totalCount=${raw.totalCount} returned=${raw.messages.length} nextOffsetLen=${raw.nextOffset.length}',
         );
-        return _ThumbnailMessageLookupResult(
-          message: message,
-          resolvedChatId: chatId,
-          resolvedMessageId: message.id,
-          resolutionReason: 'recent_history_file_unique_id',
+        for (final msg in raw.messages) {
+          final plain = _messagePlainTextForLocatorScan(msg);
+          if (plain == null || !_plainTextContainsLocatorTag(plain, trimmed)) {
+            continue;
+          }
+          final resolved = await _resolveThumbnailFromLocatorTaggedMessage(
+            tagMessage: msg,
+            defaultChatId: msg.chatId,
+            fileUniqueId: trimmedFu.isEmpty ? null : trimmedFu,
+            logContext: 'global_search',
+            onDiagnostic: onDiagnostic,
+          );
+          if (resolved != null) {
+            return resolved;
+          }
+        }
+      } on td.TdError catch (error) {
+        onDiagnostic?.call(
+          'SearchMessages failed query=$query: code=${error.code} message=${error.message}',
         );
+      } catch (error) {
+        onDiagnostic?.call('SearchMessages crashed query=$query: $error');
       }
+    }
+
+    return null;
+  }
+
+  Future<_ThumbnailMessageLookupResult?> _paginatedHistoryLocatorFallback({
+    required int chatId,
+    required String? fileUniqueId,
+    required String? mediaId,
+    void Function(String message)? onDiagnostic,
+  }) async {
+    final trimmedUnique = fileUniqueId?.trim() ?? '';
+    final trimmedMedia = mediaId?.trim() ?? '';
+    if (trimmedUnique.isEmpty && trimmedMedia.isEmpty) {
+      return null;
+    }
+
+    const pageLimit = 100;
+    const maxPages = 30;
+    var fromMessageId = 0;
+    var offset = 0;
+    var scannedPages = 0;
+
+    try {
+      for (var page = 0; page < maxPages; page++) {
+        final result = await _tdlib.send(
+          td.GetChatHistory(
+            chatId: chatId,
+            fromMessageId: fromMessageId,
+            offset: offset,
+            limit: pageLimit,
+            onlyLocal: false,
+          ),
+        );
+        if (result is! td.Messages || result.messages.isEmpty) {
+          if (page == 0) {
+            onDiagnostic?.call(
+              'Telegram history locator scan found no messages for chatCandidate=$chatId',
+            );
+            return null;
+          }
+          break;
+        }
+        scannedPages++;
+        final batch = result.messages;
+        final playable = batch.where((m) => _messagePlayableFile(m) != null).length;
+        var withAnyUnique = 0;
+        final uniqueSamples = <String>[];
+        for (final m in batch) {
+          final u = _messageFileUniqueId(m);
+          if (u != null && u.isNotEmpty) {
+            withAnyUnique++;
+            if (uniqueSamples.length < 4) {
+              uniqueSamples.add(u.length > 10 ? '${u.substring(0, 10)}…' : u);
+            }
+          }
+        }
+        onDiagnostic?.call(
+          'GetChatHistory chatId=$chatId page=$page batchSize=${batch.length} '
+          'msgIdRange=${batch.isEmpty ? 'empty' : '${batch.last.id}..${batch.first.id}'} '
+          'playableAttachments=$playable messagesWithFileUniqueId=$withAnyUnique '
+          'fileUniqueSamples=$uniqueSamples wantExactFileUnique=${trimmedUnique.isNotEmpty ? '${trimmedUnique.substring(0, trimmedUnique.length > 8 ? 8 : trimmedUnique.length)}…' : 'no'}',
+        );
+
+        for (final message in batch) {
+          if (trimmedUnique.isNotEmpty) {
+            if (_messageFileUniqueId(message) == trimmedUnique) {
+              onDiagnostic?.call(
+                'Telegram history locator scan matched fileUniqueId chatCandidate=$chatId resolvedMessageId=${message.id} fileId=${_messagePlayableFileId(message)}',
+              );
+              return _ThumbnailMessageLookupResult(
+                message: message,
+                resolvedChatId: chatId,
+                resolvedMessageId: message.id,
+                resolutionReason: 'recent_history_file_unique_id',
+              );
+            }
+          }
+          if (trimmedMedia.isNotEmpty) {
+            final plain = _messagePlainTextForLocatorScan(message);
+            if (plain != null && _plainTextContainsLocatorTag(plain, trimmedMedia)) {
+              onDiagnostic?.call(
+                'Telegram history locator scan found #oxm tag in plain text messageId=${message.id} chatCandidate=$chatId',
+              );
+              final viaTag = await _resolveThumbnailFromLocatorTaggedMessage(
+                tagMessage: message,
+                defaultChatId: chatId,
+                fileUniqueId: trimmedUnique.isEmpty ? null : trimmedUnique,
+                logContext: 'history_tag',
+                onDiagnostic: onDiagnostic,
+              );
+              if (viaTag != null) {
+                return viaTag;
+              }
+            }
+          }
+        }
+
+        if (batch.length < pageLimit) {
+          onDiagnostic?.call(
+            'GetChatHistory chatId=$chatId stopping pagination: batchSize=${batch.length} < pageLimit=$pageLimit (no more messages from server)',
+          );
+          break;
+        }
+
+        final oldestInBatch = batch.last.id;
+        fromMessageId = oldestInBatch;
+        offset = -pageLimit;
+      }
+
       onDiagnostic?.call(
-        'Telegram recent history fallback found no matching fileUniqueId for chatCandidate=$chatId',
+        scannedPages == 0
+            ? 'Telegram history locator scan found no fileUniqueId or locator tag for chatCandidate=$chatId'
+            : 'Telegram history locator scan found no fileUniqueId or locator tag for chatCandidate=$chatId after $scannedPages page(s) (up to ${scannedPages * pageLimit} messages)',
       );
     } on td.TdError catch (error) {
       onDiagnostic?.call(
-        'Telegram recent history fallback failed for chatCandidate=$chatId: code=${error.code} message=${error.message}',
+        'Telegram history locator scan failed for chatCandidate=$chatId: code=${error.code} message=${error.message}',
       );
     } catch (error) {
       onDiagnostic?.call(
-        'Telegram recent history fallback crashed for chatCandidate=$chatId: $error',
+        'Telegram history locator scan crashed for chatCandidate=$chatId: $error',
       );
     }
 
@@ -1419,96 +1635,57 @@ class DataRepository {
     required String? fileUniqueId,
     void Function(String message)? onDiagnostic,
   }) async {
-    final query = _buildMediaLocatorSearchTag(mediaId);
-    try {
-      onDiagnostic?.call(
-        'Trying Telegram bot reply search fallback for chatCandidate=$chatId query=$query',
-      );
-      final result = await _tdlib.send(
-        td.SearchChatMessages(
-          chatId: chatId,
-          query: query,
-          senderId: null,
-          fromMessageId: 0,
-          offset: 0,
-          limit: 20,
-          filter: null,
-          messageThreadId: 0,
-        ),
-      );
-      if (result is! td.Messages || result.messages.isEmpty) {
-        onDiagnostic?.call(
-          'Telegram bot reply search fallback found no tag messages for chatCandidate=$chatId query=$query',
-        );
-        return null;
-      }
+    final queries = <String>{
+      _buildMediaLocatorSearchTag(mediaId),
+      'oxm_${mediaId.trim()}',
+    }.toList(growable: false);
 
-      final trimmedFileUniqueId = fileUniqueId?.trim() ?? '';
-      for (final tagMessage in result.messages) {
-        final directFile = _messagePlayableFile(tagMessage);
-        if (directFile != null) {
-          if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(tagMessage) != trimmedFileUniqueId) {
-            onDiagnostic?.call(
-              'Telegram bot reply search fallback skipped tagMessageId=${tagMessage.id} because direct message fileUniqueId did not match',
-            );
-          } else {
-            onDiagnostic?.call(
-              'Telegram bot reply search fallback matched direct tagMessageId=${tagMessage.id} resolvedChatId=$chatId resolvedMessageId=${tagMessage.id} fileId=${directFile.id}',
-            );
-            return _ThumbnailMessageLookupResult(
-              message: tagMessage,
-              resolvedChatId: chatId,
-              resolvedMessageId: tagMessage.id,
-              resolutionReason: 'bot_reply_search_tag_direct_message',
-            );
-          }
+    for (final query in queries) {
+      try {
+        onDiagnostic?.call(
+          'Telegram SearchChatMessages (locator tag) chatCandidate=$chatId query=$query',
+        );
+        final result = await _tdlib.send(
+          td.SearchChatMessages(
+            chatId: chatId,
+            query: query,
+            senderId: null,
+            fromMessageId: 0,
+            offset: 0,
+            limit: 50,
+            filter: null,
+            messageThreadId: 0,
+          ),
+        );
+        if (result is! td.Messages || result.messages.isEmpty) {
+          onDiagnostic?.call(
+            'SearchChatMessages returned no messages for chatCandidate=$chatId query=$query',
+          );
+          continue;
         }
 
-        final replyTo = tagMessage.replyTo;
-        if (replyTo is! td.MessageReplyToMessage) continue;
-        onDiagnostic?.call(
-          'Telegram bot reply search fallback inspecting tagMessageId=${tagMessage.id} replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}',
-        );
-        try {
-          final replied = await _tdlib.send(
-            td.GetMessage(chatId: replyTo.chatId, messageId: replyTo.messageId),
+        final trimmedFileUniqueId = fileUniqueId?.trim() ?? '';
+        for (final tagMessage in result.messages) {
+          final viaTag = await _resolveThumbnailFromLocatorTaggedMessage(
+            tagMessage: tagMessage,
+            defaultChatId: chatId,
+            fileUniqueId: trimmedFileUniqueId.isEmpty ? null : trimmedFileUniqueId,
+            logContext: 'search_api',
+            onDiagnostic: onDiagnostic,
           );
-          if (replied is! td.Message) continue;
-          if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(replied) != trimmedFileUniqueId) {
-            onDiagnostic?.call(
-              'Telegram bot reply search fallback skipped replyMessageId=${replyTo.messageId} because fileUniqueId did not match',
-            );
-            continue;
+          if (viaTag != null) {
+            return viaTag;
           }
-          final file = _messagePlayableFile(replied);
-          if (file == null) continue;
-          onDiagnostic?.call(
-            'Telegram bot reply search fallback matched tagMessageId=${tagMessage.id} resolvedChatId=${replyTo.chatId} resolvedMessageId=${replied.id} fileId=${file.id}',
-          );
-          return _ThumbnailMessageLookupResult(
-            message: replied,
-            resolvedChatId: replyTo.chatId,
-            resolvedMessageId: replied.id,
-            resolutionReason: 'bot_reply_search_tag',
-          );
-        } on td.TdError catch (error) {
-          onDiagnostic?.call(
-            'Telegram bot reply search fallback failed for replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: code=${error.code} message=${error.message}',
-          );
-        } catch (error) {
-          onDiagnostic?.call(
-            'Telegram bot reply search fallback crashed for replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: $error',
-          );
         }
+      } on td.TdError catch (error) {
+        onDiagnostic?.call(
+          'SearchChatMessages failed for chatCandidate=$chatId query=$query: code=${error.code} message=${error.message}',
+        );
+      } catch (error) {
+        onDiagnostic?.call(
+          'SearchChatMessages crashed for chatCandidate=$chatId query=$query: $error',
+        );
       }
-    } on td.TdError catch (error) {
-      onDiagnostic?.call(
-        'Telegram bot reply search fallback failed for chatCandidate=$chatId query=$query: code=${error.code} message=${error.message}',
-      );
-    } catch (error) {
-      onDiagnostic?.call(
-        'Telegram bot reply search fallback crashed for chatCandidate=$chatId query=$query: $error',
-      );
     }
 
     return null;
@@ -1543,9 +1720,15 @@ class DataRepository {
       if (message != null) {
         final file = _messagePlayableFile(message);
         if (file != null) {
-          if (lookup.resolutionReason == 'recent_history_file_unique_id') {
+          if (lookup.resolutionReason == 'recent_history_file_unique_id' ||
+              lookup.resolutionReason == 'history_scan_locator_tag_direct' ||
+              lookup.resolutionReason == 'history_scan_locator_tag_reply' ||
+              lookup.resolutionReason == 'global_search_locator_tag_direct' ||
+              lookup.resolutionReason == 'global_search_locator_tag_reply' ||
+              lookup.resolutionReason == 'bot_reply_search_tag' ||
+              lookup.resolutionReason == 'bot_reply_search_tag_direct_message') {
             locatorDebugInfo(
-              'Stored locator direct lookup did not resolve exact message for mediaFileId=$mediaId. History fallback recovered resolvedChatId=${lookup.resolvedChatId} resolvedMessageId=${lookup.resolvedMessageId} requestedChatId=$locatorChatId requestedMessageId=$locatorMessageId fileId=${file.id}',
+              'Stored locator direct lookup did not resolve exact message for mediaFileId=$mediaId. Locator fallback recovered resolvedChatId=${lookup.resolvedChatId} resolvedMessageId=${lookup.resolvedMessageId} requestedChatId=$locatorChatId requestedMessageId=$locatorMessageId reason=${lookup.resolutionReason} fileId=${file.id}',
             );
           } else if (lookup.resolvedMessageId != locatorMessageId ||
               lookup.resolvedChatId != locatorChatId) {
@@ -1627,6 +1810,125 @@ class DataRepository {
   }
 
   String _buildMediaLocatorSearchTag(String mediaId) => '#oxm_${mediaId.trim()}';
+
+  String? _messagePlainTextForLocatorScan(td.Message message) {
+    final content = message.content;
+    if (content is td.MessageText) {
+      return content.text.text;
+    }
+    if (content is td.MessageVideo) {
+      return content.caption.text;
+    }
+    if (content is td.MessageDocument) {
+      return content.caption.text;
+    }
+    if (content is td.MessageAnimation) {
+      return content.caption.text;
+    }
+    if (content is td.MessagePhoto) {
+      return content.caption.text;
+    }
+    return null;
+  }
+
+  bool _plainTextContainsLocatorTag(String plain, String mediaIdTrimmed) {
+    if (mediaIdTrimmed.isEmpty) return false;
+    if (plain.contains('#oxm_$mediaIdTrimmed')) return true;
+    if (plain.contains('oxm_$mediaIdTrimmed')) return true;
+    return false;
+  }
+
+  String _locatorTagDirectResolutionReason(String logContext) {
+    switch (logContext) {
+      case 'history_tag':
+        return 'history_scan_locator_tag_direct';
+      case 'global_search':
+        return 'global_search_locator_tag_direct';
+      default:
+        return 'bot_reply_search_tag_direct_message';
+    }
+  }
+
+  String _locatorTagReplyResolutionReason(String logContext) {
+    switch (logContext) {
+      case 'history_tag':
+        return 'history_scan_locator_tag_reply';
+      case 'global_search':
+        return 'global_search_locator_tag_reply';
+      default:
+        return 'bot_reply_search_tag';
+    }
+  }
+
+  Future<_ThumbnailMessageLookupResult?> _resolveThumbnailFromLocatorTaggedMessage({
+    required td.Message tagMessage,
+    required int defaultChatId,
+    required String? fileUniqueId,
+    required String logContext,
+    void Function(String message)? onDiagnostic,
+  }) async {
+    final trimmedFileUniqueId = fileUniqueId?.trim() ?? '';
+
+    final directFile = _messagePlayableFile(tagMessage);
+    if (directFile != null) {
+      if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(tagMessage) != trimmedFileUniqueId) {
+        onDiagnostic?.call(
+          'Locator tag ($logContext) skipped tagMessageId=${tagMessage.id} because direct fileUniqueId did not match',
+        );
+      } else {
+        onDiagnostic?.call(
+          'Locator tag ($logContext) matched direct tagMessageId=${tagMessage.id} resolvedChatId=$defaultChatId resolvedMessageId=${tagMessage.id} fileId=${directFile.id}',
+        );
+        return _ThumbnailMessageLookupResult(
+          message: tagMessage,
+          resolvedChatId: defaultChatId,
+          resolvedMessageId: tagMessage.id,
+          resolutionReason: _locatorTagDirectResolutionReason(logContext),
+        );
+      }
+    }
+
+    final replyTo = tagMessage.replyTo;
+    if (replyTo is! td.MessageReplyToMessage) {
+      return null;
+    }
+    onDiagnostic?.call(
+      'Locator tag ($logContext) inspecting tagMessageId=${tagMessage.id} replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}',
+    );
+    try {
+      final replied = await _tdlib.send(
+        td.GetMessage(chatId: replyTo.chatId, messageId: replyTo.messageId),
+      );
+      if (replied is! td.Message) return null;
+      if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(replied) != trimmedFileUniqueId) {
+        onDiagnostic?.call(
+          'Locator tag ($logContext) skipped replyMessageId=${replyTo.messageId} because fileUniqueId did not match',
+        );
+        return null;
+      }
+      final file = _messagePlayableFile(replied);
+      if (file == null) return null;
+      onDiagnostic?.call(
+        'Locator tag ($logContext) matched tagMessageId=${tagMessage.id} resolvedChatId=${replyTo.chatId} resolvedMessageId=${replied.id} fileId=${file.id}',
+      );
+      return _ThumbnailMessageLookupResult(
+        message: replied,
+        resolvedChatId: replyTo.chatId,
+        resolvedMessageId: replied.id,
+        resolutionReason: _locatorTagReplyResolutionReason(logContext),
+      );
+    } on td.TdError catch (error) {
+      onDiagnostic?.call(
+        'Locator tag ($logContext) GetMessage failed replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: code=${error.code} message=${error.message}',
+      );
+    } catch (error) {
+      onDiagnostic?.call(
+        'Locator tag ($logContext) GetMessage crashed replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}: $error',
+      );
+    }
+
+    return null;
+  }
 
   Iterable<int> _candidateTelegramChatIds(int chatId, {bool exactOnly = false}) sync* {
     final emitted = <int>{};

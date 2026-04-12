@@ -5,6 +5,7 @@ class AppConfig {
     required this.telegramApiId,
     required this.telegramApiHash,
     required this.botUsername,
+    required this.providerBotUsername,
     required this.apiBaseUrl,
     required this.telegramWebAppShortName,
     required this.telegramWebAppUrl,
@@ -14,6 +15,8 @@ class AppConfig {
   final String telegramApiId;
   final String telegramApiHash;
   final String botUsername;
+  /// Used for TDLib `searchPublicChat` → `SearchChatMessages` locator tag lookup (`#oxm_*`).
+  final String providerBotUsername;
   final String apiBaseUrl;
   final String telegramWebAppShortName;
   final String telegramWebAppUrl;
@@ -33,6 +36,7 @@ class AppConfig {
       telegramApiId: value('TELEGRAM_API_ID'),
       telegramApiHash: value('TELEGRAM_API_HASH'),
       botUsername: value('BOT_USERNAME').replaceFirst('@', ''),
+      providerBotUsername: value('PROVIDER_BOT_USERNAME').replaceFirst('@', ''),
       apiBaseUrl: valueOrLegacy('OXPLAYER_API_BASE_URL', 'TV_APP_API_BASE_URL'),
       telegramWebAppShortName: valueOrLegacy(
         'OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME',
@@ -76,6 +80,7 @@ class AppConfig {
     'TELEGRAM_API_ID': String.fromEnvironment('TELEGRAM_API_ID'),
     'TELEGRAM_API_HASH': String.fromEnvironment('TELEGRAM_API_HASH'),
     'BOT_USERNAME': String.fromEnvironment('BOT_USERNAME'),
+    'PROVIDER_BOT_USERNAME': String.fromEnvironment('PROVIDER_BOT_USERNAME'),
     'OXPLAYER_API_BASE_URL': String.fromEnvironment('OXPLAYER_API_BASE_URL'),
     'TV_APP_API_BASE_URL': String.fromEnvironment('TV_APP_API_BASE_URL'),
     'OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME': String.fromEnvironment('OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME'),
