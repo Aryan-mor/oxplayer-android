@@ -1,0 +1,172 @@
+import 'dart:convert' show base64Decode;
+import 'dart:io' as io;
+
+import 'package:tdlib/td_api.dart' as td;
+
+import 'tdlib_facade.dart';
+
+/// Picker bucket aligned with API `GET /me/chats` `bucket` query.
+enum SourceChatPickerBucket { chats, groups, channels, bots }
+
+/// Lightweight row for the TDLib-backed My Telegram config list.
+class TdlibPickerChatRow {
+  const TdlibPickerChatRow({
+    required this.chatId,
+    required this.title,
+    required this.apiChatType,
+    required this.peerIsBot,
+    required this.isSavedMessages,
+    this.localAvatarPath,
+  });
+
+  final int chatId;
+  final String title;
+  /// Prisma/API enum string: private, group, supergroup, channel, saved_messages
+  final String apiChatType;
+  final bool peerIsBot;
+  final bool isSavedMessages;
+  final String? localAvatarPath;
+
+  bool matchesBucket(SourceChatPickerBucket b) {
+    switch (b) {
+      case SourceChatPickerBucket.chats:
+        return isSavedMessages || (apiChatType == 'private' && !peerIsBot);
+      case SourceChatPickerBucket.groups:
+        return apiChatType == 'group' || apiChatType == 'supergroup';
+      case SourceChatPickerBucket.channels:
+        return apiChatType == 'channel';
+      case SourceChatPickerBucket.bots:
+        return apiChatType == 'private' && peerIsBot;
+    }
+  }
+}
+
+Future<int> tdlibGetSelfUserId(TdlibFacade facade) async {
+  final me = await facade.send(const td.GetMe()) as td.User;
+  return me.id;
+}
+
+Future<void> tdlibLoadChatsPage(TdlibFacade facade, {int limit = 40}) async {
+  try {
+    await facade.send(
+      td.LoadChats(
+        chatList: const td.ChatListMain(),
+        limit: limit,
+      ),
+    );
+  } catch (_) {
+    // 404 = nothing more to load
+  }
+}
+
+Future<List<int>> tdlibGetMainChatIds(TdlibFacade facade, int limit) async {
+  final res = await facade.send(
+    td.GetChats(
+      chatList: const td.ChatListMain(),
+      limit: limit,
+    ),
+  );
+  if (res is! td.Chats) return const [];
+  return List<int>.from(res.chatIds);
+}
+
+Future<td.User?> tdlibGetUser(TdlibFacade facade, int userId) async {
+  final o = await facade.send(td.GetUser(userId: userId));
+  return o is td.User ? o : null;
+}
+
+Future<TdlibPickerChatRow?> tdlibBuildPickerRow({
+  required TdlibFacade facade,
+  required td.Chat chat,
+  required int selfUserId,
+  String savedMessagesTitle = 'Saved Messages',
+  String? localAvatarPath,
+}) async {
+  final t = chat.type;
+  if (t is td.ChatTypePrivate) {
+    final u = await tdlibGetUser(facade, t.userId);
+    final isSelf = t.userId == selfUserId;
+    final isBot = u?.type is td.UserTypeBot;
+    final apiType = isSelf ? 'saved_messages' : 'private';
+    return TdlibPickerChatRow(
+      chatId: chat.id,
+      title: isSelf ? savedMessagesTitle : chat.title.trim(),
+      apiChatType: apiType,
+      peerIsBot: isBot,
+      isSavedMessages: isSelf,
+      localAvatarPath: localAvatarPath,
+    );
+  }
+  if (t is td.ChatTypeBasicGroup) {
+    return TdlibPickerChatRow(
+      chatId: chat.id,
+      title: chat.title.trim().isEmpty ? 'Group' : chat.title.trim(),
+      apiChatType: 'group',
+      peerIsBot: false,
+      isSavedMessages: false,
+      localAvatarPath: localAvatarPath,
+    );
+  }
+  if (t is td.ChatTypeSupergroup) {
+    return TdlibPickerChatRow(
+      chatId: chat.id,
+      title: chat.title.trim().isEmpty ? (t.isChannel ? 'Channel' : 'Group') : chat.title.trim(),
+      apiChatType: t.isChannel ? 'channel' : 'supergroup',
+      peerIsBot: false,
+      isSavedMessages: false,
+      localAvatarPath: localAvatarPath,
+    );
+  }
+  return null;
+}
+
+Future<td.Chat?> tdlibGetChat(TdlibFacade facade, int chatId) async {
+  final o = await facade.send(td.GetChat(chatId: chatId));
+  return o is td.Chat ? o : null;
+}
+
+/// Best-effort: download small chat photo when [writeJpeg] is provided.
+Future<String?> tdlibCacheChatPhotoIfNeeded({
+  required TdlibFacade facade,
+  required int telegramChatId,
+  required td.ChatPhotoInfo? photo,
+  required Future<String?> Function(int id) existingPath,
+  required Future<void> Function(int id, List<int> bytes) writeJpeg,
+}) async {
+  final cur = await existingPath(telegramChatId);
+  if (cur != null) return cur;
+  final p = photo;
+  if (p == null) return null;
+  final mini = p.minithumbnail;
+  if (mini != null && mini.data.isNotEmpty) {
+    try {
+      final bytes = base64Decode(mini.data);
+      if (bytes.isNotEmpty) {
+        await writeJpeg(telegramChatId, bytes);
+      }
+    } catch (_) {}
+    return existingPath(telegramChatId);
+  }
+  try {
+    final remote = p.small;
+    await facade.send(
+      td.DownloadFile(
+        fileId: remote.id,
+        priority: 16,
+        offset: 0,
+        limit: 0,
+        synchronous: true,
+      ),
+    );
+    final info = await facade.send(td.GetFile(fileId: remote.id)) as td.File;
+    final path = info.local.path;
+    if (path.isEmpty) return null;
+    final bytes = await io.File(path).readAsBytes();
+    if (bytes.isNotEmpty) {
+      await writeJpeg(telegramChatId, bytes);
+    }
+    return existingPath(telegramChatId);
+  } catch (_) {
+    return null;
+  }
+}

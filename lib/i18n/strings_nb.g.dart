@@ -75,6 +75,7 @@ class TranslationsNb with BaseTranslations<AppLocale, Translations> implements T
 	@override late final _TranslationsExternalPlayerNb externalPlayer = _TranslationsExternalPlayerNb._(_root);
 	@override late final _TranslationsMetadataEditNb metadataEdit = _TranslationsMetadataEditNb._(_root);
 	@override late final _TranslationsServerTasksNb serverTasks = _TranslationsServerTasksNb._(_root);
+	@override late final _TranslationsMyTelegramNb myTelegram = _TranslationsMyTelegramNb._(_root);
 }
 
 // Path: app
@@ -810,6 +811,7 @@ class _TranslationsNavigationNb implements TranslationsNavigationEn {
 	@override String get libraries => 'Biblioteker';
 	@override String get downloads => 'Nedlastinger';
 	@override String get liveTv => 'Direkte-TV';
+	@override String get myTelegram => 'My Telegram';
 }
 
 // Path: liveTv
@@ -1168,6 +1170,29 @@ class _TranslationsServerTasksNb implements TranslationsServerTasksEn {
 	@override String get title => 'Serveroppgaver';
 	@override String get failedToLoad => 'Kunne ikke laste oppgaver';
 	@override String get noTasks => 'Ingen oppgaver kjører';
+}
+
+// Path: myTelegram
+class _TranslationsMyTelegramNb implements TranslationsMyTelegramEn {
+	_TranslationsMyTelegramNb._(this._root);
+
+	final TranslationsNb _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => 'My Telegram';
+	@override String get config => 'Configure chats';
+	@override String get configTitle => 'My Telegram — configure';
+	@override String get chatsTab => 'Chats';
+	@override String get groupsTab => 'Groups';
+	@override String get channelsTab => 'Channels';
+	@override String get botsTab => 'Bots';
+	@override String get empty => 'No chats selected. Use Configure to choose dialogs.';
+	@override String get loadError => 'Could not load chats';
+	@override String get savedMessages => 'Saved Messages';
+	@override String get save => 'Save';
+	@override String get saved => 'Saved';
+	@override String get showInVideo => 'Show in My Telegram';
+	@override String get loadMore => 'Load more';
 }
 
 // Path: hotkeys.actions
@@ -1874,6 +1899,7 @@ extension on TranslationsNb {
 			'navigation.libraries' => 'Biblioteker',
 			'navigation.downloads' => 'Nedlastinger',
 			'navigation.liveTv' => 'Direkte-TV',
+			'navigation.myTelegram' => 'My Telegram',
 			'liveTv.title' => 'Direkte-TV',
 			'liveTv.guide' => 'Programguide',
 			'liveTv.noChannels' => 'Ingen kanaler tilgjengelig',
@@ -2199,6 +2225,20 @@ extension on TranslationsNb {
 			'serverTasks.title' => 'Serveroppgaver',
 			'serverTasks.failedToLoad' => 'Kunne ikke laste oppgaver',
 			'serverTasks.noTasks' => 'Ingen oppgaver kjører',
+			'myTelegram.title' => 'My Telegram',
+			'myTelegram.config' => 'Configure chats',
+			'myTelegram.configTitle' => 'My Telegram — configure',
+			'myTelegram.chatsTab' => 'Chats',
+			'myTelegram.groupsTab' => 'Groups',
+			'myTelegram.channelsTab' => 'Channels',
+			'myTelegram.botsTab' => 'Bots',
+			'myTelegram.empty' => 'No chats selected. Use Configure to choose dialogs.',
+			'myTelegram.loadError' => 'Could not load chats',
+			'myTelegram.savedMessages' => 'Saved Messages',
+			'myTelegram.save' => 'Save',
+			'myTelegram.saved' => 'Saved',
+			'myTelegram.showInVideo' => 'Show in My Telegram',
+			'myTelegram.loadMore' => 'Load more',
 			_ => null,
 		};
 	}

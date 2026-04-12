@@ -3,63 +3,63 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:oxplayer/utils/platform_detector.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
-import '../widgets/collapsible_text.dart';
-import '../widgets/rating_bottom_sheet.dart';
 
+import '../../services/plex_client.dart';
 import '../focus/dpad_navigator.dart';
 import '../focus/focusable_wrapper.dart';
-import '../focus/key_event_utils.dart';
 import '../focus/input_mode_tracker.dart';
-import '../widgets/focus_builders.dart';
-import '../widgets/media_card.dart';
+import '../focus/key_event_utils.dart';
 import '../i18n/strings.g.dart';
-import '../widgets/plex_optimized_image.dart';
-import '../utils/plex_image_helper.dart';
-import '../../services/plex_client.dart';
-import '../services/plex_api_cache.dart';
-import '../models/plex_metadata.dart';
-import '../models/plex_video_playback_data.dart';
-import '../utils/content_utils.dart';
-import '../utils/rating_utils.dart';
-import '../models/download_models.dart';
-import '../services/download_storage_service.dart';
-import '../utils/download_version_utils.dart';
-import '../providers/playback_state_provider.dart';
-import '../providers/settings_provider.dart';
-import '../utils/grid_size_calculator.dart';
-import '../providers/download_provider.dart';
-import '../providers/offline_watch_provider.dart';
-import '../theme/mono_tokens.dart';
-import '../utils/app_logger.dart';
-import '../utils/formatters.dart';
-import '../utils/scroll_utils.dart';
-import '../utils/dialogs.dart';
-import '../utils/snackbar_helper.dart';
-import '../utils/video_player_navigation.dart';
-import '../widgets/app_bar_back_button.dart';
-import '../utils/desktop_window_padding.dart';
-import '../widgets/horizontal_scroll_with_arrows.dart';
-import '../widgets/media_context_menu.dart';
-import '../widgets/ox_file_option_card.dart';
-import '../widgets/overlay_sheet.dart';
-import '../widgets/placeholder_container.dart';
-import '../mixins/watch_state_aware.dart';
+import '../infrastructure/data_repository.dart';
+import '../infrastructure/media_repository.dart';
 import '../mixins/deletion_aware.dart';
 import '../mixins/mounted_set_state_mixin.dart';
 import '../mixins/server_bound_media_mixin.dart';
-import '../utils/watch_state_notifier.dart';
-import '../utils/deletion_notifier.dart';
-import '../widgets/episode_card.dart';
-import '../widgets/focusable_tab_chip.dart';
-import '../infrastructure/data_repository.dart';
-import '../infrastructure/media_repository.dart';
+import '../mixins/watch_state_aware.dart';
+import '../models/download_models.dart';
+import '../models/plex_metadata.dart';
+import '../models/plex_video_playback_data.dart';
+import '../providers/download_provider.dart';
+import '../providers/offline_watch_provider.dart';
+import '../providers/playback_state_provider.dart';
+import '../providers/settings_provider.dart';
 import '../services/auth_debug_service.dart';
+import '../services/download_storage_service.dart';
+import '../services/plex_api_cache.dart';
+import '../theme/mono_tokens.dart';
+import '../utils/app_logger.dart';
+import '../utils/content_utils.dart';
+import '../utils/deletion_notifier.dart';
+import '../utils/desktop_window_padding.dart';
+import '../utils/dialogs.dart';
+import '../utils/download_version_utils.dart';
+import '../utils/formatters.dart';
+import '../utils/grid_size_calculator.dart';
+import '../utils/plex_image_helper.dart';
+import '../utils/rating_utils.dart';
+import '../utils/scroll_utils.dart';
+import '../utils/snackbar_helper.dart';
+import '../utils/video_player_navigation.dart';
+import '../utils/watch_state_notifier.dart';
+import '../widgets/app_bar_back_button.dart';
+import '../widgets/collapsible_text.dart';
+import '../widgets/episode_card.dart';
+import '../widgets/focus_builders.dart';
+import '../widgets/focusable_tab_chip.dart';
+import '../widgets/horizontal_scroll_with_arrows.dart';
+import '../widgets/media_card.dart';
+import '../widgets/media_context_menu.dart';
+import '../widgets/overlay_sheet.dart';
+import '../widgets/ox_file_option_card.dart';
+import '../widgets/placeholder_container.dart';
+import '../widgets/plex_optimized_image.dart';
+import '../widgets/rating_bottom_sheet.dart';
 
 class MediaDetailScreen extends StatefulWidget {
   final PlexMetadata metadata;
@@ -107,6 +107,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   PlexMetadata? _selectedOxOptionParent;
   List<FocusNode> _oxOptionTabFocusNodes = [];
   final ScrollController _oxOptionTabsScrollController = ScrollController();
+
   /// OX library item is [GENERAL_VIDEO] (mapped to Plex `movie`); drives hero banner + Telegram thumb.
   bool _isOxGeneralVideoDetail = false;
 
@@ -119,7 +120,6 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
   // Context menu key for the three-dots button
   final _contextMenuKey = GlobalKey<MediaContextMenuState>();
-
 
   // Locked focus pattern for extras
   int _focusedExtraIndex = 0;
@@ -178,6 +178,15 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   @override
   void onWatchStateChanged(WatchStateEvent event) {
     if (!widget.isOffline) {
+      if (_isOxLibraryMetadata(widget.metadata)) {
+        // OX episodes use synthetic ids; Plex watch events won't match and must not run _refreshWatchState
+        // (that clears the OX episode cache and then cannot refill — no Plex client for server `ox`).
+        final epIndex = _episodes.indexWhere((e) => e.ratingKey == event.ratingKey);
+        if (epIndex != -1) {
+          unawaited(_loadFullMetadata());
+        }
+        return;
+      }
       // If the event matches an episode currently shown, update it directly
       final epIndex = _episodes.indexWhere((e) => e.ratingKey == event.ratingKey);
       if (epIndex != -1) {
@@ -287,6 +296,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
   /// Lightweight refresh for watch state changes - no loader, preserves scroll
   Future<void> _refreshWatchState() async {
+    if (_isOxLibraryMetadata(widget.metadata)) return;
     final client = _getClientForMetadata(context);
     if (client == null) return;
 
@@ -443,11 +453,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         : metadata;
     final playButtonLabel = _getPlayButtonLabel(metadata);
     final playButtonIcon = _isStartingPrimaryPlayback
-        ? const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
+        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
         : AppIcon(_getPlayButtonIcon(metadata), fill: 1, size: 20);
 
     Future<void> onPlayPressed() async {
@@ -845,7 +851,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                     if (versionConfig == null || !context.mounted) return;
 
                     try {
-                      final count = await downloadProvider.queueDownload(metadata, client, versionConfig: versionConfig);
+                      final count = await downloadProvider.queueDownload(
+                        metadata,
+                        client,
+                        versionConfig: versionConfig,
+                      );
                       if (context.mounted) {
                         final message = count > 1
                             ? t.downloads.episodesQueued(count: count)
@@ -998,7 +1008,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (!mounted) return;
 
     if (streamUrl == null) {
-      playMediaDebugError('Playback stream URL is still empty for metadata=${metadata.ratingKey} file=${selectedFile.id}');
+      playMediaDebugError(
+        'Playback stream URL is still empty for metadata=${metadata.ratingKey} file=${selectedFile.id}',
+      );
       await mediaRepository.releaseInternalPlaybackSession(reason: 'stream_url_unavailable');
       if (!mounted) return;
       showErrorSnackBar(context, t.externalPlayer.launchFailed);
@@ -1208,10 +1220,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: bgColor,
-            borderRadius: const BorderRadius.all(Radius.circular(100)),
-          ),
+          decoration: BoxDecoration(color: bgColor, borderRadius: const BorderRadius.all(Radius.circular(100))),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1224,11 +1233,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               const SizedBox(width: 4),
               Text(
                 hasRating ? formatRating(starValue) : t.mediaMenu.rate,
-                style: TextStyle(
-                  color: fgColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: TextStyle(color: fgColor, fontSize: 13, fontWeight: FontWeight.w500),
               ),
             ],
           ),
@@ -1295,7 +1300,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   }
 
   bool _isOxMovieWithFileOptions(PlexMetadata metadata) {
-    return _isOxLibraryMetadata(metadata) && metadata.isMovie && (_oxFileOptionsByParentKey[metadata.ratingKey]?.isNotEmpty ?? false);
+    return _isOxLibraryMetadata(metadata) &&
+        metadata.isMovie &&
+        (_oxFileOptionsByParentKey[metadata.ratingKey]?.isNotEmpty ?? false);
   }
 
   bool _shouldShowSingleFileVideoActions(PlexMetadata metadata) {
@@ -1433,12 +1440,20 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       final oxSeriesView = mediaRepository.buildSeriesDetailView(detail: detail, fallback: widget.metadata);
       final seasons = oxSeriesView.seasons.map((group) => group.season).toList(growable: false);
       final shouldShowEpisodesDirectly = seasons.length <= 1;
-      final selectedSeasonIndex = _resolveOxSelectedSeasonIndex(seasons, oxSeriesView.firstEpisode);
+      var selectedSeasonIndex = _resolveOxSelectedSeasonIndex(seasons, oxSeriesView.firstEpisode);
+      if (!shouldShowEpisodesDirectly &&
+          selectedSeasonIndex < oxSeriesView.seasons.length &&
+          oxSeriesView.seasons[selectedSeasonIndex].episodes.isEmpty) {
+        final fallbackIdx = oxSeriesView.seasons.indexWhere((g) => g.episodes.isNotEmpty);
+        if (fallbackIdx != -1) {
+          selectedSeasonIndex = fallbackIdx;
+        }
+      }
       final currentEpisodes = shouldShowEpisodesDirectly
           ? _flattenOxEpisodes(oxSeriesView.seasons)
           : selectedSeasonIndex < oxSeriesView.seasons.length
-              ? List<PlexMetadata>.of(oxSeriesView.seasons[selectedSeasonIndex].episodes)
-              : <PlexMetadata>[];
+          ? List<PlexMetadata>.of(oxSeriesView.seasons[selectedSeasonIndex].episodes)
+          : <PlexMetadata>[];
 
       _episodeCache.clear();
       _oxFileOptionsByParentKey
@@ -1576,12 +1591,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     PlexMetadata metadata,
     PlexClient client,
   ) {
-    return resolveDownloadVersion(
-      context,
-      metadata,
-      client,
-      fallbackVersions: _fullMetadata?.mediaVersions,
-    );
+    return resolveDownloadVersion(context, metadata, client, fallbackVersions: _fullMetadata?.mediaVersions);
   }
 
   Future<void> _loadFullMetadata() async {
@@ -1855,10 +1865,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       for (final node in _seasonTabFocusNodes) {
         node.dispose();
       }
-      _seasonTabFocusNodes = List.generate(
-        count,
-        (i) => FocusNode(debugLabel: 'season_tab_$i'),
-      );
+      _seasonTabFocusNodes = List.generate(count, (i) => FocusNode(debugLabel: 'season_tab_$i'));
       _seasonContextMenuKeys.clear();
     }
   }
@@ -1913,6 +1920,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       } else {
         final client = _getClientForMetadata(context);
         if (client == null) {
+          if (_isOxLibraryMetadata(widget.metadata)) {
+            await _loadOxSeriesMetadata();
+            return;
+          }
           setStateIfMounted(() => _isLoadingSeasonEpisodes = false);
           return;
         }
@@ -2056,8 +2067,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       if (_selectedOxOptionParent != null && _oxOptionTabFocusNodes.isNotEmpty) {
         _oxOptionTabFocusNodes.first.requestFocus();
         _scrollSectionIntoView(_seasonsSectionKey);
-      } else
-      if (metadata.isShow && !_showEpisodesDirectly && _seasons.isNotEmpty && _seasonTabFocusNodes.isNotEmpty) {
+      } else if (metadata.isShow && !_showEpisodesDirectly && _seasons.isNotEmpty && _seasonTabFocusNodes.isNotEmpty) {
         _seasonTabFocusNodes[_selectedSeasonIndex].requestFocus();
         _scrollSectionIntoView(_seasonsSectionKey);
       } else if (_episodes.isNotEmpty) {
@@ -2202,8 +2212,8 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           focusNode: index == 0
               ? _firstEpisodeFocusNode
               : index == fileOptions.length - 1 && fileOptions.length > 1
-                  ? _lastEpisodeFocusNode
-                  : null,
+              ? _lastEpisodeFocusNode
+              : null,
           onNavigateUp: index == 0
               ? () {
                   if (_oxOptionTabFocusNodes.isNotEmpty) {
@@ -2230,10 +2240,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         child: Row(
           children: List.generate(_seasons.length, (index) {
             final season = _seasons[index];
-            final contextMenuKey = _seasonContextMenuKeys.putIfAbsent(
-              index,
-              () => GlobalKey<MediaContextMenuState>(),
-            );
+            final contextMenuKey = _seasonContextMenuKeys.putIfAbsent(index, () => GlobalKey<MediaContextMenuState>());
             Offset? tapPosition;
             return Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -2344,7 +2351,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (key.isLeftKey) {
       if (_focusedExtraIndex > 0) {
         setState(() => _focusedExtraIndex--);
-        scrollListToIndex(_extrasScrollController, _focusedExtraIndex, itemExtent: _getResponsiveCardWidth() + 4, leadingPadding: 0);
+        scrollListToIndex(
+          _extrasScrollController,
+          _focusedExtraIndex,
+          itemExtent: _getResponsiveCardWidth() + 4,
+          leadingPadding: 0,
+        );
       }
       return KeyEventResult.handled;
     }
@@ -2353,7 +2365,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (key.isRightKey) {
       if (_focusedExtraIndex < _extras!.length - 1) {
         setState(() => _focusedExtraIndex++);
-        scrollListToIndex(_extrasScrollController, _focusedExtraIndex, itemExtent: _getResponsiveCardWidth() + 4, leadingPadding: 0);
+        scrollListToIndex(
+          _extrasScrollController,
+          _focusedExtraIndex,
+          itemExtent: _getResponsiveCardWidth() + 4,
+          leadingPadding: 0,
+        );
       }
       return KeyEventResult.handled;
     }
@@ -2401,7 +2418,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (key.isLeftKey) {
       if (_focusedCastIndex > 0) {
         setState(() => _focusedCastIndex--);
-        scrollListToIndex(_castScrollController, _focusedCastIndex, itemExtent: _getResponsiveCardWidth() + 8 + 4, leadingPadding: 0);
+        scrollListToIndex(
+          _castScrollController,
+          _focusedCastIndex,
+          itemExtent: _getResponsiveCardWidth() + 8 + 4,
+          leadingPadding: 0,
+        );
       }
       return KeyEventResult.handled;
     }
@@ -2410,7 +2432,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (key.isRightKey) {
       if (_focusedCastIndex < roleCount - 1) {
         setState(() => _focusedCastIndex++);
-        scrollListToIndex(_castScrollController, _focusedCastIndex, itemExtent: _getResponsiveCardWidth() + 8 + 4, leadingPadding: 0);
+        scrollListToIndex(
+          _castScrollController,
+          _focusedCastIndex,
+          itemExtent: _getResponsiveCardWidth() + 8 + 4,
+          leadingPadding: 0,
+        );
       }
       return KeyEventResult.handled;
     }
@@ -2479,8 +2506,8 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           focusNode: index == 0
               ? _firstEpisodeFocusNode
               : index == _episodes.length - 1 && _episodes.length > 1
-                  ? _lastEpisodeFocusNode
-                  : null,
+              ? _lastEpisodeFocusNode
+              : null,
           onNavigateUp: index == 0
               ? () {
                   if (!_showEpisodesDirectly) {
@@ -2489,8 +2516,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                     _overviewFocusNode.requestFocus();
                     _scrollSectionIntoView(_overviewSectionKey);
                   } else {
-                    _scrollController.animateTo(0,
-                        duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+                    _scrollController.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
                     _playButtonFocusNode.requestFocus();
                   }
                 }
@@ -2527,26 +2553,26 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           onRefresh: widget.isOffline
               ? null
               : isOxEpisode
-                  ? (_) async {
-                      await _loadFullMetadata();
-                    }
-                  : (ratingKey) async {
-                      final refreshed = await client?.getMetadataWithImages(ratingKey);
-                      if (refreshed != null) {
-                        setStateIfMounted(() {
-                          final i = _episodes.indexWhere((e) => e.ratingKey == ratingKey);
-                          if (i != -1) {
-                            _episodes[i] = refreshed;
-                            _syncEpisodeToCache(i, refreshed);
-                          }
-                        });
+              ? (_) async {
+                  await _loadFullMetadata();
+                }
+              : (ratingKey) async {
+                  final refreshed = await client?.getMetadataWithImages(ratingKey);
+                  if (refreshed != null) {
+                    setStateIfMounted(() {
+                      final i = _episodes.indexWhere((e) => e.ratingKey == ratingKey);
+                      if (i != -1) {
+                        _episodes[i] = refreshed;
+                        _syncEpisodeToCache(i, refreshed);
                       }
-                    },
+                    });
+                  }
+                },
           onListRefresh: widget.isOffline
               ? null
               : isOxEpisode
-                  ? _loadFullMetadata
-                  : _refreshCurrentEpisodes,
+              ? _loadFullMetadata
+              : _refreshCurrentEpisodes,
         );
       },
     );
@@ -2601,9 +2627,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (client == null) return;
     setStateIfMounted(() => _isLoadingEpisodes = true);
     try {
-      final episodeLists = await Future.wait(
-        _seasons.map((season) => client.getChildren(season.ratingKey)),
-      );
+      final episodeLists = await Future.wait(_seasons.map((season) => client.getChildren(season.ratingKey)));
       setStateIfMounted(() {
         _episodes = episodeLists.expand((e) => e).toList();
         _isLoadingEpisodes = false;
@@ -3248,7 +3272,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                   padding: const EdgeInsets.all(32),
                                   child: Center(
                                     child: Text(
-                                      showingOxFileOptions ? t.messages.fileInfoNotAvailable : t.messages.noEpisodesFoundGeneral,
+                                      showingOxFileOptions
+                                          ? t.messages.fileInfoNotAvailable
+                                          : t.messages.noEpisodesFoundGeneral,
                                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
                                     ),
                                   ),
@@ -3263,10 +3289,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 12),
-                            if (showingOxFileOptions) ...[
-                              _buildOxFileOptionTabs(metadata),
-                              const SizedBox(height: 16),
-                            ],
+                            if (showingOxFileOptions) ...[_buildOxFileOptionTabs(metadata), const SizedBox(height: 16)],
                             if (_isLoadingSeasons || _isLoadingEpisodes)
                               const Center(
                                 child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()),
@@ -3280,7 +3303,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                 padding: const EdgeInsets.all(32),
                                 child: Center(
                                   child: Text(
-                                    showingOxFileOptions ? t.messages.fileInfoNotAvailable : t.messages.noEpisodesFoundGeneral,
+                                    showingOxFileOptions
+                                        ? t.messages.fileInfoNotAvailable
+                                        : t.messages.noEpisodesFoundGeneral,
                                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
                                   ),
                                 ),
@@ -3637,4 +3662,3 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     return Symbols.play_arrow_rounded; // Default play icon
   }
 }
-

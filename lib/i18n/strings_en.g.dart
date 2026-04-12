@@ -67,6 +67,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final TranslationsLogsEn logs = TranslationsLogsEn._(_root);
 	late final TranslationsLicensesEn licenses = TranslationsLicensesEn._(_root);
 	late final TranslationsNavigationEn navigation = TranslationsNavigationEn._(_root);
+	late final TranslationsMyTelegramEn myTelegram = TranslationsMyTelegramEn._(_root);
 	late final TranslationsLiveTvEn liveTv = TranslationsLiveTvEn._(_root);
 	late final TranslationsCollectionsEn collections = TranslationsCollectionsEn._(_root);
 	late final TranslationsPlaylistsEn playlists = TranslationsPlaylistsEn._(_root);
@@ -1792,6 +1793,60 @@ class TranslationsNavigationEn {
 
 	/// en: 'Live TV'
 	String get liveTv => 'Live TV';
+
+	/// en: 'My Telegram'
+	String get myTelegram => 'My Telegram';
+}
+
+// Path: myTelegram
+class TranslationsMyTelegramEn {
+	TranslationsMyTelegramEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'My Telegram'
+	String get title => 'My Telegram';
+
+	/// en: 'Configure chats'
+	String get config => 'Configure chats';
+
+	/// en: 'My Telegram — configure'
+	String get configTitle => 'My Telegram — configure';
+
+	/// en: 'Chats'
+	String get chatsTab => 'Chats';
+
+	/// en: 'Groups'
+	String get groupsTab => 'Groups';
+
+	/// en: 'Channels'
+	String get channelsTab => 'Channels';
+
+	/// en: 'Bots'
+	String get botsTab => 'Bots';
+
+	/// en: 'No chats selected. Use Configure to choose dialogs.'
+	String get empty => 'No chats selected. Use Configure to choose dialogs.';
+
+	/// en: 'Could not load chats'
+	String get loadError => 'Could not load chats';
+
+	/// en: 'Saved Messages'
+	String get savedMessages => 'Saved Messages';
+
+	/// en: 'Save'
+	String get save => 'Save';
+
+	/// en: 'Saved'
+	String get saved => 'Saved';
+
+	/// en: 'Show in My Telegram'
+	String get showInVideo => 'Show in My Telegram';
+
+	/// en: 'Load more'
+	String get loadMore => 'Load more';
 }
 
 // Path: liveTv
@@ -3581,6 +3636,21 @@ extension on Translations {
 			'navigation.libraries' => 'Libraries',
 			'navigation.downloads' => 'Downloads',
 			'navigation.liveTv' => 'Live TV',
+			'navigation.myTelegram' => 'My Telegram',
+			'myTelegram.title' => 'My Telegram',
+			'myTelegram.config' => 'Configure chats',
+			'myTelegram.configTitle' => 'My Telegram — configure',
+			'myTelegram.chatsTab' => 'Chats',
+			'myTelegram.groupsTab' => 'Groups',
+			'myTelegram.channelsTab' => 'Channels',
+			'myTelegram.botsTab' => 'Bots',
+			'myTelegram.empty' => 'No chats selected. Use Configure to choose dialogs.',
+			'myTelegram.loadError' => 'Could not load chats',
+			'myTelegram.savedMessages' => 'Saved Messages',
+			'myTelegram.save' => 'Save',
+			'myTelegram.saved' => 'Saved',
+			'myTelegram.showInVideo' => 'Show in My Telegram',
+			'myTelegram.loadMore' => 'Load more',
 			'liveTv.title' => 'Live TV',
 			'liveTv.guide' => 'Guide',
 			'liveTv.noChannels' => 'No channels available',

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -181,6 +182,7 @@ class SideNavigationRailState extends State<SideNavigationRail> {
   // Focus keys for main nav items
   static const _kHome = 'home';
   static const _kLibraries = 'libraries';
+  static const _kMyTelegram = 'myTelegram';
   static const _kSearch = 'search';
   static const _kDownloads = 'downloads';
   static const _kSettings = 'settings';
@@ -259,6 +261,7 @@ class SideNavigationRailState extends State<SideNavigationRail> {
     return {
       _kHome,
       _kLibraries,
+      if (!kIsWeb) _kMyTelegram,
       _kSearch,
       _kDownloads,
       _kSettings,
@@ -278,6 +281,7 @@ class SideNavigationRailState extends State<SideNavigationRail> {
       if (!widget.isOfflineMode) ...[
         _kLibraries,
         if (_librariesExpanded) ...visibleLibraries.map((lib) => lib.globalKey),
+        if (!kIsWeb) _kMyTelegram,
         if (hasLiveTv) 'liveTv',
         _kSearch,
       ],
@@ -449,6 +453,20 @@ class SideNavigationRailState extends State<SideNavigationRail> {
                               _buildLibrariesSection(visibleLibraries, t, isCollapsed: isCollapsed),
 
                               const SizedBox(height: 8),
+
+                              if (!kIsWeb) ...[
+                                _buildNavItem(
+                                  icon: Symbols.chat_rounded,
+                                  selectedIcon: Symbols.chat_rounded,
+                                  label: Translations.of(context).navigation.myTelegram,
+                                  isSelected: widget.selectedTab == NavigationTabId.myTelegram,
+                                  isFocused: _focusTracker.isFocused(_kMyTelegram),
+                                  onTap: () => widget.onDestinationSelected(NavigationTabId.myTelegram),
+                                  focusNode: _focusTracker.get(_kMyTelegram),
+                                  isCollapsed: isCollapsed,
+                                ),
+                                const SizedBox(height: 8),
+                              ],
 
                               // Live TV (only if DVR available)
                               if (context.watch<MultiServerProvider>().hasLiveTv) ...[

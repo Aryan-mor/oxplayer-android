@@ -147,19 +147,15 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   late FocusNode _heroFocusNode;
   final _actionBarKey = GlobalKey<FocusableActionBarState>();
 
-  /// Get the correct PlexClient for an item's server
-  PlexClient _getClientForItem(PlexMetadata? item) {
-    // Items should always have a serverId, but if not, fall back to first available server
+  /// Plex client for hero / artwork. Null when no Plex server applies (e.g. virtual `ox` library rows).
+  PlexClient? _getClientForItem(PlexMetadata? item) {
     final serverId = item?.serverId;
     if (serverId == null) {
       final multiServerProvider = Provider.of<MultiServerProvider>(context, listen: false);
       final fallbackId = multiServerProvider.onlineServerIds.firstOrNull;
-      if (fallbackId == null) {
-        throw Exception('No servers available');
-      }
-      return context.getClientForServer(fallbackId);
+      return fallbackId != null ? context.tryGetClientForServer(fallbackId) : null;
     }
-    return context.getClientForServer(serverId);
+    return context.tryGetClientForServer(serverId);
   }
 
   /// Update hub keys when hubs list changes — reuse existing keys to avoid
@@ -848,6 +844,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       addedAt: item.createdAt.millisecondsSinceEpoch ~/ 1000,
       updatedAt: item.createdAt.millisecondsSinceEpoch ~/ 1000,
       librarySectionID: librarySectionId,
+      serverId: kOxVirtualServerId,
     );
   }
 

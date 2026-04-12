@@ -333,6 +333,38 @@ class OxMediaRecoveryResult {
   final int? attempts;
 }
 
+/// One row from `GET /me/chats` (dialog mapping).
+class OxUserChatRow {
+  const OxUserChatRow({
+    required this.id,
+    this.tdlibChatId,
+    required this.title,
+    this.photoUrl,
+    required this.chatType,
+    required this.peerIsBot,
+    required this.isIndexed,
+    required this.showInVideo,
+    required this.showInMusic,
+  });
+
+  final String id;
+  final String? tdlibChatId;
+  final String title;
+  final String? photoUrl;
+  final String chatType;
+  final bool peerIsBot;
+  final bool isIndexed;
+  final bool showInVideo;
+  final bool showInMusic;
+}
+
+class OxUserChatListPage {
+  const OxUserChatListPage({required this.items, required this.total});
+
+  final List<OxUserChatRow> items;
+  final int total;
+}
+
 class DataRepository {
   static const MethodChannel _mediaToolsChannel =
       MethodChannel('de.aryanmo.oxplayer/media_tools');
@@ -2344,6 +2376,82 @@ class DataRepository {
         headers: <String, String>{'Authorization': 'Bearer $accessToken'},
       ),
     );
+  }
+
+  /// TDLib facade for UI that already uses this repository for OX API calls (e.g. My Telegram config).
+  TdlibFacade get telegramTdlib => _tdlib;
+
+  Future<OxUserChatListPage> fetchUserChats({
+    required String bucket,
+    bool indexedOnly = false,
+    bool showInVideoOnly = false,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final dio = _authorizedApiClient();
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/chats',
+      queryParameters: <String, dynamic>{
+        'bucket': bucket,
+        'indexedOnly': indexedOnly,
+        'showInVideoOnly': showInVideoOnly,
+        'limit': limit,
+        'offset': offset,
+      },
+    );
+    final data = response.data;
+    if (data == null) {
+      return const OxUserChatListPage(items: [], total: 0);
+    }
+    final itemsRaw = data['items'];
+    final total = (data['total'] as num?)?.toInt() ?? 0;
+    if (itemsRaw is! List) {
+      return OxUserChatListPage(items: const [], total: total);
+    }
+    final items = itemsRaw.whereType<Map>().map((raw) {
+      final m = Map<String, dynamic>.from(raw);
+      return OxUserChatRow(
+        id: _readOptionalTrimmed(m['id']) ?? '',
+        tdlibChatId: _readOptionalTrimmed(m['tdlibChatId'] ?? m['telegramChatId']),
+        title: _readOptionalTrimmed(m['title']) ?? '',
+        photoUrl: _readOptionalTrimmed(m['photoUrl']),
+        chatType: _readOptionalTrimmed(m['chatType']) ?? 'private',
+        peerIsBot: m['peerIsBot'] == true,
+        isIndexed: m['isIndexed'] == true,
+        showInVideo: m['showInVideo'] == true,
+        showInMusic: m['showInMusic'] == true,
+      );
+    }).where((r) => r.id.isNotEmpty).toList(growable: false);
+    return OxUserChatListPage(items: items, total: total);
+  }
+
+  Future<void> upsertUserChatMapping({
+    required int tdlibChatId,
+    required String title,
+    required String chatType,
+    bool peerIsBot = false,
+  }) async {
+    final dio = _authorizedApiClient();
+    await dio.post<void>(
+      '/me/chats/upsert',
+      data: <String, dynamic>{
+        'tdlibChatId': tdlibChatId,
+        'title': title,
+        'chatType': chatType,
+        'peerIsBot': peerIsBot,
+      },
+    );
+  }
+
+  Future<int> patchUserChatsShowInVideo({required List<Map<String, dynamic>> items}) async {
+    final dio = _authorizedApiClient();
+    final response = await dio.patch<Map<String, dynamic>>(
+      '/me/chats/show-in-video',
+      data: <String, dynamic>{'items': items},
+    );
+    final u = response.data?['updated'];
+    if (u is int) return u;
+    return int.tryParse(u?.toString() ?? '') ?? 0;
   }
 
   Future<bool> _ensureTdlibReadyForMediaPlayback() async {

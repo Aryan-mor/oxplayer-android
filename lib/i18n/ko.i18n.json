@@ -584,7 +584,8 @@
   "navigation": {
     "libraries": "미디어 라이브러리",
     "downloads": "다운로드",
-    "liveTv": "실시간 TV"
+    "liveTv": "실시간 TV",
+    "myTelegram": "My Telegram"
   },
   "liveTv": {
     "title": "실시간 TV",
@@ -938,5 +939,21 @@
     "title": "서버 작업",
     "failedToLoad": "작업을 불러올 수 없습니다",
     "noTasks": "실행 중인 작업 없음"
+  },
+  "myTelegram": {
+    "title": "My Telegram",
+    "config": "Configure chats",
+    "configTitle": "My Telegram — configure",
+    "chatsTab": "Chats",
+    "groupsTab": "Groups",
+    "channelsTab": "Channels",
+    "botsTab": "Bots",
+    "empty": "No chats selected. Use Configure to choose dialogs.",
+    "loadError": "Could not load chats",
+    "savedMessages": "Saved Messages",
+    "save": "Save",
+    "saved": "Saved",
+    "showInVideo": "Show in My Telegram",
+    "loadMore": "Load more"
   }
 }

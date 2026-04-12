@@ -46,6 +46,7 @@ import 'livetv/live_tv_screen.dart';
 import 'search_screen.dart';
 import 'downloads/downloads_screen.dart';
 import 'settings/settings_screen.dart';
+import 'telegram/my_telegram_screen.dart';
 import 'profile/profile_switch_screen.dart';
 import '../services/watch_next_service.dart';
 import '../watch_together/watch_together.dart';
@@ -189,6 +190,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
   late List<Widget> _screens;
   final GlobalKey<State<DiscoverScreen>> _discoverKey = GlobalKey();
   final GlobalKey<State<LibrariesScreen>> _librariesKey = GlobalKey();
+  final GlobalKey<State<MyTelegramScreen>> _myTelegramKey = GlobalKey();
   final GlobalKey<State<LiveTvScreen>> _liveTvKey = GlobalKey();
   final GlobalKey<State<SearchScreen>> _searchKey = GlobalKey();
   final GlobalKey<State<DownloadsScreen>> _downloadsKey = GlobalKey();
@@ -586,6 +588,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
               enableOxDiscoverFallback: widget.enableOxDiscoverFallback,
             ),
           NavigationTabId.libraries => LibrariesScreen(key: _librariesKey, onLibraryOrderChanged: _onLibraryOrderChanged),
+          NavigationTabId.myTelegram => MyTelegramScreen(key: _myTelegramKey),
           NavigationTabId.liveTv => LiveTvScreen(key: _liveTvKey),
           NavigationTabId.search => SearchScreen(key: _searchKey),
           NavigationTabId.downloads => DownloadsScreen(key: _downloadsKey),
@@ -976,6 +979,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
     return switch (tab) {
       NavigationTabId.discover => _discoverKey,
       NavigationTabId.libraries => _librariesKey,
+      NavigationTabId.myTelegram => _myTelegramKey,
       NavigationTabId.liveTv => _liveTvKey,
       NavigationTabId.search => _searchKey,
       NavigationTabId.downloads => _downloadsKey,

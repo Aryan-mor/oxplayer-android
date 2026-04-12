@@ -165,6 +165,15 @@ class MediaCardState extends State<MediaCard> {
   }
 
   Future<void> _openOxPreviewDetail(BuildContext context, PlexMetadata previewMetadata) async {
+    Future<void> openDetail(PlexMetadata metadata) async {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => MediaDetailScreen(metadata: metadata),
+        ),
+      );
+    }
+
     try {
       final repository = await DataRepository.create();
       final mediaRepository = MediaRepository(dataRepository: repository);
@@ -172,15 +181,20 @@ class MediaCardState extends State<MediaCard> {
       if (!context.mounted) return;
 
       final mappedMetadata = _mapOxDetailToPlexMetadata(detail, fallback: previewMetadata);
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MediaDetailScreen(metadata: mappedMetadata),
-        ),
-      );
+      await openDetail(mappedMetadata);
     } catch (_) {
       if (!context.mounted) return;
-      showAppSnackBar(context, 'Failed to open detail page. Please try again.');
+      // Discover cards use `ox-preview:`; detail screen only loads OX rows when key is `ox-library:`.
+      // If prefetch fails (timeout, 404, parse), still open detail so it can retry and/or show fallback UI.
+      final stub = previewMetadata.copyWith(
+        key: 'ox-library:${previewMetadata.ratingKey}',
+        serverId: previewMetadata.serverId ?? kOxVirtualServerId,
+      );
+      try {
+        await openDetail(stub);
+      } catch (_) {
+        showAppSnackBar(context, 'Failed to open detail page. Please try again.');
+      }
     }
   }
 
@@ -713,7 +727,7 @@ Widget _buildPosterImage(
     fallbackIcon = Symbols.playlist_play_rounded;
 
     return PlexOptimizedImage.playlist(
-      client: isOffline ? null : context.getClientWithFallback(item.serverId),
+      client: isOffline ? null : context.tryGetClientForServer(item.serverId),
       imagePath: posterUrl,
       width: knownWidth ?? double.infinity,
       height: knownHeight ?? double.infinity,
@@ -730,8 +744,9 @@ Widget _buildPosterImage(
     posterUrl = item.posterThumb(mode: episodePosterMode, mixedHubContext: mixedHubContext);
     final canUseDirectExternalImage = posterUrl != null &&
         (posterUrl.startsWith('http://') || posterUrl.startsWith('https://')) &&
-        item.serverId == null;
-    final imageClient = canUseDirectExternalImage || isOffline || item.serverId == null ? null : context.getClientWithFallback(item.serverId);
+        (item.serverId == null || item.serverId == kOxVirtualServerId);
+    final imageClient =
+        canUseDirectExternalImage || isOffline || item.serverId == null ? null : context.tryGetClientForServer(item.serverId);
 
     Widget image;
 

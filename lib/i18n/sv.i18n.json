@@ -584,7 +584,8 @@
   "navigation": {
     "libraries": "Bibliotek",
     "downloads": "Nerladdat",
-    "liveTv": "Live-TV"
+    "liveTv": "Live-TV",
+    "myTelegram": "My Telegram"
   },
   "liveTv": {
     "title": "Live-TV",
@@ -938,5 +939,21 @@
     "title": "Serveruppgifter",
     "failedToLoad": "Kunde inte ladda uppgifter",
     "noTasks": "Inga pågående uppgifter"
+  },
+  "myTelegram": {
+    "title": "My Telegram",
+    "config": "Configure chats",
+    "configTitle": "My Telegram — configure",
+    "chatsTab": "Chats",
+    "groupsTab": "Groups",
+    "channelsTab": "Channels",
+    "botsTab": "Bots",
+    "empty": "No chats selected. Use Configure to choose dialogs.",
+    "loadError": "Could not load chats",
+    "savedMessages": "Saved Messages",
+    "save": "Save",
+    "saved": "Saved",
+    "showInVideo": "Show in My Telegram",
+    "loadMore": "Load more"
   }
 }

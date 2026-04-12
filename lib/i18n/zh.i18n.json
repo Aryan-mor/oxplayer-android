@@ -584,7 +584,8 @@
   "navigation": {
     "libraries": "媒体库",
     "downloads": "下载",
-    "liveTv": "电视直播"
+    "liveTv": "电视直播",
+    "myTelegram": "My Telegram"
   },
   "liveTv": {
     "title": "电视直播",
@@ -938,5 +939,21 @@
     "title": "服务器任务",
     "failedToLoad": "加载任务失败",
     "noTasks": "没有正在运行的任务"
+  },
+  "myTelegram": {
+    "title": "My Telegram",
+    "config": "Configure chats",
+    "configTitle": "My Telegram — configure",
+    "chatsTab": "Chats",
+    "groupsTab": "Groups",
+    "channelsTab": "Channels",
+    "botsTab": "Bots",
+    "empty": "No chats selected. Use Configure to choose dialogs.",
+    "loadError": "Could not load chats",
+    "savedMessages": "Saved Messages",
+    "save": "Save",
+    "saved": "Saved",
+    "showInVideo": "Show in My Telegram",
+    "loadMore": "Load more"
   }
 }

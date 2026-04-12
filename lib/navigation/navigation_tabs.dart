@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -5,7 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import '../i18n/strings.g.dart';
 
 /// Navigation tab identifiers
-enum NavigationTabId { discover, libraries, liveTv, search, downloads, settings }
+enum NavigationTabId { discover, libraries, myTelegram, liveTv, search, downloads, settings }
 
 /// Represents a navigation tab with its configuration
 class NavigationTab {
@@ -31,6 +32,7 @@ class NavigationTab {
     return allNavigationTabs.where((tab) {
       if (isOffline && tab.onlineOnly) return false;
       if (tab.id == NavigationTabId.liveTv && !hasLiveTv) return false;
+      if (tab.id == NavigationTabId.myTelegram && kIsWeb) return false;
       return true;
     }).toList();
   }
@@ -40,6 +42,7 @@ class NavigationTab {
 // Label getters (must be top-level for const constructor)
 String _getHomeLabel() => t.common.home;
 String _getLibrariesLabel() => t.navigation.libraries;
+String _getMyTelegramLabel() => t.navigation.myTelegram;
 String _getLiveTvLabel() => t.navigation.liveTv;
 String _getSearchLabel() => t.common.search;
 String _getDownloadsLabel() => t.navigation.downloads;
@@ -53,6 +56,12 @@ const allNavigationTabs = [
     onlineOnly: true,
     icon: Symbols.video_library_rounded,
     getLabel: _getLibrariesLabel,
+  ),
+  NavigationTab(
+    id: NavigationTabId.myTelegram,
+    onlineOnly: true,
+    icon: Symbols.chat_rounded,
+    getLabel: _getMyTelegramLabel,
   ),
   NavigationTab(id: NavigationTabId.liveTv, onlineOnly: true, icon: Symbols.live_tv_rounded, getLabel: _getLiveTvLabel),
   NavigationTab(id: NavigationTabId.search, onlineOnly: true, icon: Symbols.search_rounded, getLabel: _getSearchLabel),

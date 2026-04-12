@@ -584,7 +584,8 @@
   "navigation": {
     "libraries": "Medias",
     "downloads": "Téléch.",
-    "liveTv": "TV direct"
+    "liveTv": "TV direct",
+    "myTelegram": "My Telegram"
   },
   "liveTv": {
     "title": "TV en direct",
@@ -938,5 +939,21 @@
     "title": "Tâches du serveur",
     "failedToLoad": "Échec du chargement des tâches",
     "noTasks": "Aucune tâche en cours"
+  },
+  "myTelegram": {
+    "title": "My Telegram",
+    "config": "Configure chats",
+    "configTitle": "My Telegram — configure",
+    "chatsTab": "Chats",
+    "groupsTab": "Groups",
+    "channelsTab": "Channels",
+    "botsTab": "Bots",
+    "empty": "No chats selected. Use Configure to choose dialogs.",
+    "loadError": "Could not load chats",
+    "savedMessages": "Saved Messages",
+    "save": "Save",
+    "saved": "Saved",
+    "showInVideo": "Show in My Telegram",
+    "loadMore": "Load more"
   }
 }

@@ -584,7 +584,8 @@
   "navigation": {
     "libraries": "ライブラリ",
     "downloads": "ダウンロード",
-    "liveTv": "ライブTV"
+    "liveTv": "ライブTV",
+    "myTelegram": "My Telegram"
   },
   "liveTv": {
     "title": "ライブTV",
@@ -938,5 +939,21 @@
     "title": "サーバータスク",
     "failedToLoad": "タスクの読み込みに失敗しました",
     "noTasks": "実行中のタスクはありません"
+  },
+  "myTelegram": {
+    "title": "My Telegram",
+    "config": "Configure chats",
+    "configTitle": "My Telegram — configure",
+    "chatsTab": "Chats",
+    "groupsTab": "Groups",
+    "channelsTab": "Channels",
+    "botsTab": "Bots",
+    "empty": "No chats selected. Use Configure to choose dialogs.",
+    "loadError": "Could not load chats",
+    "savedMessages": "Saved Messages",
+    "save": "Save",
+    "saved": "Saved",
+    "showInVideo": "Show in My Telegram",
+    "loadMore": "Load more"
   }
 }
