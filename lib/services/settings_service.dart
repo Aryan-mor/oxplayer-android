@@ -1,5 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import '../models/hotkey_model.dart';
@@ -65,6 +68,8 @@ class SettingsService extends BaseSharedPreferencesService {
   static const String _keySubtitlePosition = 'subtitle_position';
   static const String _keyAppLocale = 'app_locale';
   static const String _keyRememberTrackSelections = 'remember_track_selections';
+  static const String _keySubtitleSearchLanguageCode = 'subtitle_search_language_code';
+  static const String _keyPersistedSubdlMap = 'persisted_subdl_subtitle_by_media_v1';
   static const String _keyClickVideoTogglesPlayback = 'click_video_toggles_playback';
   static const String _keyAutoSkipIntro = 'auto_skip_intro';
   static const String _keyAutoSkipCredits = 'auto_skip_credits';
@@ -827,6 +832,82 @@ class SettingsService extends BaseSharedPreferencesService {
     return prefs.getBool(_keyRememberTrackSelections) ?? true;
   }
 
+  /// Last language used in the in-player SubDL subtitle search sheet (ISO 639-1).
+  Future<void> setSubtitleSearchLanguageCode(String code) async {
+    final trimmed = code.trim().toLowerCase();
+    if (trimmed.isEmpty) return;
+    await prefs.setString(_keySubtitleSearchLanguageCode, trimmed);
+  }
+
+  String? getSubtitleSearchLanguageCode() {
+    final s = prefs.getString(_keySubtitleSearchLanguageCode);
+    if (s == null || s.isEmpty) return null;
+    return s.toLowerCase();
+  }
+
+  String _persistedSubdlCompoundKey(String serverId, String ratingKey) => '$serverId::$ratingKey';
+
+  Map<String, dynamic> _readPersistedSubdlMap() {
+    final s = prefs.getString(_keyPersistedSubdlMap);
+    if (s == null || s.isEmpty) return {};
+    final decoded = json.decode(s);
+    if (decoded is! Map) return {};
+    return Map<String, dynamic>.from(decoded);
+  }
+
+  Future<Directory> _persistedSubdlDirectory() async {
+    final root = await getApplicationSupportDirectory();
+    final dir = Directory(p.join(root.path, 'persisted_subdl'));
+    await dir.create(recursive: true);
+    return dir;
+  }
+
+  /// Remember a SubDL (local file) subtitle for this item so the next playback can auto-attach it.
+  Future<void> setPersistedSubdlSubtitle({
+    required String serverId,
+    required String ratingKey,
+    required String sourceAbsolutePath,
+    String? title,
+    String? language,
+  }) async {
+    final src = File(sourceAbsolutePath);
+    if (!await src.exists()) return;
+    final dir = await _persistedSubdlDirectory();
+    final safe = '${serverId}_$ratingKey'.replaceAll(RegExp(r'[^a-zA-Z0-9_.-]'), '_');
+    var ext = p.extension(sourceAbsolutePath).toLowerCase();
+    if (!const {'.srt', '.vtt', '.ass', '.ssa'}.contains(ext)) {
+      ext = '.srt';
+    }
+    final destPath = p.join(dir.path, '$safe$ext');
+    await src.copy(destPath);
+    final map = _readPersistedSubdlMap();
+    map[_persistedSubdlCompoundKey(serverId, ratingKey)] = {
+      'path': destPath,
+      'title': title,
+      'language': language,
+    };
+    await prefs.setString(_keyPersistedSubdlMap, json.encode(map));
+  }
+
+  Future<({String path, String? title, String? language})?> getPersistedSubdlSubtitleForPlayback(
+    String serverId,
+    String ratingKey,
+  ) async {
+    final key = _persistedSubdlCompoundKey(serverId, ratingKey);
+    final map = _readPersistedSubdlMap();
+    final raw = map[key];
+    if (raw is! Map) return null;
+    final path = raw['path'] as String?;
+    if (path == null || path.isEmpty) return null;
+    final f = File(path);
+    if (!await f.exists()) {
+      map.remove(key);
+      await prefs.setString(_keyPersistedSubdlMap, json.encode(map));
+      return null;
+    }
+    return (path: path, title: raw['title'] as String?, language: raw['language'] as String?);
+  }
+
   // Click on Video Player Settings
   Future<void> setClickVideoTogglesPlayback(bool value) async {
     await prefs.setBool(_keyClickVideoTogglesPlayback, value);
@@ -1361,6 +1442,8 @@ class SettingsService extends BaseSharedPreferencesService {
       prefs.remove(_keySubtitlePosition),
       prefs.remove(_keyAppLocale),
       prefs.remove(_keyRememberTrackSelections),
+      prefs.remove(_keySubtitleSearchLanguageCode),
+      prefs.remove(_keyPersistedSubdlMap),
       prefs.remove(_keyCustomDownloadPath),
       prefs.remove(_keyCustomDownloadPathType),
       prefs.remove(_keyDownloadOnWifiOnly),
@@ -1421,6 +1504,8 @@ class SettingsService extends BaseSharedPreferencesService {
       'keyboardShortcuts': getKeyboardShortcuts(),
       'keyboardHotkeys': hotkeys.map((key, value) => MapEntry(key, _serializeHotKey(value))),
       'rememberTrackSelections': getRememberTrackSelections(),
+      'subtitleSearchLanguageCode': getSubtitleSearchLanguageCode(),
+      'persistedSubdlSubtitleEntries': _readPersistedSubdlMap().length,
       'clickVideoTogglesPlayback': getClickVideoTogglesPlayback(),
       'autoSkipIntro': getAutoSkipIntro(),
       'autoSkipCredits': getAutoSkipCredits(),

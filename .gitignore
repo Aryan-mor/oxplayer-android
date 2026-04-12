@@ -57,3 +57,4 @@ assets/env/default.env
 **/fastlane/**/
 **/fastlane/report.xml
 maestro/**/*.png
+log.txt

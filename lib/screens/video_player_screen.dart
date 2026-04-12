@@ -1209,6 +1209,9 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         );
       }
 
+      var externalSubsMerged = List<SubtitleTrack>.from(result.externalSubtitles);
+      SubtitleTrack? restoredSubdl;
+
       // Open video through Player
       if (result.videoUrl != null) {
         // Reset first frame flag and frame rate retry counter for new video
@@ -1243,7 +1246,21 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
           );
         }
 
-        final hasExternalSubs = result.externalSubtitles.isNotEmpty;
+        if (!widget.isOffline) {
+          final subdlSettings = await SettingsService.getInstance();
+          final sid = widget.metadata.serverId ?? '';
+          final persisted = await subdlSettings.getPersistedSubdlSubtitleForPlayback(sid, widget.metadata.ratingKey);
+          if (persisted != null) {
+            restoredSubdl = SubtitleTrack.uri(
+              Uri.file(persisted.path).toString(),
+              title: persisted.title,
+              language: persisted.language,
+            );
+            externalSubsMerged.add(restoredSubdl);
+          }
+        }
+
+        final hasExternalSubs = externalSubsMerged.isNotEmpty;
         final isExoPlayer = player is PlayerAndroid;
 
         // ExoPlayer: attach external subs at open time so it discovers
@@ -1252,7 +1269,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         await player!.open(
           Media(result.videoUrl!, start: resumePosition, headers: plexHeaders),
           play: isExoPlayer || !hasExternalSubs,
-          externalSubtitles: isExoPlayer && hasExternalSubs ? result.externalSubtitles : null,
+          externalSubtitles: isExoPlayer && hasExternalSubs ? externalSubsMerged : null,
         );
 
         // Apply subtitle styling to ExoPlayer native layer (CaptionStyleCompat + libass font scale)
@@ -1337,7 +1354,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
           metadata: widget.metadata,
           mediaInfo: _currentMediaInfo,
           preferredAudioTrack: widget.preferredAudioTrack,
-          preferredSubtitleTrack: widget.preferredSubtitleTrack,
+          preferredSubtitleTrack: widget.preferredSubtitleTrack ?? restoredSubdl,
           preferredSecondarySubtitleTrack: widget.preferredSecondarySubtitleTrack,
           showMessage: (message, {duration}) {
             if (mounted) showAppSnackBar(context, message, duration: duration);
@@ -1345,16 +1362,16 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         );
 
         // Store external subtitles for re-use after backend fallback
-        _trackManager!.cacheExternalSubtitles(result.externalSubtitles);
+        _trackManager!.cacheExternalSubtitles(externalSubsMerged);
 
         // MPV with external subs: add after open via sub-add,
         // opened paused to avoid race condition (issue #226)
-        if (player is! PlayerAndroid && result.externalSubtitles.isNotEmpty) {
+        if (player is! PlayerAndroid && externalSubsMerged.isNotEmpty) {
           _hasFirstFrame.value = false;
           _trackManager!.waitingForExternalSubsTrackSelection = true;
 
           try {
-            await _trackManager!.addExternalSubtitles(result.externalSubtitles);
+            await _trackManager!.addExternalSubtitles(externalSubsMerged);
           } finally {
             await _trackManager!.resumeAfterSubtitleLoad();
           }

@@ -167,7 +167,8 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
     private var selectedAudioTrackId: String? = null
     private var selectedSubtitleTrackId: String? = null
     private val audioTrackGroupMap = mutableMapOf<String, TrackGroup>()
-    private val subtitleTrackGroupMap = mutableMapOf<String, TrackGroup>()
+    /** Maps Flutter-facing subtitle track id to Exo selection ([TrackGroup], index within group). */
+    private val subtitleTrackSelectionMap = mutableMapOf<String, Pair<TrackGroup, Int>>()
 
     private fun emitLog(level: String, prefix: String, message: String) {
         when (level) {
@@ -803,7 +804,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
 
         val trackList = mutableListOf<Map<String, Any?>>()
         audioTrackGroupMap.clear()
-        subtitleTrackGroupMap.clear()
+        subtitleTrackSelectionMap.clear()
 
         // Group tracks by type and use group index as track ID (matching select functions)
         val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
@@ -840,38 +841,49 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
             }
         }
 
-        // Process subtitle tracks (embedded + side-loaded external)
+        // Process subtitle tracks (embedded + side-loaded external).
+        // One Tracks.Group can contain multiple text formats (e.g. MKV/MP4); expose each as its own row.
         Log.d(TAG, "emitTrackList: found ${textGroups.size} subtitle track groups")
         textGroups.forEachIndexed { groupIndex, group ->
             val trackGroup = group.mediaTrackGroup
-            val format = trackGroup.getFormat(0)
-            val trackId = format.id?.takeIf { it.isNotBlank() } ?: "${C.TRACK_TYPE_TEXT}_$groupIndex"
-            subtitleTrackGroupMap[trackId] = trackGroup
-            val isSelected = group.isSelected
+            for (formatIndex in 0 until trackGroup.length) {
+                val format = trackGroup.getFormat(formatIndex)
+                val trackId = when {
+                    format.id?.startsWith("external_") == true -> format.id!!
+                    trackGroup.length == 1 ->
+                        format.id?.takeIf { it.isNotBlank() } ?: "${C.TRACK_TYPE_TEXT}_$groupIndex"
+                    else -> "${C.TRACK_TYPE_TEXT}_${groupIndex}_$formatIndex"
+                }
+                subtitleTrackSelectionMap[trackId] = trackGroup to formatIndex
+                val isSelected = group.isTrackSelected(formatIndex)
 
-            // Detect external (side-loaded) subtitle by the ID prefix set in open()
-            val isExternal = format.id?.startsWith("external_") == true
-            val externalIndex = if (isExternal) format.id?.removePrefix("external_")?.toIntOrNull() else null
-            val externalUri = externalIndex?.takeIf { it in externalSubtitleUris.indices }?.let { externalSubtitleUris[it] }
+                // Detect external (side-loaded) subtitle by the ID prefix set in open()
+                val isExternal = format.id?.startsWith("external_") == true
+                val externalIndex = if (isExternal) format.id?.removePrefix("external_")?.toIntOrNull() else null
+                val externalUri = externalIndex?.takeIf { it in externalSubtitleUris.indices }?.let { externalSubtitleUris[it] }
 
-            Log.d(TAG, "Subtitle track $groupIndex: codec=${format.codecs}, lang=${format.language}, selected=$isSelected, external=$isExternal")
+                Log.d(
+                    TAG,
+                    "Subtitle track group=$groupIndex format=$formatIndex: codec=${format.codecs}, lang=${format.language}, selected=$isSelected, external=$isExternal"
+                )
 
-            val track = mutableMapOf<String, Any?>(
-                "type" to "sub",
-                "id" to trackId,
-                "title" to format.label,
-                "lang" to format.language,
-                "codec" to format.codecs,
-                "default" to (format.selectionFlags and C.SELECTION_FLAG_DEFAULT != 0),
-                "forced" to (format.selectionFlags and C.SELECTION_FLAG_FORCED != 0),
-                "selected" to isSelected,
-                "external" to isExternal,
-                "external-filename" to externalUri
-            )
-            trackList.add(track)
+                val track = mutableMapOf<String, Any?>(
+                    "type" to "sub",
+                    "id" to trackId,
+                    "title" to format.label,
+                    "lang" to format.language,
+                    "codec" to format.codecs,
+                    "default" to (format.selectionFlags and C.SELECTION_FLAG_DEFAULT != 0),
+                    "forced" to (format.selectionFlags and C.SELECTION_FLAG_FORCED != 0),
+                    "selected" to isSelected,
+                    "external" to isExternal,
+                    "external-filename" to externalUri
+                )
+                trackList.add(track)
 
-            if (isSelected) {
-                selectedSubId = trackId
+                if (isSelected) {
+                    selectedSubId = trackId
+                }
             }
         }
 
@@ -904,7 +916,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
             delegate?.onPropertyChange("sid", selectedSubId)
         } else if (
             textGroups.isNotEmpty() &&
-            (pendingSubtitleId == null || pendingSubtitleId == "no" || !subtitleTrackGroupMap.containsKey(pendingSubtitleId))
+            (pendingSubtitleId == null || pendingSubtitleId == "no" || !subtitleTrackSelectionMap.containsKey(pendingSubtitleId))
         ) {
             selectedSubtitleTrackId = "no"
             delegate?.onPropertyChange("sid", "no")
@@ -913,7 +925,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
         if (pendingSubtitleId != null &&
             pendingSubtitleId != "no" &&
             pendingSubtitleId != selectedSubId &&
-            subtitleTrackGroupMap.containsKey(pendingSubtitleId)
+            subtitleTrackSelectionMap.containsKey(pendingSubtitleId)
         ) {
             selectSubtitleTrack(pendingSubtitleId)
         }
@@ -1223,7 +1235,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
         externalSubtitles.clear()
         externalSubtitleUris.clear()
         audioTrackGroupMap.clear()
-        subtitleTrackGroupMap.clear()
+        subtitleTrackSelectionMap.clear()
         selectedAudioTrackId = null
         selectedSubtitleTrackId = null
 
@@ -1341,10 +1353,10 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
             return
         }
 
-        val trackGroup = subtitleTrackGroupMap[trackId] ?: return
+        val (trackGroup, formatIndex) = subtitleTrackSelectionMap[trackId] ?: return
         selectedSubtitleTrackId = trackId
         selector.parameters = selector.buildUponParameters()
-            .setOverrideForType(TrackSelectionOverride(trackGroup, 0))
+            .setOverrideForType(TrackSelectionOverride(trackGroup, formatIndex))
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .build()
         delegate?.onPropertyChange("sid", trackId)
@@ -1655,7 +1667,7 @@ class ExoPlayerCore(private val activity: Activity) : Player.Listener {
         selectedAudioTrackId = null
         selectedSubtitleTrackId = null
         audioTrackGroupMap.clear()
-        subtitleTrackGroupMap.clear()
+        subtitleTrackSelectionMap.clear()
         exoPlayer?.clearVideoSurface()
         exoPlayer?.removeListener(this)
         exoPlayer?.release()

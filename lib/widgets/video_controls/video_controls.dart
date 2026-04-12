@@ -1,5 +1,5 @@
 import 'dart:async' show StreamSubscription, Timer, unawaited;
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart' show PointerSignalEvent, PointerScrollEvent;
@@ -664,10 +664,13 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
   Future<void> _startSubtitleSearchTrial() async {
     try {
       playMediaDebugInfo('Subtitle trial search started from player controls.');
+      final settings = await SettingsService.getInstance();
+      final preferredLanguageCode =
+          settings.getSubtitleSearchLanguageCode() ??
+              WidgetsBinding.instance.platformDispatcher.locale.languageCode;
       final results = await SubdlService().searchWithNativeUi(
         metadata: widget.metadata,
-        preferredLanguageCode: WidgetsBinding.instance.platformDispatcher.locale.languageCode,
-        titleOverride: widget.metadata.title,
+        preferredLanguageCode: preferredLanguageCode,
       );
       if (!mounted || results == null || results.isEmpty) {
         return;
@@ -750,6 +753,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     if (!_subtitleTrialActive || !mounted) {
       return;
     }
+    final confirmedSub = widget.player.state.track.subtitle;
     setState(() {
       _subtitleTrialResults = const [];
       _subtitleTrialIndex = 0;
@@ -758,6 +762,9 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
     });
     _restartHideTimerIfPlaying();
     showSuccessSnackBar(context, t.videoControls.subtitleDownloaded);
+    if (confirmedSub != null) {
+      await _maybePersistDownloadedSubdlTrack(confirmedSub);
+    }
   }
 
   Future<void> _cancelSubtitleTrial() async {
@@ -1305,7 +1312,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       onQueueItemSelected: playbackState.isQueueActive ? _onQueueItemSelected : null,
       metadata: widget.metadata,
       ratingKey: widget.metadata.ratingKey,
-      mediaTitle: widget.metadata.title,
+      mediaTitle: widget.metadata.displayTitle,
       onSubtitleDownloaded: _onSubtitleDownloaded,
       onExternalSubtitleReady: _onExternalSubtitleReady,
       onSearchSubtitles: _startSubtitleSearchTrial,
@@ -2809,6 +2816,26 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       title: track.title,
       language: track.language,
       select: true,
+    );
+    if (!_subtitleTrialActive) {
+      await _maybePersistDownloadedSubdlTrack(track);
+    }
+  }
+
+  Future<void> _maybePersistDownloadedSubdlTrack(SubtitleTrack track) async {
+    final uri = track.uri;
+    if (uri == null || uri.isEmpty) return;
+    final parsed = Uri.tryParse(uri);
+    if (parsed == null || parsed.scheme != 'file') return;
+    final file = File.fromUri(parsed);
+    if (!await file.exists()) return;
+    final settings = await SettingsService.getInstance();
+    await settings.setPersistedSubdlSubtitle(
+      serverId: widget.metadata.serverId ?? '',
+      ratingKey: widget.metadata.ratingKey,
+      sourceAbsolutePath: file.path,
+      title: track.title,
+      language: track.language,
     );
   }
 

@@ -39,7 +39,9 @@ import io.flutter.embedding.android.FlutterTextureView
 import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.android.TransparencyMode
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
+import java.util.Locale
 import de.aryanmo.oxplayer.exoplayer.ExoPlayerPlugin
 import de.aryanmo.oxplayer.mpv.MpvPlayerPlugin
 import de.aryanmo.oxplayer.shared.ThemeHelper
@@ -72,6 +74,7 @@ class MainActivity : FlutterActivity() {
     private val UPDATE_CHANNEL = "de.aryanmo.oxplayer/update"
     private val subdlClient = SubdlApiClient()
     private var watchNextPlugin: WatchNextPlugin? = null
+    private lateinit var mainFlutterMessenger: BinaryMessenger
 
     // Auto PiP state
     private var autoPipReady = false
@@ -221,6 +224,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        mainFlutterMessenger = flutterEngine.dartExecutor.binaryMessenger
         flutterEngine.plugins.add(MpvPlayerPlugin())
         flutterEngine.plugins.add(ExoPlayerPlugin())
 
@@ -783,6 +787,7 @@ class MainActivity : FlutterActivity() {
                 return
             }
             val selectedLanguage = languagePairs.getOrNull(languageSpinner.selectedItemPosition)?.first ?: "EN"
+            notifyFlutterSubtitleSearchLanguage(selectedLanguage)
             val parsedSeason = seasonEditText.text?.toString()?.trim()?.toIntOrNull()
             val parsedEpisode = episodeEditText.text?.toString()?.trim()?.toIntOrNull()
             positiveButton()?.isEnabled = false
@@ -914,6 +919,7 @@ class MainActivity : FlutterActivity() {
                 return
             }
             val selectedLanguage = languagePairs.getOrNull(languageSpinner.selectedItemPosition)?.first ?: "EN"
+            notifyFlutterSubtitleSearchLanguage(selectedLanguage)
             val parsedSeason = seasonEditText.text?.toString()?.trim()?.toIntOrNull()
             val parsedEpisode = episodeEditText.text?.toString()?.trim()?.toIntOrNull()
             positiveButton()?.isEnabled = false
@@ -1003,6 +1009,28 @@ class MainActivity : FlutterActivity() {
             languageLoadingRow.visibility = View.GONE
             languageSpinner.visibility = View.VISIBLE
             positiveButton()?.isEnabled = true
+        }
+    }
+
+    /// Persists SubDL search language from native dialogs into Flutter [SettingsService] (ISO 639-1 lowercase).
+    private fun notifyFlutterSubtitleSearchLanguage(languageCode: String) {
+        val normalized = languageCode.trim().lowercase(Locale.US)
+        if (normalized.isEmpty()) return
+        if (!::mainFlutterMessenger.isInitialized) return
+        runOnUiThread {
+            try {
+                MethodChannel(mainFlutterMessenger, "de.aryanmo.oxplayer/subtitle_search_locale").invokeMethod(
+                    "setLanguageCode",
+                    normalized,
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {}
+                        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {}
+                        override fun notImplemented() {}
+                    },
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "notifyFlutterSubtitleSearchLanguage failed: ${e.message}")
+            }
         }
     }
 

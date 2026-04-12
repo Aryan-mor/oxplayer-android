@@ -16,6 +16,7 @@ import 'router.dart';
 import 'services/macos_window_service.dart';
 import 'services/fullscreen_state_manager.dart';
 import 'services/settings_service.dart';
+import 'services/subtitle_search_locale_bridge.dart';
 import 'utils/platform_detector.dart';
 import 'services/discord_rpc_service.dart';
 import 'services/gamepad_service.dart';
@@ -135,6 +136,7 @@ Future<void> _bootstrapApp() async {
     futures.add(TvDetectionService.getInstance());
     // Initialize PiP service to listen for PiP state changes
     PipService();
+    SubtitleSearchLocaleBridge.register();
   }
 
   // Configure macOS window with custom titlebar (depends on window manager)

@@ -8,6 +8,7 @@ import 'package:oxplayer/mpv/mpv.dart';
 import '../../../i18n/strings.g.dart';
 import '../../../models/plex_metadata.dart';
 import '../../../services/auth_debug_service.dart';
+import '../../../services/settings_service.dart';
 import '../../../utils/app_logger.dart';
 import '../../../utils/language_codes.dart';
 import '../../../utils/snackbar_helper.dart';
@@ -55,11 +56,34 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
   @override
   void initState() {
     super.initState();
-    _initDefaultLanguage();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _search());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_bootstrap());
+    });
   }
 
-  void _initDefaultLanguage() {
+  Future<void> _bootstrap() async {
+    await _loadSavedLanguage();
+    if (!mounted) return;
+    await _search();
+  }
+
+  /// Prefer last user-chosen search language; else device locale when we know a label.
+  Future<void> _loadSavedLanguage() async {
+    final settings = await SettingsService.getInstance();
+    final saved = settings.getSubtitleSearchLanguageCode();
+    if (!mounted) return;
+    if (saved != null) {
+      setState(() {
+        _languageCode = saved;
+        _languageName = LanguageCodes.getLanguageName(saved) ?? LanguageCodes.getDisplayName(saved);
+      });
+      return;
+    }
+    _applyPlatformLocaleLanguage();
+    setState(() {});
+  }
+
+  void _applyPlatformLocaleLanguage() {
     final locale = WidgetsBinding.instance.platformDispatcher.locale;
     final code = locale.languageCode;
     final name = LanguageCodes.getLanguageName(code);
@@ -121,6 +145,13 @@ class _SubtitleSearchSheetState extends State<SubtitleSearchSheet> {
       _languageName = name;
       _showLanguagePicker = false;
     });
+    unawaited(_persistLanguageAndSearch(code));
+  }
+
+  Future<void> _persistLanguageAndSearch(String code) async {
+    final settings = await SettingsService.getInstance();
+    await settings.setSubtitleSearchLanguageCode(code);
+    if (!mounted) return;
     _search();
   }
 
