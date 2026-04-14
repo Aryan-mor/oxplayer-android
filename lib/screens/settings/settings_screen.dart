@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../../focus/focus_memory_tracker.dart';
@@ -492,22 +493,27 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
   }
 
     Future<void> _previewUpdateDialog({required bool isMandatory}) async {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      final releaseInfo = await UpdateService.fetchLatestReleaseInfo();
+      if (!mounted) return;
       final previewInfo = UpdateInfo(
         deliveryKind: UpdateDeliveryKind.inAppAndroid,
-        releaseTag: 'v1.99.0',
-        currentVersion: '1.4.0',
-        latestVersion: '1.99.0',
-        releaseUrl: 'https://github.com/Aryan-mor/oxplayer-android/releases/latest',
-        releaseName: 'Preview Update',
-        releaseNotes:
-            'This is a debug preview of the Android update flow.\n\n'
-            '- Updated playback engine startup\n'
-            '- Improved download stability\n'
-            '- Refined TV focus handling',
+        releaseTag: releaseInfo?.releaseTag ?? 'v${packageInfo.version}',
+        currentVersion: packageInfo.version,
+        latestVersion: releaseInfo?.latestVersion ?? packageInfo.version,
+        releaseUrl: releaseInfo?.releaseUrl ?? 'https://github.com/Aryan-mor/oxplayer-android/releases/latest',
+        releaseName: releaseInfo?.releaseName ?? 'Preview Update',
+        releaseNotes: releaseInfo?.releaseNotes.trim().isNotEmpty == true
+            ? releaseInfo!.releaseNotes
+            : 'This is a debug preview of the Android update flow.\n\n'
+                '- Updated playback engine startup\n'
+                '- Improved download stability\n'
+                '- Refined TV focus handling',
         isMandatory: isMandatory,
-        downloadUrl: 'https://example.invalid/oxplayer-preview.apk',
-        cachedApkPath: null,
-        publishedAt: DateTime.now(),
+        downloadUrl: releaseInfo?.downloadUrl,
+        cachedApkPath: releaseInfo?.cachedApkPath,
+        publishedAt: releaseInfo?.publishedAt ?? DateTime.now(),
       );
 
       await showUpdateFlowDialog(context, previewInfo, useLaterLabel: !isMandatory);

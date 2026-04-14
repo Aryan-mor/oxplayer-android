@@ -234,6 +234,77 @@ class UpdateService {
     }
   }
 
+  static UpdateInfo _buildUpdateInfo({
+    required GithubReleaseInfo release,
+    required String currentVersion,
+    required String cleanVersion,
+    required String? cachedApkPath,
+    required bool isMandatory,
+  }) {
+    return UpdateInfo(
+      deliveryKind: useNativeUpdater
+          ? UpdateDeliveryKind.nativeDesktop
+          : (useInAppAndroidUpdater ? UpdateDeliveryKind.inAppAndroid : UpdateDeliveryKind.browser),
+      releaseTag: release.tagName,
+      currentVersion: currentVersion,
+      latestVersion: cleanVersion,
+      releaseUrl: release.releaseUrl,
+      releaseName: release.releaseName,
+      releaseNotes: release.releaseNotes,
+      isMandatory: isMandatory,
+      downloadUrl: release.downloadUrl,
+      cachedApkPath: cachedApkPath,
+      publishedAt: release.publishedAt == null ? null : DateTime.tryParse(release.publishedAt!),
+    );
+  }
+
+  /// Fetch the latest GitHub release metadata without comparing versions.
+  /// This is used for preview flows that need real release tag/version/download data.
+  static Future<UpdateInfo?> fetchLatestReleaseInfo() async {
+    if (!isUpdateCheckEnabled) {
+      return null;
+    }
+
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
+
+      final release = await _githubReleaseService.fetchLatest(
+        includePreferredApk: useInAppAndroidUpdater,
+      );
+      if (release == null) {
+        return null;
+      }
+
+      final currentSemver = tryParsePackageVersionName(currentVersion);
+      final latestSemver = tryParseSemVer(release.tagName);
+      final cleanVersion = release.tagName.startsWith('v')
+          ? release.tagName.substring(1)
+          : release.tagName;
+      final cachedApkPath = useInAppAndroidUpdater
+          ? await cachedApkPathForRelease(release.tagName)
+          : null;
+      final isMandatory = currentSemver != null && latestSemver != null
+          ? isMandatorySemverBump(
+              local: currentSemver,
+              remote: latestSemver,
+              patchOptional: _patchOnlyUpdatesAreOptional,
+            )
+          : false;
+
+      return _buildUpdateInfo(
+        release: release,
+        currentVersion: currentVersion,
+        cleanVersion: cleanVersion,
+        cachedApkPath: cachedApkPath,
+        isMandatory: isMandatory,
+      );
+    } catch (error) {
+      _logger.e('Failed to load latest release info: $error');
+      return null;
+    }
+  }
+
   static Future<UpdateInfo?> _performUpdateCheck({required bool respectCooldown}) async {
     if (!isUpdateCheckEnabled) {
       return null;
@@ -310,24 +381,12 @@ class UpdateService {
             )
           : false;
 
-      return UpdateInfo(
-        deliveryKind: useNativeUpdater
-            ? UpdateDeliveryKind.nativeDesktop
-            : (useInAppAndroidUpdater
-                  ? UpdateDeliveryKind.inAppAndroid
-                  : UpdateDeliveryKind.browser),
-        releaseTag: release.tagName,
+      return _buildUpdateInfo(
+        release: release,
         currentVersion: currentVersion,
-        latestVersion: cleanVersion,
-        releaseUrl: release.releaseUrl,
-        releaseName: release.releaseName,
-        releaseNotes: release.releaseNotes,
-        isMandatory: isMandatory,
-        downloadUrl: release.downloadUrl,
+        cleanVersion: cleanVersion,
         cachedApkPath: cachedApkPath,
-        publishedAt: release.publishedAt == null
-            ? null
-            : DateTime.tryParse(release.publishedAt!),
+        isMandatory: isMandatory,
       );
     } catch (error) {
       _logger.e('Failed to check for updates: $error');

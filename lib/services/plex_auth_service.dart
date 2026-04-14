@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:uuid/uuid.dart';
 import 'storage_service.dart';
 import 'plex_client.dart';
@@ -47,14 +48,16 @@ class PlexAuthService {
 
   final Dio _dio;
   final String _clientIdentifier;
+  final String _appVersion;
 
-  PlexAuthService._(this._dio, this._clientIdentifier);
+  PlexAuthService._(this._dio, this._clientIdentifier, this._appVersion);
 
   static Future<PlexAuthService> create() async {
     final storage = await StorageService.getInstance();
     final dio = Dio(
       BaseOptions(connectTimeout: ConnectionTimeouts.plexTvConnect, receiveTimeout: ConnectionTimeouts.plexTvReceive),
     )..httpClientAdapter = createHttp2Adapter();
+    final packageInfo = await PackageInfo.fromPlatform();
 
     // Get or create client identifier
     String? clientIdentifier = storage.getClientIdentifier();
@@ -63,7 +66,7 @@ class PlexAuthService {
       await storage.saveClientIdentifier(clientIdentifier);
     }
 
-    return PlexAuthService._(dio, clientIdentifier);
+    return PlexAuthService._(dio, clientIdentifier, packageInfo.version);
   }
 
   String get clientIdentifier => _clientIdentifier;
@@ -72,6 +75,7 @@ class PlexAuthService {
     final headers = {
       'Accept': 'application/json',
       'X-Plex-Product': _appName,
+      'X-Plex-Version': _appVersion,
       'X-Plex-Client-Identifier': _clientIdentifier,
     };
 
@@ -217,7 +221,7 @@ class PlexAuthService {
       'includeSettings': '1',
       'includeSharedSettings': '1',
       'X-Plex-Product': _appName,
-      'X-Plex-Version': '1.4.0',
+      'X-Plex-Version': _appVersion,
       'X-Plex-Client-Identifier': _clientIdentifier,
       'X-Plex-Platform': 'Flutter',
       'X-Plex-Platform-Version': '3.8.1',
