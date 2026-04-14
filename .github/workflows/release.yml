@@ -2,11 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version number (e.g., 1.9.0)"
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -20,6 +15,8 @@ env:
   OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME || secrets.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
   OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_URL || secrets.OXPLAYER_TELEGRAM_WEBAPP_URL }}
   SUBDL_API_KEY: ${{ secrets.SUBDL_API_KEY || vars.SUBDL_API_KEY }}
+  # Product version for release builds: 1.40.<patch> where patch is the workflow run number (GitHub-assigned).
+  OXPLAYER_VERSION_NAME: 1.40.${{ github.run_number }}
 
 jobs:
   release:
@@ -33,8 +30,8 @@ jobs:
 
       - name: Validate version format
         run: |
-          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Error: Version must be in semantic versioning format (e.g., 1.9.0)"
+          if ! echo "${OXPLAYER_VERSION_NAME}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: Version must be in semantic versioning format (e.g., 1.40.19)"
             exit 1
           fi
 
@@ -78,7 +75,7 @@ jobs:
 
       - name: Update pubspec.yaml
         run: |
-          NEW_VERSION="${{ inputs.version }}+${{ steps.get_build.outputs.new_build }}"
+          NEW_VERSION="${OXPLAYER_VERSION_NAME}+${{ steps.get_build.outputs.new_build }}"
           sed -i "s/^version: .*/version: $NEW_VERSION/" pubspec.yaml
           echo "Updated version to: $NEW_VERSION"
           cat pubspec.yaml | grep '^version:'
@@ -91,12 +88,12 @@ jobs:
       - name: Commit version bump
         run: |
           git add pubspec.yaml
-          git commit -m "chore: bump version to ${{ inputs.version }}"
+          git commit -m "chore: bump version to $OXPLAYER_VERSION_NAME"
 
       - name: Create Git tag
         run: |
-          git tag "${{ inputs.version }}"
-          echo "Created tag: ${{ inputs.version }}"
+          git tag "v$OXPLAYER_VERSION_NAME"
+          echo "Created tag: v$OXPLAYER_VERSION_NAME"
 
       - name: Push changes and tag
         run: |

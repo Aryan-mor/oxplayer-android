@@ -942,7 +942,7 @@ jobs:
         id: version
         run: |
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
-          VERSION="1.1.${BUILD_NUMBER}"
+          VERSION="1.40.${BUILD_NUMBER}"
           RELEASE_TAG="v${VERSION}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
