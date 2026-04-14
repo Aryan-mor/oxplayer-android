@@ -1,14 +1,16 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:oxplayer/widgets/app_icon.dart';
 
-import '../../infrastructure/data_repository.dart';
 import '../../i18n/strings.g.dart';
+import '../../infrastructure/data_repository.dart';
 import '../../mixins/refreshable.dart';
+import 'my_telegram_chat_media_screen.dart';
 import 'my_telegram_config_screen.dart';
+import 'my_telegram_forum_topics_screen.dart';
 
-/// Main "My Telegram" hub: four buckets of server-side dialogs with `showInVideo`.
+/// Main "My Telegram" hub: buckets of server-side dialogs with `showInVideo`.
 class MyTelegramScreen extends StatefulWidget {
   const MyTelegramScreen({super.key});
 
@@ -20,6 +22,9 @@ class _MyTelegramScreenState extends State<MyTelegramScreen>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin, FocusableTab {
   late TabController _tabController;
 
+  /// Bumped after Configure closes so bucket lists refetch `showInVideo` from the API.
+  int _listGeneration = 0;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -29,7 +34,7 @@ class _MyTelegramScreenState extends State<MyTelegramScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -39,10 +44,14 @@ class _MyTelegramScreenState extends State<MyTelegramScreen>
   }
 
   Future<void> _openConfig() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(builder: (context) => const MyTelegramConfigScreen()),
-    );
-    if (mounted) setState(() {});
+    final saved = await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute(builder: (context) => const MyTelegramConfigScreen()));
+    if (!mounted) return;
+    setState(() => _listGeneration++);
+    if (saved == true) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t.myTelegram.savedCheckOtherTabsHint)));
+    }
   }
 
   @override
@@ -58,25 +67,43 @@ class _MyTelegramScreenState extends State<MyTelegramScreen>
           tabs: [
             Tab(text: mt.chatsTab),
             Tab(text: mt.groupsTab),
+            Tab(text: mt.supergroupsTab),
             Tab(text: mt.channelsTab),
             Tab(text: mt.botsTab),
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: mt.config,
-            icon: const AppIcon(Symbols.tune_rounded, fill: 1),
-            onPressed: _openConfig,
-          ),
+          IconButton(tooltip: mt.config, icon: const AppIcon(Symbols.tune_rounded, fill: 1), onPressed: _openConfig),
         ],
       ),
       body: TabBarView(
         controller: _tabController,
-        children: const [
-          _MyTelegramBucketList(bucket: 'chats'),
-          _MyTelegramBucketList(bucket: 'groups'),
-          _MyTelegramBucketList(bucket: 'channels'),
-          _MyTelegramBucketList(bucket: 'bots'),
+        children: [
+          _MyTelegramBucketList(
+            key: ValueKey<String>('mt_chats_$_listGeneration'),
+            bucket: 'chats',
+            listGeneration: _listGeneration,
+          ),
+          _MyTelegramBucketList(
+            key: ValueKey<String>('mt_groups_$_listGeneration'),
+            bucket: 'groups',
+            listGeneration: _listGeneration,
+          ),
+          _MyTelegramBucketList(
+            key: ValueKey<String>('mt_supergroups_$_listGeneration'),
+            bucket: 'supergroups',
+            listGeneration: _listGeneration,
+          ),
+          _MyTelegramBucketList(
+            key: ValueKey<String>('mt_channels_$_listGeneration'),
+            bucket: 'channels',
+            listGeneration: _listGeneration,
+          ),
+          _MyTelegramBucketList(
+            key: ValueKey<String>('mt_bots_$_listGeneration'),
+            bucket: 'bots',
+            listGeneration: _listGeneration,
+          ),
         ],
       ),
     );
@@ -84,9 +111,10 @@ class _MyTelegramScreenState extends State<MyTelegramScreen>
 }
 
 class _MyTelegramBucketList extends StatefulWidget {
-  const _MyTelegramBucketList({required this.bucket});
+  const _MyTelegramBucketList({super.key, required this.bucket, required this.listGeneration});
 
   final String bucket;
+  final int listGeneration;
 
   @override
   State<_MyTelegramBucketList> createState() => _MyTelegramBucketListState();
@@ -104,7 +132,7 @@ class _MyTelegramBucketListState extends State<_MyTelegramBucketList> {
   @override
   void didUpdateWidget(covariant _MyTelegramBucketList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.bucket != widget.bucket) {
+    if (oldWidget.bucket != widget.bucket || oldWidget.listGeneration != widget.listGeneration) {
       _reload();
     }
   }
@@ -117,12 +145,7 @@ class _MyTelegramBucketListState extends State<_MyTelegramBucketList> {
 
   Future<OxUserChatListPage> _load() async {
     final repo = await DataRepository.create();
-    return repo.fetchUserChats(
-      bucket: widget.bucket,
-      indexedOnly: false,
-      showInVideoOnly: true,
-      limit: 200,
-    );
+    return repo.fetchUserChats(bucket: widget.bucket, indexedOnly: false, showInVideoOnly: true, limit: 200);
   }
 
   @override
@@ -140,10 +163,7 @@ class _MyTelegramBucketListState extends State<_MyTelegramBucketList> {
               children: [
                 Text(t.myTelegram.loadError),
                 const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: _reload,
-                  child: Text(t.common.retry),
-                ),
+                FilledButton(onPressed: _reload, child: Text(t.common.retry)),
               ],
             ),
           );
@@ -153,10 +173,7 @@ class _MyTelegramBucketListState extends State<_MyTelegramBucketList> {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: Text(
-                t.myTelegram.empty,
-                textAlign: TextAlign.center,
-              ),
+              child: Text(t.myTelegram.empty, textAlign: TextAlign.center),
             ),
           );
         }
@@ -172,9 +189,34 @@ class _MyTelegramBucketListState extends State<_MyTelegramBucketList> {
             separatorBuilder: (context, index) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final row = page.items[index];
+              final tdlib = row.tdlibChatId?.trim();
               return ListTile(
                 leading: _ChatAvatar(photoUrl: row.photoUrl, title: row.title),
                 title: Text(row.title),
+                subtitle: row.isIndexed ? Text(t.myTelegram.indexedForLibrary) : null,
+                trailing: row.isIndexed && tdlib != null && tdlib.isNotEmpty
+                    ? const AppIcon(Symbols.chevron_right_rounded, fill: 1)
+                    : null,
+                onTap: () {
+                  if (tdlib == null || tdlib.isEmpty) return;
+                  if (row.chatType == 'supergroup' && row.isForum) {
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (context) => MyTelegramForumTopicsScreen(
+                          chatTitle: row.title,
+                          tdlibChatId: tdlib,
+                          libraryIndexed: row.isIndexed,
+                        ),
+                      ),
+                    );
+                  } else {
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (context) => MyTelegramChatMediaScreen(chatTitle: row.title, tdlibChatId: tdlib),
+                      ),
+                    );
+                  }
+                },
               );
             },
           ),

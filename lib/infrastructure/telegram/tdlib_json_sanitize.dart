@@ -34,6 +34,12 @@ void _walk(dynamic node) {
 			_patchChatPosition(node);
 		} else if (t == 'chat') {
 			_patchChat(node);
+		} else if (t == 'chatActionBarReportSpam') {
+			_patchChatActionBarReportSpam(node);
+		} else if (t == 'chatActionBarReportAddBlock') {
+			_patchChatActionBarReportAddBlock(node);
+		} else if (t == 'chatActionBarJoinRequest') {
+			_patchChatActionBarJoinRequest(node);
 		} else if (t == 'draftMessage') {
 			_patchDraftMessage(node);
 		} else if (t == 'inputMessageText') {
@@ -312,6 +318,22 @@ void _patchInputMessageText(Map<String, dynamic> m) {
 		m['disable_web_page_preview'] = false;
 	}
 	if (m['clear_draft'] == null) m['clear_draft'] = false;
+}
+
+/// Newer libtdjson may omit bools that tdlib 1.6.x [ChatActionBar*].fromJson requires.
+void _patchChatActionBarReportSpam(Map<String, dynamic> m) {
+	if (m['can_unarchive'] == null) m['can_unarchive'] = false;
+}
+
+void _patchChatActionBarReportAddBlock(Map<String, dynamic> m) {
+	if (m['can_unarchive'] == null) m['can_unarchive'] = false;
+	if (m['distance'] == null) m['distance'] = 0;
+}
+
+void _patchChatActionBarJoinRequest(Map<String, dynamic> m) {
+	if (m['title'] == null) m['title'] = '';
+	if (m['is_channel'] == null) m['is_channel'] = false;
+	if (m['request_date'] == null) m['request_date'] = 0;
 }
 
 void _patchChat(Map<String, dynamic> c) {

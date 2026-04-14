@@ -10,16 +10,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tdlib/td_api.dart' as td;
 import 'package:video_thumbnail/video_thumbnail.dart';
 
-export 'telegram/tdlib_facade.dart' show TdlibCloudPasswordChallenge, TdlibInteractiveLoginRequired, TdlibSmsCodeChallenge;
-
-import '../services/storage_service.dart';
 import '../services/auth_debug_service.dart';
+import '../services/storage_service.dart';
 import 'config/app_config.dart';
 import 'telegram/media_file_locator_resolver.dart';
-import 'telegram/telegram_range_playback.dart';
-import 'telegram/tdlib_controller.dart'
-    if (dart.library.html) 'telegram/tdlib_controller_web.dart';
+import 'telegram/tdlib_controller.dart' if (dart.library.html) 'telegram/tdlib_controller_web.dart';
 import 'telegram/tdlib_facade.dart';
+import 'telegram/telegram_range_playback.dart';
+
+export 'telegram/tdlib_facade.dart'
+    show TdlibCloudPasswordChallenge, TdlibInteractiveLoginRequired, TdlibSmsCodeChallenge;
 
 class TelegramAuthResult {
   const TelegramAuthResult({
@@ -69,11 +69,7 @@ class OxBootstrapUser {
 }
 
 class OxBootstrapSession {
-  const OxBootstrapSession({
-    required this.deviceId,
-    required this.deviceName,
-    required this.expiresAt,
-  });
+  const OxBootstrapSession({required this.deviceId, required this.deviceName, required this.expiresAt});
 
   final String deviceId;
   final String? deviceName;
@@ -162,18 +158,16 @@ class OxLibraryMediaItem {
   final int? locatorChatId;
   final int? locatorMessageId;
   final String? locatorRemoteFileId;
+
   /// For general_video: Telegram chat ID of the source message (for thumbnail resolution via TDLib).
   final int? thumbnailSourceChatId;
+
   /// For general_video: Telegram message ID of the source message (for thumbnail resolution via TDLib).
   final int? thumbnailSourceMessageId;
 }
 
 class OxDiscoverSection {
-  const OxDiscoverSection({
-    required this.id,
-    required this.title,
-    required this.items,
-  });
+  const OxDiscoverSection({required this.id, required this.title, required this.items});
 
   final String id;
   final String title;
@@ -278,11 +272,7 @@ class OxLibraryMediaDetailFile {
 }
 
 class OxLibraryMediaDetail {
-  const OxLibraryMediaDetail({
-    required this.media,
-    required this.files,
-    required this.currentUserHasAccess,
-  });
+  const OxLibraryMediaDetail({required this.media, required this.files, required this.currentUserHasAccess});
 
   final OxLibraryMediaDetailMedia media;
   final List<OxLibraryMediaDetailFile> files;
@@ -322,11 +312,7 @@ class _ResolvedPlayableTelegramFile {
 }
 
 class OxMediaRecoveryResult {
-  const OxMediaRecoveryResult({
-    required this.ok,
-    this.status,
-    this.attempts,
-  });
+  const OxMediaRecoveryResult({required this.ok, this.status, this.attempts});
 
   final bool ok;
   final String? status;
@@ -342,6 +328,7 @@ class OxUserChatRow {
     this.photoUrl,
     required this.chatType,
     required this.peerIsBot,
+    this.isForum = false,
     required this.isIndexed,
     required this.showInVideo,
     required this.showInMusic,
@@ -353,6 +340,8 @@ class OxUserChatRow {
   final String? photoUrl;
   final String chatType;
   final bool peerIsBot;
+  /// TDLib forum flag for supergroups (`GetSupergroup.is_forum`).
+  final bool isForum;
   final bool isIndexed;
   final bool showInVideo;
   final bool showInMusic;
@@ -365,17 +354,363 @@ class OxUserChatListPage {
   final int total;
 }
 
-class DataRepository {
-  static const MethodChannel _mediaToolsChannel =
-      MethodChannel('de.aryanmo.oxplayer/media_tools');
+/// One row from `GET /me/chats/by-tdlib-id/:id/media` (indexed chat files).
+class OxChatMediaRow {
+  const OxChatMediaRow({
+    required this.fileId,
+    required this.messageId,
+    this.remoteFileId,
+    this.caption,
+    this.messageDate,
+    this.fileName,
+    this.chatId,
+    this.durationSeconds,
+  });
 
-  DataRepository._({
-    required AppConfig config,
-    required StorageService storage,
-    required TdlibFacade tdlib,
-  })  : _config = config,
-        _storage = storage,
-        _tdlib = tdlib;
+  final String fileId;
+  final String messageId;
+  final String? remoteFileId;
+  final String? caption;
+  final String? messageDate;
+
+  /// Telegram original file name when sourced from TDLib.
+  final String? fileName;
+
+  /// TDLib chat id (for thumbnail resolution like [general_video]).
+  final int? chatId;
+
+  /// Video duration in seconds when known.
+  final int? durationSeconds;
+}
+
+class OxChatMediaPage {
+  const OxChatMediaPage({
+    required this.items,
+    required this.total,
+    this.hasMoreHistory = false,
+    this.nextHistoryFromMessageId,
+    this.liveSearchUsesDocumentFilter = false,
+  });
+
+  final List<OxChatMediaRow> items;
+  final int total;
+
+  /// When true, more results may be available via [searchChatMessages].
+  final bool hasMoreHistory;
+
+  /// Next page anchor: **oldest** raw message id in the TDLib batch (search/history is newest-first; [batch.last]).
+  /// Use as `from_message_id` with `offset: 0` for the following page — must match the batch, not a filtered subset.
+  final int? nextHistoryFromMessageId;
+
+  /// When true, the next [fetchLiveChatVideos] page must use [SearchMessagesFilterDocument] with the same anchor.
+  final bool liveSearchUsesDocumentFilter;
+}
+
+/// TDLib requires a string; empty [query] means "no keyword filter" — must be `""`, not omitted or whitespace.
+const String _kLiveSearchChatMessagesQuery = '';
+
+Future<void> _viewMessagesForSearchActivation({
+  required TdlibFacade tdlib,
+  required int chatId,
+  td.Chat? chat,
+}) async {
+  final lastId = chat?.lastMessage?.id ?? 0;
+  if (lastId <= 0) {
+    debugLogInfo(
+      'DEBUG: viewMessages skipped (no lastMessage id) chatId=$chatId',
+      type: LogType.backend,
+    );
+    return;
+  }
+  try {
+    await tdlib.send(
+      td.ViewMessages(
+        chatId: chatId,
+        messageIds: <int>[lastId],
+        forceRead: false,
+      ),
+    );
+    debugLogInfo(
+      'DEBUG: viewMessages completed for search index activation chatId=$chatId messageId=$lastId',
+      type: LogType.backend,
+    );
+  } catch (e) {
+    debugLogError('DEBUG: viewMessages failed chatId=$chatId: $e', type: LogType.backend);
+  }
+}
+
+void _debugLogGetChatMessageIdHints(td.Chat chat) {
+  final lastId = chat.lastMessage?.id ?? 0;
+  final inbox = chat.lastReadInboxMessageId;
+  final outbox = chat.lastReadOutboxMessageId;
+  final candidates = <int>[lastId, inbox, outbox].where((id) => id > 0).toList(growable: false);
+  final minHint = candidates.isEmpty ? 0 : candidates.reduce((a, b) => a < b ? a : b);
+  final maxHint = candidates.isEmpty ? 0 : candidates.reduce((a, b) => a > b ? a : b);
+  debugLogInfo(
+    'DEBUG: GetChat message id hints chatId=${chat.id} lastMessageId=${lastId == 0 ? 'none' : lastId} '
+    'lastReadInbox=$inbox lastReadOutbox=$outbox derivedMin=$minHint derivedMax=$maxHint '
+    '(approximate; TDLib Chat has no full min/max range) unread=${chat.unreadCount}',
+    type: LogType.backend,
+  );
+}
+
+/// [searchChatMessages] with an arbitrary [SearchMessagesFilter]. TDLib may return [offset] as a string from
+/// [FoundMessages.nextOffset]; the generated Dart binding types [offset] as [int], so we serialize explicitly.
+class _SearchChatMessagesFilteredRequest extends td.TdFunction {
+  const _SearchChatMessagesFilteredRequest({
+    required this.chatId,
+    required this.fromMessageId,
+    required this.limit,
+    required this.filter,
+    this.offsetInt = 0,
+    this.messageThreadId = 0,
+    this.omitMessageThreadId = false,
+  });
+
+  final int chatId;
+  final int fromMessageId;
+  final int limit;
+  final int offsetInt;
+  final td.SearchMessagesFilter filter;
+  final int messageThreadId;
+
+  /// Supergroups use `message_thread_id`; for private/basic groups omitting the field avoids rare TDLib quirks.
+  final bool omitMessageThreadId;
+
+  @override
+  String getConstructor() => 'searchChatMessages';
+
+  @override
+  Map<String, dynamic> toJson([dynamic extra]) {
+    // only_local: false — do not limit to local DB ("cold index" / server-side search index).
+    final m = <String, dynamic>{
+      '@type': 'searchChatMessages',
+      'chat_id': chatId,
+      'query': _kLiveSearchChatMessagesQuery,
+      'from_message_id': fromMessageId,
+      'limit': limit,
+      'filter': filter.toJson(),
+      'offset': offsetInt,
+      'only_local': false,
+    };
+    if (!omitMessageThreadId) {
+      m['message_thread_id'] = messageThreadId;
+    }
+    if (extra != null) m['@extra'] = extra;
+    return m;
+  }
+}
+
+List<td.Message> _tdMessagesFromSearchResult(td.TdObject raw) {
+  if (raw is td.FoundMessages) return raw.messages;
+  if (raw is td.Messages) return raw.messages;
+  return const <td.Message>[];
+}
+
+String _debugTdMessageContentTag(td.Message message) {
+  final content = message.content;
+  if (content is td.MessageVideo) return 'MessageVideo';
+  if (content is td.MessageVideoNote) return 'MessageVideoNote';
+  if (content is td.MessageAnimation) return 'MessageAnimation';
+  if (content is td.MessageDocument) {
+    return 'MessageDocument(${content.document.mimeType.trim().isEmpty ? 'no-mime' : content.document.mimeType})';
+  }
+  return content.runtimeType.toString();
+}
+
+bool _tdlibDocumentMimeLooksLikeVideo(String mimeType) {
+  final m = mimeType.trim().toLowerCase();
+  if (m.isEmpty) return false;
+  if (m.startsWith('video/')) return true;
+  if (m == 'application/mp4' || m == 'application/x-matroska') return true;
+  return false;
+}
+
+bool _tdlibDocumentFileNameLooksLikeVideo(String fileName) {
+  final n = fileName.trim().toLowerCase();
+  if (n.isEmpty) return false;
+  return n.endsWith('.mp4') ||
+      n.endsWith('.mkv') ||
+      n.endsWith('.webm') ||
+      n.endsWith('.mov') ||
+      n.endsWith('.m4v') ||
+      n.endsWith('.avi') ||
+      n.endsWith('.mpeg') ||
+      n.endsWith('.mpg') ||
+      n.endsWith('.3gp');
+}
+
+bool _tdlibDocumentIsPlayableVideo(td.Document doc) {
+  if (_tdlibDocumentMimeLooksLikeVideo(doc.mimeType)) return true;
+  // Telegram often sends muxed video as octet-stream; rely on file name.
+  final m = doc.mimeType.trim().toLowerCase();
+  if (m == 'application/octet-stream' || m == 'binary/octet-stream') {
+    return _tdlibDocumentFileNameLooksLikeVideo(doc.fileName);
+  }
+  return _tdlibDocumentFileNameLooksLikeVideo(doc.fileName);
+}
+
+bool _tdlibDocumentLooksLikeAnimationOrGif(td.Document doc) {
+  final m = doc.mimeType.trim().toLowerCase();
+  if (m == 'image/gif') return true;
+  final n = doc.fileName.trim().toLowerCase();
+  if (n.endsWith('.gif')) return true;
+  return false;
+}
+
+/// Maps a TDLib [td.Message] to [OxChatMediaRow] for chat video grid.
+///
+/// Includes **recorded video** ([MessageVideo]) and **video sent as a file** ([MessageDocument]
+/// when it looks like video). Does **not** include GIF/animation or round video notes — same idea
+/// as Telegram’s “Video” filter in shared media.
+OxChatMediaRow? _oxChatMediaRowFromTdVideoMessage(td.Message message, int chatId) {
+  final content = message.content;
+  final date = DateTime.fromMillisecondsSinceEpoch(message.date * 1000);
+
+  if (content is td.MessageVideo) {
+    final v = content.video;
+    final fileId = v.video.id.toString();
+    if (fileId.isEmpty) return null;
+    return OxChatMediaRow(
+      fileId: fileId,
+      messageId: message.id.toString(),
+      remoteFileId: v.video.remote.uniqueId,
+      caption: content.caption.text,
+      messageDate: date.toIso8601String(),
+      fileName: v.fileName,
+      chatId: chatId,
+      durationSeconds: v.duration,
+    );
+  }
+  if (content is td.MessageDocument) {
+    final doc = content.document;
+    if (!_tdlibDocumentIsPlayableVideo(doc)) return null;
+    final fileId = doc.document.id.toString();
+    if (fileId.isEmpty) return null;
+    return OxChatMediaRow(
+      fileId: fileId,
+      messageId: message.id.toString(),
+      remoteFileId: doc.document.remote.uniqueId,
+      caption: content.caption.text,
+      messageDate: date.toIso8601String(),
+      fileName: doc.fileName,
+      chatId: chatId,
+      durationSeconds: null,
+    );
+  }
+  return null;
+}
+
+/// My Telegram live gallery: explicitly drop video notes, GIF/animation documents, and [MessageAnimation].
+OxChatMediaRow? _oxChatMediaRowFromLiveTdVideoMessage(td.Message message, int chatId) {
+  final content = message.content;
+  // Round / telescope videos (never in "Videos" tab).
+  if (content is td.MessageVideoNote) {
+    return null;
+  }
+  // GIF / animation messages (not plain video).
+  if (content is td.MessageAnimation) {
+    return null;
+  }
+  if (content is td.MessageDocument) {
+    if (_tdlibDocumentLooksLikeAnimationOrGif(content.document)) return null;
+  }
+  return _oxChatMediaRowFromTdVideoMessage(message, chatId);
+}
+
+List<OxChatMediaRow> _rowsFromLiveVideoMessages(List<td.Message> messages, int chatId) {
+  final out = <OxChatMediaRow>[];
+  final seen = <String>{};
+  for (final m in messages) {
+    final row = _oxChatMediaRowFromLiveTdVideoMessage(m, chatId);
+    if (row == null) continue;
+    if (seen.add(row.messageId)) out.add(row);
+  }
+  return out;
+}
+
+List<OxChatMediaRow> _dedupeOxChatMediaRowsByMessageId(List<OxChatMediaRow> rows) {
+  final seen = <String>{};
+  return rows.where((r) => seen.add(r.messageId)).toList();
+}
+
+/// Newest first (Telegram-like ordering for the grid).
+List<OxChatMediaRow> _sortOxChatMediaRowsByMessageDateDesc(List<OxChatMediaRow> rows) {
+  final copy = List<OxChatMediaRow>.from(rows);
+  copy.sort((a, b) {
+    final da = DateTime.tryParse(a.messageDate ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final db = DateTime.tryParse(b.messageDate ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+    return db.compareTo(da);
+  });
+  return copy;
+}
+
+/// [searchChatMessages] / [getChatHistory] return newest-first; [batch.last] is chronologically oldest = next `from_message_id`.
+int? _liveSearchPaginationAnchorFromBatch(List<td.Message> batch) =>
+    batch.isEmpty ? null : batch.last.id;
+
+bool _isChatLastMessageOlderThanDays(td.Chat? chat, int days) {
+  final lm = chat?.lastMessage;
+  if (lm == null) return false;
+  final msgTime = DateTime.fromMillisecondsSinceEpoch(lm.date * 1000);
+  return DateTime.now().difference(msgTime).inDays > days;
+}
+
+/// Forum topic tab: keep only messages belonging to [topicId]. "All topics" uses [topicId] 0 → no filter.
+List<td.Message> _filterTdMessagesForForumTopic(
+  List<td.Message> messages, {
+  required int topicId,
+  required bool isForum,
+}) {
+  if (!isForum || topicId == 0) return messages;
+  return messages.where((m) => m.messageThreadId == topicId).toList(growable: false);
+}
+
+/// When [searchChatMessages] returns no usable rows (cold index), map [GetChatHistory] primer messages locally.
+OxChatMediaPage? _oxChatMediaPageFromPrimerIfSearchEmpty({
+  required List<td.Message> primerMessages,
+  required int chatId,
+  required int tdLimit,
+  required bool isForum,
+  required int topicId,
+  required bool liveSearchUsesDocumentFilter,
+}) {
+  if (primerMessages.isEmpty) return null;
+  final filtered = _filterTdMessagesForForumTopic(
+    primerMessages,
+    topicId: topicId,
+    isForum: isForum,
+  );
+  debugLogInfo(
+    'DEBUG: live search returned 0 rows; primer fallback topicFiltered=${filtered.length} primerRaw=${primerMessages.length} '
+    'topicId=$topicId isForum=$isForum',
+    type: LogType.backend,
+  );
+  final rows = _sortOxChatMediaRowsByMessageDateDesc(
+    _dedupeOxChatMediaRowsByMessageId(_rowsFromLiveVideoMessages(filtered, chatId)),
+  );
+  if (rows.isEmpty) return null;
+  final contributing = filtered
+      .where((m) => _oxChatMediaRowFromLiveTdVideoMessage(m, chatId) != null)
+      .toList(growable: false);
+  final anchor = contributing.isEmpty ? null : _liveSearchPaginationAnchorFromBatch(contributing);
+  final hasMore = primerMessages.length >= tdLimit && anchor != null && anchor > 0;
+  return OxChatMediaPage(
+    items: rows,
+    total: rows.length + (hasMore ? 1 : 0),
+    hasMoreHistory: hasMore,
+    nextHistoryFromMessageId: anchor,
+    liveSearchUsesDocumentFilter: liveSearchUsesDocumentFilter,
+  );
+}
+
+class DataRepository {
+  static const MethodChannel _mediaToolsChannel = MethodChannel('de.aryanmo.oxplayer/media_tools');
+
+  DataRepository._({required AppConfig config, required StorageService storage, required TdlibFacade tdlib})
+    : _config = config,
+      _storage = storage,
+      _tdlib = tdlib;
 
   static const String _kApiDeviceIdPrefsKey = 'oxplayer_api_device_id';
   static const String _kDefaultDeviceName = 'OXPlayer Android';
@@ -385,11 +720,15 @@ class DataRepository {
   final StorageService _storage;
   final TdlibFacade _tdlib;
 
+  /// Avoid repeated [GetChat]/[LoadChats]/[CreatePrivateChat] when opening the same chat’s media gallery.
+  final Map<String, int> _resolvedTdlibChatIdCache = <String, int>{};
+
   bool _tdlibInitialized = false;
   final Set<String> _thumbnailRecoveryInFlight = <String>{};
   final Map<String, DateTime> _lastThumbnailRecoveryRequestAt = <String, DateTime>{};
   final Set<String> _locatorHealInFlight = <String>{};
   final Map<String, DateTime> _lastLocatorHealRequestAt = <String, DateTime>{};
+
   /// Cache for `SearchPublicChat` → TDLib chat id (main / provider bot DMs).
   final Map<String, int?> _locatorEnvSearchChatIdByUsername = <String, int?>{};
 
@@ -425,12 +764,7 @@ class DataRepository {
       }
 
       final dio = Dio(
-        BaseOptions(
-          baseUrl: config.apiBaseUrl,
-          connectTimeout: timeout,
-          receiveTimeout: timeout,
-          sendTimeout: timeout,
-        ),
+        BaseOptions(baseUrl: config.apiBaseUrl, connectTimeout: timeout, receiveTimeout: timeout, sendTimeout: timeout),
       );
       final response = await dio.get<Map<String, dynamic>>('/health');
       final data = response.data;
@@ -486,7 +820,10 @@ class DataRepository {
   }
 
   Future<void> beginTelegramAuthorization() async {
-    authDebugInfo('Starting Telegram authorization...', completeStatus: AuthDebugStatusKey.telegramAuthorizationStarted);
+    authDebugInfo(
+      'Starting Telegram authorization...',
+      completeStatus: AuthDebugStatusKey.telegramAuthorizationStarted,
+    );
     if (kIsWeb) {
       authDebugError('Telegram sign-in is not available on web builds.');
       throw UnsupportedError('Telegram sign-in is not available on web builds.');
@@ -549,15 +886,9 @@ class DataRepository {
     }
 
     authDebugInfo('Requesting OXPlayer bootstrap session...');
-    debugLogInfo(
-      'Bootstrap request target: ${_formatApiUrl('/me/bootstrap')}',
-      type: LogType.backend,
-    );
+    debugLogInfo('Bootstrap request target: ${_formatApiUrl('/me/bootstrap')}', type: LogType.backend);
     final dio = Dio(
-      BaseOptions(
-        baseUrl: _config.apiBaseUrl,
-        headers: <String, String>{'Authorization': 'Bearer $accessToken'},
-      ),
+      BaseOptions(baseUrl: _config.apiBaseUrl, headers: <String, String>{'Authorization': 'Bearer $accessToken'}),
     );
 
     Response<Map<String, dynamic>> response;
@@ -569,10 +900,7 @@ class DataRepository {
       final responsePreview = _safeResponsePreview(error.response?.data);
       if (error.response?.statusCode == 401) {
         authDebugError('OXPlayer bootstrap rejected the saved access token.');
-        debugLogError(
-          'Bootstrap rejected (401) [url=$requestUrl]',
-          type: LogType.backend,
-        );
+        debugLogError('Bootstrap rejected (401) [url=$requestUrl]', type: LogType.backend);
         throw const OxBootstrapUnauthorized();
       }
       authDebugError('OXPlayer bootstrap request failed: $error');
@@ -581,10 +909,7 @@ class DataRepository {
         type: LogType.backend,
       );
       if (responsePreview.isNotEmpty) {
-        debugLogError(
-          'Bootstrap error response: $responsePreview',
-          type: LogType.backend,
-        );
+        debugLogError('Bootstrap error response: $responsePreview', type: LogType.backend);
       }
       rethrow;
     }
@@ -639,24 +964,26 @@ class DataRepository {
       return <OxRequiredDialogMapping>[];
     }
 
-    return raw.whereType<Map>().map((entry) {
-      final item = Map<String, dynamic>.from(entry);
-      return OxRequiredDialogMapping(
-        key: _readOptionalTrimmed(item['key']) ?? '',
-        botUsername: _readOptionalTrimmed(item['botUsername']) ?? '',
-        isReady: item['isReady'] == true,
-        mappingId: _readOptionalTrimmed(item['mappingId']),
-        tdlibChatId: _readOptionalTrimmed(item['tdlibChatId']),
-        botApiChatId: _readOptionalTrimmed(item['botApiChatId']),
-        botUserId: _readOptionalTrimmed(item['botUserId']),
-        mappingSource: _readOptionalTrimmed(item['mappingSource']),
-      );
-    }).where((item) => item.botUsername.isNotEmpty).toList(growable: true);
+    return raw
+        .whereType<Map>()
+        .map((entry) {
+          final item = Map<String, dynamic>.from(entry);
+          return OxRequiredDialogMapping(
+            key: _readOptionalTrimmed(item['key']) ?? '',
+            botUsername: _readOptionalTrimmed(item['botUsername']) ?? '',
+            isReady: item['isReady'] == true,
+            mappingId: _readOptionalTrimmed(item['mappingId']),
+            tdlibChatId: _readOptionalTrimmed(item['tdlibChatId']),
+            botApiChatId: _readOptionalTrimmed(item['botApiChatId']),
+            botUserId: _readOptionalTrimmed(item['botUserId']),
+            mappingSource: _readOptionalTrimmed(item['mappingSource']),
+          );
+        })
+        .where((item) => item.botUsername.isNotEmpty)
+        .toList(growable: true);
   }
 
-  Future<List<OxRequiredDialogMapping>> _ensureRequiredDialogMappings(
-    List<OxRequiredDialogMapping> mappings,
-  ) async {
+  Future<List<OxRequiredDialogMapping>> _ensureRequiredDialogMappings(List<OxRequiredDialogMapping> mappings) async {
     if (mappings.isEmpty) {
       return mappings;
     }
@@ -763,9 +1090,7 @@ class DataRepository {
     }
 
     final dio = _authorizedApiClient();
-    final response = await dio.get<Map<String, dynamic>>(
-      '/me/library/media/${Uri.encodeComponent(trimmedId)}',
-    );
+    final response = await dio.get<Map<String, dynamic>>('/me/library/media/${Uri.encodeComponent(trimmedId)}');
 
     final root = response.data;
     if (root == null) {
@@ -853,15 +1178,11 @@ class DataRepository {
     final now = DateTime.now();
     final lastAttempt = _lastLocatorHealRequestAt[mediaId];
     if (_locatorHealInFlight.contains(mediaId)) {
-      locatorDebugInfo(
-        'Locator heal already in flight for mediaId=$mediaId reason=$reason',
-      );
+      locatorDebugInfo('Locator heal already in flight for mediaId=$mediaId reason=$reason');
       return;
     }
     if (lastAttempt != null && now.difference(lastAttempt) < const Duration(seconds: 30)) {
-      locatorDebugInfo(
-        'Locator heal throttled for mediaId=$mediaId reason=$reason',
-      );
+      locatorDebugInfo('Locator heal throttled for mediaId=$mediaId reason=$reason');
       return;
     }
 
@@ -946,9 +1267,7 @@ class DataRepository {
     if (allowQuickStart) {
       final quickStartPath = await _waitForReadableVideoPrefix(resolved.file.id);
       if (quickStartPath != null && quickStartPath.isNotEmpty) {
-        playMediaDebugSuccess(
-          'Quick-start playback path resolved for mediaId=$mediaId at $quickStartPath',
-        );
+        playMediaDebugSuccess('Quick-start playback path resolved for mediaId=$mediaId at $quickStartPath');
         return quickStartPath;
       }
 
@@ -962,14 +1281,10 @@ class DataRepository {
     }
     final downloadedPath = await _downloadTelegramFileFully(resolved.file.id, onProgress: onProgress);
     if (downloadedPath == null || downloadedPath.isEmpty) {
-      playMediaDebugError(
-        'Full Telegram download failed for mediaId=$mediaId fileId=${resolved.file.id}',
-      );
+      playMediaDebugError('Full Telegram download failed for mediaId=$mediaId fileId=${resolved.file.id}');
       return null;
     }
-    playMediaDebugSuccess(
-      'Full Telegram download resolved playback path for mediaId=$mediaId at $downloadedPath',
-    );
+    playMediaDebugSuccess('Full Telegram download resolved playback path for mediaId=$mediaId at $downloadedPath');
     return downloadedPath;
   }
 
@@ -1040,14 +1355,965 @@ class DataRepository {
       return null;
     }
 
-    playMediaDebugSuccess(
-      'Telegram range playback stream URL resolved for mediaId=$mediaId at $streamUrl',
+    playMediaDebugSuccess('Telegram range playback stream URL resolved for mediaId=$mediaId at $streamUrl');
+    return streamUrl;
+  }
+
+  /// Same HTTP range-proxy path as [resolveOxMediaStreamUrlForPlayback], for a live TDLib chat message (My Telegram grid).
+  Future<Uri?> resolveTelegramChatMessageStreamUrlForPlayback({
+    required int chatId,
+    required int messageId,
+  }) async {
+    playMediaDebugInfo('Resolving My Telegram stream URL chatId=$chatId messageId=$messageId');
+    if (!await _ensureTdlibReadyForMediaPlayback()) {
+      playMediaDebugError('TDLib is not ready for My Telegram range playback');
+      return null;
+    }
+
+    td.Message? msg;
+    try {
+      final o = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: messageId));
+      if (o is td.Message) msg = o;
+    } catch (e, st) {
+      playMediaDebugError('GetMessage failed for My Telegram stream: $e\n$st');
+      return null;
+    }
+    if (msg == null) return null;
+
+    final playable = _messagePlayableFile(msg);
+    if (playable == null) return null;
+
+    String? mime;
+    final content = msg.content;
+    if (content is td.MessageVideo) {
+      mime = content.video.mimeType;
+    } else if (content is td.MessageDocument) {
+      mime = content.document.mimeType;
+    }
+
+    td.File? fresh;
+    try {
+      final obj = await _tdlib.send(td.GetFile(fileId: playable.id));
+      if (obj is td.File) fresh = obj;
+    } catch (e, st) {
+      playMediaDebugError('GetFile failed for My Telegram stream: $e\n$st');
+      return null;
+    }
+    if (fresh == null) return null;
+
+    final streamUrl = await TelegramRangePlayback.instance.openResolvedFile(
+      tdlib: _tdlib,
+      file: fresh,
+      mimeType: mime,
+      onDiagnostic: playMediaDebugInfo,
     );
+    if (streamUrl == null) {
+      playMediaDebugError(
+        'Telegram range playback failed for My Telegram chatId=$chatId messageId=$messageId fileId=${fresh.id} reason=${TelegramRangePlayback.instance.lastOpenFailureReason}',
+      );
+
+      final quickStartPath = await _waitForReadableVideoPrefix(fresh.id);
+      if (quickStartPath != null && quickStartPath.isNotEmpty) {
+        final localUri = Uri.file(quickStartPath);
+        playMediaDebugSuccess(
+          'Falling back to local-file playback URL for My Telegram message at $localUri after range playback failure',
+        );
+        return localUri;
+      }
+
+      final downloadedPath = await _downloadTelegramFileFully(fresh.id);
+      if (downloadedPath != null && downloadedPath.isNotEmpty) {
+        final localUri = Uri.file(downloadedPath);
+        playMediaDebugSuccess(
+          'Falling back to fully-downloaded local playback URL for My Telegram message at $localUri after range playback failure',
+        );
+        return localUri;
+      }
+
+      return null;
+    }
+
+    playMediaDebugSuccess('My Telegram range playback stream URL at $streamUrl chatId=$chatId messageId=$messageId');
     return streamUrl;
   }
 
   Future<int> releaseOxMediaPlaybackSession({String? reason}) {
     return TelegramRangePlayback.instance.releaseActiveCacheIfAny(reason: reason);
+  }
+
+  /// Ensures TDLib can resolve [candidate] to a [Chat] before history/search.
+  ///
+  /// - **Positive ids** may be a **user id** stored instead of a private-chat id (Saved Messages): try
+  ///   [CreatePrivateChat] only when [GetChat] returns “Chat not found”.
+  /// - **Negative ids** (groups/supergroups/channels) must never use [CreatePrivateChat] — that caused
+  ///   `Chat info not found`. Instead [LoadChats] + retry [GetChat] so the dialog appears in the local DB.
+  Future<int> _resolveTdlibChatIdForMedia({required int candidate}) async {
+    Future<int?> tryGetChat() async {
+      try {
+        final o = await _tdlib.send(td.GetChat(chatId: candidate));
+        if (o is td.Chat) return o.id;
+      } on td.TdError catch (e) {
+        debugLogInfo(
+          'DEBUG: GetChat($candidate) TdError code=${e.code} message=${e.message}',
+          type: LogType.backend,
+        );
+      }
+      return null;
+    }
+
+    final first = await tryGetChat();
+    if (first != null) return first;
+
+    // Private / Saved Messages: user id mistaken for chat id.
+    if (candidate > 0) {
+      try {
+        final o = await _tdlib.send(td.CreatePrivateChat(userId: candidate, force: false));
+        if (o is td.Chat) {
+          debugLogInfo(
+            'DEBUG: Resolved user id $candidate → tdlib chatId=${o.id} via createPrivateChat',
+            type: LogType.backend,
+          );
+          return o.id;
+        }
+      } on td.TdError catch (e) {
+        debugLogError(
+          'DEBUG: createPrivateChat(userId=$candidate) TdError code=${e.code} message=${e.message}',
+          type: LogType.backend,
+        );
+      }
+      return candidate;
+    }
+
+    // Groups / supergroups / channels: warm local chat list then retry GetChat.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await _tdlib.send(td.LoadChats(chatList: const td.ChatListMain(), limit: 200));
+      } catch (_) {
+        // 404 = nothing more to load — still worth retrying GetChat.
+      }
+      await Future<void>.delayed(Duration(milliseconds: 120 + attempt * 180));
+      final again = await tryGetChat();
+      if (again != null) {
+        debugLogInfo(
+          'DEBUG: GetChat($candidate) succeeded after LoadChats attempt=${attempt + 1}',
+          type: LogType.backend,
+        );
+        return again;
+      }
+    }
+
+    return candidate;
+  }
+
+  /// Resolves `message_thread_id` for [searchChatMessages]:
+  /// - Private / bot DMs / saved / **basic group**: omit `message_thread_id` in JSON; logical thread is `0`.
+  /// - **Supergroup (non-forum)** / **channel**: send `message_thread_id: 0`.
+  /// - **Forum — "All"**: send `message_thread_id: 0` (from [requestedMessageThreadId]).
+  /// - **Forum — topic tab**: send `message_thread_id` = topic id ([requestedMessageThreadId]).
+  /// [chat_id] is always the resolved TDLib id (e.g. supergroups/channels `-100…`).
+  Future<({int effectiveThreadId, bool omitMessageThreadId, bool isForum, td.Chat? chat})>
+  _resolveLiveVideoSearchThreadParams({
+    required int chatId,
+    required int requestedMessageThreadId,
+  }) async {
+    try {
+      final resolved = await _tdlib.send(td.GetChat(chatId: chatId));
+      if (resolved is! td.Chat) {
+        return (
+          effectiveThreadId: requestedMessageThreadId,
+          omitMessageThreadId: false,
+          isForum: false,
+          chat: null,
+        );
+      }
+      final type = resolved.type;
+      if (type is td.ChatTypeSupergroup) {
+        var isForum = false;
+        try {
+          final sg = await _tdlib.send(td.GetSupergroup(supergroupId: type.supergroupId));
+          if (sg is td.Supergroup) isForum = sg.isForum;
+        } catch (e) {
+          debugLogInfo(
+            'DEBUG: GetSupergroup(${type.supergroupId}) failed in thread resolve: $e',
+            type: LogType.backend,
+          );
+        }
+        if (isForum) {
+          return (
+            effectiveThreadId: requestedMessageThreadId,
+            omitMessageThreadId: false,
+            isForum: true,
+            chat: resolved,
+          );
+        }
+        return (effectiveThreadId: 0, omitMessageThreadId: false, isForum: false, chat: resolved);
+      }
+      return (effectiveThreadId: 0, omitMessageThreadId: true, isForum: false, chat: resolved);
+    } catch (e) {
+      debugLogError(
+        'DEBUG: GetChat failed in _resolveLiveVideoSearchThreadParams: $e',
+        type: LogType.backend,
+      );
+      return (
+        effectiveThreadId: requestedMessageThreadId,
+        omitMessageThreadId: false,
+        isForum: false,
+        chat: null,
+      );
+    }
+  }
+
+  /// Live gallery pagination: page 1 should use [GetChat]'s `last_message.id` as `from_message_id` when known
+  /// (`0` only when the chat is not fully loaded); next pages use the oldest raw id from the prior batch.
+  Future<td.TdObject> _sendSearchChatMessagesFiltered({
+    required int chatId,
+    required int tdLimit,
+    required td.SearchMessagesFilter filter,
+    required int effectiveThreadId,
+    required bool omitMessageThreadId,
+    int? continueFromMessageId,
+    required String filterLabel,
+  }) async {
+    final fromId = (continueFromMessageId != null && continueFromMessageId > 0) ? continueFromMessageId : 0;
+    debugLogInfo(
+      'DEBUG: searchChatMessages request filter=$filterLabel from_message_id=$fromId offset=0 '
+      'only_local=false query="" thread=${omitMessageThreadId ? 'omitted' : effectiveThreadId} '
+      'omitThreadKey=$omitMessageThreadId chatId=$chatId',
+      type: LogType.backend,
+    );
+    if (continueFromMessageId != null && continueFromMessageId > 0) {
+      return _tdlib.send(
+        _SearchChatMessagesFilteredRequest(
+          chatId: chatId,
+          fromMessageId: continueFromMessageId,
+          limit: tdLimit,
+          filter: filter,
+          offsetInt: 0,
+          messageThreadId: effectiveThreadId,
+          omitMessageThreadId: omitMessageThreadId,
+        ),
+      );
+    }
+    return _tdlib.send(
+      _SearchChatMessagesFilteredRequest(
+        chatId: chatId,
+        fromMessageId: 0,
+        limit: tdLimit,
+        filter: filter,
+        offsetInt: 0,
+        messageThreadId: effectiveThreadId,
+        omitMessageThreadId: omitMessageThreadId,
+      ),
+    );
+  }
+
+  /// Logs approximate video count and the calendar date of [fromMessageId] (anchor) for Load More debugging.
+  Future<void> _logLiveSearchLoadMoreDiagnostics({
+    required int chatId,
+    required int fromMessageId,
+    required int gapPass,
+  }) async {
+    try {
+      final c = await _tdlib.send(
+        td.GetChatMessageCount(
+          chatId: chatId,
+          filter: const td.SearchMessagesFilterVideo(),
+          returnLocal: false,
+        ),
+      );
+      final n = c is td.Count ? c.count : -1;
+      debugLogInfo(
+        'DEBUG: Load More gapPass=$gapPass getChatMessageCount(video)≈$n chatId=$chatId',
+        type: LogType.backend,
+      );
+    } catch (e) {
+      debugLogInfo('DEBUG: Load More getChatMessageCount failed: $e', type: LogType.backend);
+    }
+    try {
+      final m = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: fromMessageId));
+      if (m is td.Message) {
+        final d = DateTime.fromMillisecondsSinceEpoch(m.date * 1000);
+        debugLogInfo(
+          'DEBUG: Load More from_message_id=$fromMessageId anchorDate=${d.toIso8601String()} '
+          '(if this date stops moving backward, anchor logic is wrong) chatId=$chatId',
+          type: LogType.backend,
+        );
+      }
+    } catch (e) {
+      debugLogInfo(
+        'DEBUG: Load More GetMessage($fromMessageId) failed (deleted/purged?): $e chatId=$chatId',
+        type: LogType.backend,
+      );
+    }
+  }
+
+  /// When [searchChatMessages] returns an empty batch while paginating, jump backward with [GetChatHistory].
+  Future<int?> _jumpPastSearchIndexGap({
+    required int chatId,
+    required int anchor,
+  }) async {
+    debugLogInfo(
+      'DEBUG: empty searchChatMessages batch; gap recovery GetChat + GetChatHistory(limit=100, offset=0) '
+      'chatId=$chatId anchor=$anchor',
+      type: LogType.backend,
+    );
+    td.Chat? chat;
+    try {
+      final o = await _tdlib.send(td.GetChat(chatId: chatId));
+      if (o is td.Chat) chat = o;
+    } catch (e) {
+      debugLogError('DEBUG: gap recovery GetChat failed: $e', type: LogType.backend);
+      return null;
+    }
+    final lm = chat?.lastMessage;
+    final lastMsgId = lm?.id ?? 0;
+    debugLogInfo(
+      'DEBUG: gap recovery GetChat last_message.id=$lastMsgId '
+      '${lm == null ? '(null — chat may be incomplete)' : ''}',
+      type: LogType.backend,
+    );
+    if (lastMsgId > 0 && anchor > lastMsgId) {
+      debugLogError(
+        'DEBUG: gap recovery anchor $anchor > last_message.id $lastMsgId (unexpected ordering)',
+        type: LogType.backend,
+      );
+    }
+    if (anchor <= 1) {
+      debugLogInfo('DEBUG: gap recovery anchor at floor (<=1), stopping pagination chatId=$chatId', type: LogType.backend);
+      return null;
+    }
+    try {
+      final hist = await _tdlib.send(
+        td.GetChatHistory(
+          chatId: chatId,
+          fromMessageId: anchor,
+          offset: 0,
+          limit: 100,
+          onlyLocal: false,
+        ),
+      );
+      final msgs = hist is td.Messages ? hist.messages : const <td.Message>[];
+      debugLogInfo(
+        'DEBUG: gap recovery GetChatHistory from_message_id=$anchor limit=100 offset=0 raw=${msgs.length}',
+        type: LogType.backend,
+      );
+      if (msgs.isEmpty) {
+        return null;
+      }
+      final oldest = msgs.last.id;
+      if (oldest >= anchor) {
+        debugLogError(
+          'DEBUG: gap recovery oldest id $oldest did not move backward vs anchor $anchor',
+          type: LogType.backend,
+        );
+        return null;
+      }
+      debugLogInfo(
+        'DEBUG: gap recovery next search anchor oldestRawBatch=$oldest (skip inactive / index gap)',
+        type: LogType.backend,
+      );
+      return oldest;
+    } catch (e) {
+      debugLogError('DEBUG: gap recovery GetChatHistory failed: $e', type: LogType.backend);
+      return null;
+    }
+  }
+
+  /// Runs [searchChatMessages] with [offset] 0 only; on empty **continuation** batches, advances anchor via history.
+  Future<OxChatMediaPage> _runLiveSearchWithGapRecovery({
+    required int chatId,
+    required bool isFirstPage,
+    required int? searchFromMessageId,
+    required td.SearchMessagesFilter filter,
+    required String filterLabel,
+    required bool usedDocumentFilter,
+    required int effectiveThreadId,
+    required bool omitMessageThreadId,
+    required int tdLimit,
+  }) async {
+    var anchor = searchFromMessageId;
+    const maxGapPasses = 6;
+    for (var gapPass = 0; gapPass < maxGapPasses; gapPass++) {
+      if (!isFirstPage && anchor != null && anchor > 0) {
+        await _logLiveSearchLoadMoreDiagnostics(chatId: chatId, fromMessageId: anchor, gapPass: gapPass);
+      }
+
+      final raw = await _sendSearchChatMessagesFiltered(
+        chatId: chatId,
+        tdLimit: tdLimit,
+        filter: filter,
+        effectiveThreadId: effectiveThreadId,
+        omitMessageThreadId: omitMessageThreadId,
+        continueFromMessageId: anchor,
+        filterLabel: gapPass == 0 ? filterLabel : '$filterLabel gapPass=$gapPass',
+      );
+      final page = _oxChatMediaPageFromSearchRaw(
+        raw: raw,
+        chatId: chatId,
+        tdLimit: tdLimit,
+        usedDocumentFilter: usedDocumentFilter,
+      );
+
+      if (page.items.isNotEmpty) {
+        if (!isFirstPage && page.nextHistoryFromMessageId != null) {
+          final a = page.nextHistoryFromMessageId!;
+          debugLogInfo(
+            'DEBUG: Load More nextHistoryFromMessageId=$a (strict oldest raw message id in batch) chatId=$chatId',
+            type: LogType.backend,
+          );
+        }
+        return page;
+      }
+
+      if (isFirstPage) {
+        return page;
+      }
+
+      if (anchor == null || anchor <= 0) {
+        return OxChatMediaPage(
+          items: const [],
+          total: 0,
+          hasMoreHistory: false,
+          liveSearchUsesDocumentFilter: usedDocumentFilter,
+        );
+      }
+
+      final jumped = await _jumpPastSearchIndexGap(chatId: chatId, anchor: anchor);
+      if (jumped == null) {
+        return OxChatMediaPage(
+          items: const [],
+          total: 0,
+          hasMoreHistory: false,
+          liveSearchUsesDocumentFilter: usedDocumentFilter,
+        );
+      }
+      anchor = jumped;
+    }
+
+    return OxChatMediaPage(
+      items: const [],
+      total: 0,
+      hasMoreHistory: false,
+      liveSearchUsesDocumentFilter: usedDocumentFilter,
+    );
+  }
+
+  OxChatMediaPage _oxChatMediaPageFromSearchRaw({
+    required td.TdObject raw,
+    required int chatId,
+    required int tdLimit,
+    required bool usedDocumentFilter,
+  }) {
+    final msgs = _tdMessagesFromSearchResult(raw);
+    final rawCount = msgs.length;
+    final preview = msgs.take(20).map(_debugTdMessageContentTag).join(', ');
+    final foundExtra = raw is td.FoundMessages ? ' nextOffset=${raw.nextOffset}' : '';
+    debugLogInfo(
+      'DEBUG: live chat search raw TDLib message count=$rawCount$foundExtra preview=[$preview]',
+      type: LogType.backend,
+    );
+
+    final rows = _rowsFromLiveVideoMessages(msgs, chatId);
+    debugLogInfo(
+      'DEBUG: live chat search after exclusions (video notes / GIFs) keptRows=${rows.length} (raw was $rawCount)',
+      type: LogType.backend,
+    );
+    if (rawCount > 0 && rows.isEmpty) {
+      debugLogError(
+        'DEBUG: live chat search dropped all $rawCount TDLib messages in processVideoMessages '
+        '(video notes / animations / non-video documents)',
+        type: LogType.backend,
+      );
+    }
+
+    final anchor = _liveSearchPaginationAnchorFromBatch(msgs);
+    final hasMoreRaw = msgs.length >= tdLimit && anchor != null && anchor > 0;
+    debugLogInfo(
+      'DEBUG: live chat search pagination anchor message_id=$anchor (oldest raw in batch → next from_message_id) '
+      'rawBatch=${msgs.length} hasMoreRaw=$hasMoreRaw tdLimit=$tdLimit',
+      type: LogType.backend,
+    );
+
+    if (raw is td.FoundMessages) {
+      return OxChatMediaPage(
+        items: rows,
+        total: rows.length + (hasMoreRaw ? 1 : 0),
+        hasMoreHistory: hasMoreRaw,
+        nextHistoryFromMessageId: anchor,
+        liveSearchUsesDocumentFilter: usedDocumentFilter,
+      );
+    }
+    if (raw is td.Messages) {
+      return OxChatMediaPage(
+        items: rows,
+        total: rows.length + (hasMoreRaw ? 1 : 0),
+        hasMoreHistory: hasMoreRaw,
+        nextHistoryFromMessageId: anchor,
+        liveSearchUsesDocumentFilter: usedDocumentFilter,
+      );
+    }
+    return OxChatMediaPage(
+      items: rows,
+      total: rows.length,
+      hasMoreHistory: false,
+      liveSearchUsesDocumentFilter: usedDocumentFilter,
+    );
+  }
+
+  /// My Telegram **live** video grid: [searchChatMessages] ([SearchMessagesFilterVideo], optionally
+  /// [SearchMessagesFilterDocument]). [GetChat] (via [_resolveLiveVideoSearchThreadParams]) supplies `last_message.id`
+  /// for the first page anchor; inactive chats (last message older than 30 days) get a [GetChatHistory] `limit: 1` wake-up.
+  /// Forum **All**: `messageThreadId: 0`; topic tab: that topic’s id.
+  /// Pagination: page 2+ `from_message_id` = oldest **raw** message id from the previous batch, `offset: 0`.
+  Future<OxChatMediaPage> fetchLiveChatVideos({
+    required String tdlibChatId,
+    int messageThreadId = 0,
+    int? continueFromMessageId,
+    bool continueWithDocumentFilter = false,
+  }) async {
+    const tdLimit = 20;
+    final isFirstPage = continueFromMessageId == null || continueFromMessageId <= 0;
+    debugLogInfo(
+      'DEBUG: fetchLiveChatVideos tdlibChatId=$tdlibChatId thread=$messageThreadId '
+      'continueMsg=$continueFromMessageId docCont=$continueWithDocumentFilter isFirstPage=$isFirstPage',
+      type: LogType.backend,
+    );
+
+    if (!await _ensureTdlibReadyForMediaPlayback()) {
+      debugLogError('DEBUG: TDLib not ready for media playback', type: LogType.backend);
+      return const OxChatMediaPage(items: [], total: 0);
+    }
+
+    try {
+      final parsed = int.tryParse(tdlibChatId.trim());
+      if (parsed == null) {
+        debugLogError('DEBUG: Invalid chatId: $tdlibChatId', type: LogType.backend);
+        return const OxChatMediaPage(items: [], total: 0);
+      }
+
+      debugLogInfo(
+        'DEBUG: tdlibChatId parsed int64=$parsed (Dart int; pass through to TDLib as chat_id for -100… supergroups)',
+        type: LogType.backend,
+      );
+
+      final cacheKey = tdlibChatId.trim();
+      var chatId = _resolvedTdlibChatIdCache[cacheKey];
+      if (chatId == null) {
+        chatId = await _resolveTdlibChatIdForMedia(candidate: parsed);
+        _resolvedTdlibChatIdCache[cacheKey] = chatId;
+      }
+      debugLogInfo(
+        'DEBUG: resolved TDLib chat_id=$chatId (must match Telegram chat id, e.g. -100… for channels/supergroups)',
+        type: LogType.backend,
+      );
+
+      final threadParams = await _resolveLiveVideoSearchThreadParams(
+        chatId: chatId,
+        requestedMessageThreadId: messageThreadId,
+      );
+      final chatSnap = threadParams.chat;
+      if (chatSnap != null) {
+        _debugLogGetChatMessageIdHints(chatSnap);
+      }
+      debugLogInfo(
+        'DEBUG: live video search message_thread_id=${threadParams.omitMessageThreadId ? '(omitted)' : threadParams.effectiveThreadId} '
+        'isForum=${threadParams.isForum} (All videos in forum=0; topic=topic id) omitThreadKey=${threadParams.omitMessageThreadId}',
+        type: LogType.backend,
+      );
+
+      final lastMsg = chatSnap?.lastMessage;
+      final int? lastMessageId = (lastMsg != null && lastMsg.id > 0) ? lastMsg.id : null;
+      if (lastMsg == null || lastMsg.id <= 0) {
+        debugLogError(
+          'GetChat last_message.id is ${lastMsg == null ? 'null' : lastMsg.id} — chat may not be fully loaded in TDLib yet '
+          'chatId=$chatId',
+          type: LogType.backend,
+        );
+      } else {
+        debugLogInfo(
+          'GetChat last_message.id=$lastMessageId (first searchChatMessages anchor) chatId=$chatId',
+          type: LogType.backend,
+        );
+      }
+
+      // When [isFirstPage] is false, [continueFromMessageId] is non-null and > 0 (see [isFirstPage] definition).
+      final int? searchFromMessageId = isFirstPage ? lastMessageId : continueFromMessageId;
+      if (!isFirstPage) {
+        debugLogInfo(
+          'DEBUG: live search pagination from_message_id=$searchFromMessageId (oldest raw id from prior batch) chatId=$chatId',
+          type: LogType.backend,
+        );
+      }
+
+      var primerMessages = const <td.Message>[];
+
+      try {
+        await _tdlib.send(td.OpenChat(chatId: chatId));
+        debugLogInfo('DEBUG: OpenChat completed for live video search chatId=$chatId', type: LogType.backend);
+      } catch (e) {
+        debugLogError(
+          'DEBUG: OpenChat failed for live video search chatId=$chatId: $e',
+          type: LogType.backend,
+        );
+      }
+
+      if (isFirstPage) {
+        await _viewMessagesForSearchActivation(tdlib: _tdlib, chatId: chatId, chat: chatSnap);
+        if (lastMessageId != null && _isChatLastMessageOlderThanDays(chatSnap, 30)) {
+          debugLogInfo(
+            'DEBUG: inactive chat (last message older than 30 days); wake-up GetChatHistory limit=1 '
+            'from_message_id=$lastMessageId chatId=$chatId',
+            type: LogType.backend,
+          );
+          try {
+            await _tdlib.send(
+              td.GetChatHistory(
+                chatId: chatId,
+                fromMessageId: lastMessageId,
+                offset: 0,
+                limit: 1,
+                onlyLocal: false,
+              ),
+            );
+          } catch (e) {
+            debugLogError('DEBUG: GetChatHistory wake-up failed chatId=$chatId: $e', type: LogType.backend);
+          }
+        }
+        try {
+          final primerFrom = lastMessageId ?? 0;
+          final hist = await _tdlib.send(
+            td.GetChatHistory(
+              chatId: chatId,
+              fromMessageId: primerFrom,
+              offset: 0,
+              limit: 50,
+              onlyLocal: false,
+            ),
+          );
+          if (hist is td.Messages) {
+            primerMessages = hist.messages;
+          }
+          debugLogInfo(
+            'DEBUG: live search primer GetChatHistory from_message_id=$primerFrom limit=50 only_local=false '
+            'raw count=${primerMessages.length}',
+            type: LogType.backend,
+          );
+        } catch (e) {
+          debugLogError('DEBUG: GetChatHistory primer failed chatId=$chatId: $e', type: LogType.backend);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+
+      if (continueWithDocumentFilter) {
+        debugLogInfo('DEBUG: live search using SearchMessagesFilterDocument (continuation)', type: LogType.backend);
+        final page = await _runLiveSearchWithGapRecovery(
+          chatId: chatId,
+          isFirstPage: isFirstPage,
+          searchFromMessageId: searchFromMessageId,
+          filter: const td.SearchMessagesFilterDocument(),
+          filterLabel: 'SearchMessagesFilterDocument',
+          usedDocumentFilter: true,
+          effectiveThreadId: threadParams.effectiveThreadId,
+          omitMessageThreadId: threadParams.omitMessageThreadId,
+          tdLimit: tdLimit,
+        );
+        debugLogInfo(
+          'DEBUG: fetchLiveChatVideos (document) page items=${page.items.length} hasMore=${page.hasMoreHistory} '
+          'nextAnchor=${page.nextHistoryFromMessageId}',
+          type: LogType.backend,
+        );
+        return page;
+      }
+
+      if (!isFirstPage) {
+        debugLogInfo('DEBUG: live search using SearchMessagesFilterVideo (pagination)', type: LogType.backend);
+        final page = await _runLiveSearchWithGapRecovery(
+          chatId: chatId,
+          isFirstPage: false,
+          searchFromMessageId: searchFromMessageId,
+          filter: const td.SearchMessagesFilterVideo(),
+          filterLabel: 'SearchMessagesFilterVideo',
+          usedDocumentFilter: false,
+          effectiveThreadId: threadParams.effectiveThreadId,
+          omitMessageThreadId: threadParams.omitMessageThreadId,
+          tdLimit: tdLimit,
+        );
+        debugLogInfo(
+          'DEBUG: fetchLiveChatVideos page items=${page.items.length} hasMore=${page.hasMoreHistory} '
+          'nextAnchor=${page.nextHistoryFromMessageId}',
+          type: LogType.backend,
+        );
+        return page;
+      }
+
+      debugLogInfo('DEBUG: live search using SearchMessagesFilterVideo (page 1)', type: LogType.backend);
+      final videoRaw = await _sendSearchChatMessagesFiltered(
+        chatId: chatId,
+        tdLimit: tdLimit,
+        filter: const td.SearchMessagesFilterVideo(),
+        effectiveThreadId: threadParams.effectiveThreadId,
+        omitMessageThreadId: threadParams.omitMessageThreadId,
+        continueFromMessageId: searchFromMessageId,
+        filterLabel: 'SearchMessagesFilterVideo',
+      );
+      final videoMsgs = _tdMessagesFromSearchResult(videoRaw);
+
+      if (videoMsgs.length < tdLimit && isFirstPage) {
+        debugLogInfo(
+          'DEBUG: SearchMessagesFilterVideo raw count=${videoMsgs.length} (< $tdLimit); '
+          'supplementing with SearchMessagesFilterDocument + local video MIME filter, then merge',
+          type: LogType.backend,
+        );
+        final docRaw = await _sendSearchChatMessagesFiltered(
+          chatId: chatId,
+          tdLimit: tdLimit,
+          filter: const td.SearchMessagesFilterDocument(),
+          effectiveThreadId: threadParams.effectiveThreadId,
+          omitMessageThreadId: threadParams.omitMessageThreadId,
+          continueFromMessageId: searchFromMessageId,
+          filterLabel: 'SearchMessagesFilterDocument(page1_supplement)',
+        );
+        final docMsgs = _tdMessagesFromSearchResult(docRaw);
+        final videoRows = _rowsFromLiveVideoMessages(videoMsgs, chatId);
+        final docRows = _rowsFromLiveVideoMessages(docMsgs, chatId);
+        final merged = _sortOxChatMediaRowsByMessageDateDesc(
+          _dedupeOxChatMediaRowsByMessageId(<OxChatMediaRow>[...videoRows, ...docRows]),
+        );
+        final videoHasMore = videoMsgs.length >= tdLimit;
+        final docHasMore = docMsgs.length >= tdLimit;
+        final hasMore = videoHasMore || docHasMore;
+        final bool useDoc;
+        final int? nextAnchor;
+        if (videoHasMore) {
+          nextAnchor = _liveSearchPaginationAnchorFromBatch(videoMsgs);
+          useDoc = false;
+        } else if (docHasMore) {
+          nextAnchor = _liveSearchPaginationAnchorFromBatch(docMsgs);
+          useDoc = true;
+        } else {
+          nextAnchor = null;
+          useDoc = false;
+        }
+        debugLogInfo(
+          'DEBUG: merged page1 rows=${merged.length} hasMore=$hasMore nextAnchor=$nextAnchor docFilter=$useDoc',
+          type: LogType.backend,
+        );
+        if (merged.isNotEmpty) {
+          return OxChatMediaPage(
+            items: merged,
+            total: merged.length + (hasMore && nextAnchor != null ? 1 : 0),
+            hasMoreHistory: hasMore && nextAnchor != null,
+            nextHistoryFromMessageId: nextAnchor,
+            liveSearchUsesDocumentFilter: useDoc,
+          );
+        }
+        final fromPrimer = _oxChatMediaPageFromPrimerIfSearchEmpty(
+          primerMessages: primerMessages,
+          chatId: chatId,
+          tdLimit: 50,
+          isForum: threadParams.isForum,
+          topicId: threadParams.effectiveThreadId,
+          liveSearchUsesDocumentFilter: useDoc,
+        );
+        if (fromPrimer != null) {
+          debugLogInfo(
+            'DEBUG: merged page1 used GetChatHistory primer fallback rows=${fromPrimer.items.length}',
+            type: LogType.backend,
+          );
+          return fromPrimer;
+        }
+        return OxChatMediaPage(
+          items: merged,
+          total: merged.length + (hasMore && nextAnchor != null ? 1 : 0),
+          hasMoreHistory: hasMore && nextAnchor != null,
+          nextHistoryFromMessageId: nextAnchor,
+          liveSearchUsesDocumentFilter: useDoc,
+        );
+      }
+
+      final page = _oxChatMediaPageFromSearchRaw(
+        raw: videoRaw,
+        chatId: chatId,
+        tdLimit: tdLimit,
+        usedDocumentFilter: false,
+      );
+      debugLogInfo(
+        'DEBUG: fetchLiveChatVideos page items=${page.items.length} hasMore=${page.hasMoreHistory} '
+        'nextAnchor=${page.nextHistoryFromMessageId}',
+        type: LogType.backend,
+      );
+      if (page.items.isEmpty && isFirstPage) {
+        final fromPrimer = _oxChatMediaPageFromPrimerIfSearchEmpty(
+          primerMessages: primerMessages,
+          chatId: chatId,
+          tdLimit: 50,
+          isForum: threadParams.isForum,
+          topicId: threadParams.effectiveThreadId,
+          liveSearchUsesDocumentFilter: false,
+        );
+        if (fromPrimer != null) {
+          debugLogInfo(
+            'DEBUG: video-only page used GetChatHistory primer fallback rows=${fromPrimer.items.length}',
+            type: LogType.backend,
+          );
+          return fromPrimer;
+        }
+      }
+      return page;
+    } on td.TdError catch (e) {
+      debugLogError(
+        'DEBUG: fetchLiveChatVideos TdError code=${e.code} message=${e.message}',
+        type: LogType.backend,
+      );
+      return const OxChatMediaPage(items: [], total: 0);
+    } catch (e) {
+      debugLogError('Error fetching live chat videos: $e', type: LogType.backend);
+      return const OxChatMediaPage(items: [], total: 0);
+    }
+  }
+
+  Future<int?> _playableTelegramFileIdFromChatMessage(int chatId, int messageId) async {
+    try {
+      final o = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: messageId));
+      if (o is! td.Message) return null;
+      final f = _messagePlayableFile(o);
+      return f?.id;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// TDLib playable file id for the video (or video document) attachment.
+  Future<int?> getTelegramPlayableFileIdForMessage({
+    required int chatId,
+    required int messageId,
+  }) async {
+    if (!await _ensureTdlibReadyForMediaPlayback()) return null;
+    return _playableTelegramFileIdFromChatMessage(chatId, messageId);
+  }
+
+  /// Full [forwardMessages] to [AppConfig.botUsername] (`BOT_USERNAME`, `send_copy: false`, caption kept like a normal forward).
+  Future<void> forwardTelegramMessageToMainBot({
+    required int fromChatId,
+    required int messageId,
+  }) async {
+    if (!await _ensureTdlibReadyForMediaPlayback()) {
+      throw StateError('TDLib not ready');
+    }
+    final raw = _config.botUsername.trim();
+    if (raw.isEmpty) {
+      throw StateError('BOT_USERNAME is not configured');
+    }
+    final toChatId = await _cachedTdlibChatIdForEnvBotUsername(raw.replaceFirst(RegExp(r'^@+'), ''), null);
+    if (toChatId == null) {
+      throw StateError('Could not resolve bot @$raw');
+    }
+    try {
+      await _tdlib.send(td.OpenChat(chatId: toChatId));
+    } catch (_) {}
+    await _tdlib.send(
+      td.ForwardMessages(
+        chatId: toChatId,
+        messageThreadId: 0,
+        fromChatId: fromChatId,
+        messageIds: <int>[messageId],
+        options: null,
+        sendCopy: false,
+        removeCaption: false,
+        onlyPreview: false,
+      ),
+    );
+  }
+
+  /// Local path for MPV: uses TDLib cache when the file is already fully on disk, otherwise waits for a readable prefix.
+  Future<String?> getTelegramVideoLocalPathForStreaming({
+    required int chatId,
+    required int messageId,
+  }) async {
+    if (!await _ensureTdlibReadyForMediaPlayback()) return null;
+    final fileId = await _playableTelegramFileIdFromChatMessage(chatId, messageId);
+    if (fileId == null) return null;
+
+    // Fast path: already fully downloaded (e.g. after thumbnail/download) — no 768KB prefix wait.
+    try {
+      final obj = await _tdlib.send(td.GetFile(fileId: fileId));
+      if (obj is td.File) {
+        final path = obj.local.path.trim();
+        if (path.isNotEmpty && obj.local.isDownloadingCompleted) {
+          return path;
+        }
+        final total = obj.size;
+        if (total > 0 && path.isNotEmpty && obj.local.downloadedSize >= total) {
+          return path;
+        }
+      }
+    } catch (_) {}
+
+    return _waitForReadableVideoPrefix(fileId);
+  }
+
+  /// Polls until the file is fully on disk or [shouldCancel] is true. Resume with [startOffset] after [CancelDownloadFile].
+  Future<String?> downloadTelegramFileToCompletion({
+    required int fileId,
+    int startOffset = 0,
+    void Function(int downloaded, int total)? onProgress,
+    bool Function()? shouldCancel,
+  }) async {
+    if (!await _ensureTdlibReadyForMediaPlayback()) return null;
+    try {
+      await _tdlib.send(
+        td.DownloadFile(
+          fileId: fileId,
+          priority: 28,
+          offset: startOffset,
+          limit: 0,
+          synchronous: false,
+        ),
+      );
+    } catch (_) {}
+
+    const pollInterval = Duration(milliseconds: 320);
+    var lastDownloaded = -1;
+    var lastTotal = -1;
+
+    while (true) {
+      if (shouldCancel?.call() == true) {
+        try {
+          await _tdlib.send(td.CancelDownloadFile(fileId: fileId, onlyIfPending: false));
+        } catch (_) {}
+        return null;
+      }
+      final fileResult = await _tdlib.send(td.GetFile(fileId: fileId));
+      if (fileResult is! td.File) return null;
+
+      final totalBytes = fileResult.size > 0 ? fileResult.size : fileResult.local.downloadedSize;
+      final downloadedBytes = fileResult.local.downloadedSize;
+
+      if (onProgress != null && (downloadedBytes != lastDownloaded || totalBytes != lastTotal)) {
+        lastDownloaded = downloadedBytes;
+        lastTotal = totalBytes;
+        onProgress(downloadedBytes, totalBytes);
+      }
+
+      final srcPath = fileResult.local.path.trim();
+      if (srcPath.isNotEmpty && fileResult.local.isDownloadingCompleted) {
+        return srcPath;
+      }
+
+      await Future<void>.delayed(pollInterval);
+    }
+  }
+
+  /// Latest downloaded byte count and expected total for [fileId] (for resume after cancel).
+  Future<(int downloaded, int total)?> getTelegramFileProgress(int fileId) async {
+    try {
+      final o = await _tdlib.send(td.GetFile(fileId: fileId));
+      if (o is! td.File) return null;
+      final total = o.size > 0 ? o.size : o.local.downloadedSize;
+      return (o.local.downloadedSize, total);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> dispose() async {}
@@ -1059,8 +2325,13 @@ class DataRepository {
   /// playback path does, generates a cached JPEG from that file, and falls back
   /// to source-message thumbnail extraction only when locator resolution is not
   /// enough. Returns `null` on failure.
+  ///
+  /// [diskCacheKey] optional distinct name for the on-disk JPEG cache. Use when
+  /// [mediaId] is only the Telegram file id — two chat messages can share the
+  /// same file id (reposts); caching by file id alone shows the wrong thumbnail.
   Future<String?> fetchVideoThumbnail({
     required String mediaId,
+    String? diskCacheKey,
     String? fileUniqueId,
     String? locatorType,
     int? locatorChatId,
@@ -1077,19 +2348,15 @@ class DataRepository {
       return null;
     }
 
-    debugLogInfo(
-      'Resolving thumbnail for $mediaId.',
-      type: LogType.telegramThumbnail,
-    );
+    debugLogInfo('Resolving thumbnail for $mediaId.', type: LogType.telegramThumbnail);
 
     try {
       final cacheDir = await _videoThumbnailCacheDir();
-      final cachedFile = File('${cacheDir.path}/$mediaId.jpg');
+      final rawKey = (diskCacheKey != null && diskCacheKey.trim().isNotEmpty) ? diskCacheKey.trim() : mediaId;
+      final safeKey = rawKey.replaceAll(RegExp(r'[<>:"/\\|?\x00-\x1f]'), '_');
+      final cachedFile = File('${cacheDir.path}/$safeKey.jpg');
       if (cachedFile.existsSync()) {
-        debugLogSuccess(
-          'Thumbnail cache hit for $mediaId at ${cachedFile.path}.',
-          type: LogType.telegramThumbnail,
-        );
+        debugLogSuccess('Thumbnail cache hit for $mediaId at ${cachedFile.path}.', type: LogType.telegramThumbnail);
         return cachedFile.path;
       }
 
@@ -1130,11 +2397,7 @@ class DataRepository {
       );
 
       if (message.message == null && chatId != null && messageId != null) {
-        message = await _resolveThumbnailMessage(
-          chatId: chatId,
-          messageId: messageId,
-          fileUniqueId: fileUniqueId,
-        );
+        message = await _resolveThumbnailMessage(chatId: chatId, messageId: messageId, fileUniqueId: fileUniqueId);
       }
 
       if (message.message == null) {
@@ -1146,10 +2409,7 @@ class DataRepository {
         return null;
       }
 
-      final directThumbPath = await _downloadMessageThumbnailToCache(
-        message: message.message!,
-        cachedFile: cachedFile,
-      );
+      final directThumbPath = await _downloadMessageThumbnailToCache(message: message.message!, cachedFile: cachedFile);
       if (directThumbPath != null) {
         debugLogSuccess(
           'Embedded Telegram thumbnail cached for $mediaId at $directThumbPath.',
@@ -1176,10 +2436,7 @@ class DataRepository {
       }
       return generatedThumbPath;
     } catch (error) {
-      debugLogError(
-        'Thumbnail resolution crashed for $mediaId: $error',
-        type: LogType.telegramThumbnail,
-      );
+      debugLogError('Thumbnail resolution crashed for $mediaId: $error', type: LogType.telegramThumbnail);
       unawaited(_requestThumbnailRecovery(mediaId, reason: 'thumbnail_resolution_crashed'));
       return null;
     }
@@ -1200,10 +2457,7 @@ class DataRepository {
     }
 
     if (locatorType == 'CHAT_MESSAGE' && locatorChatId != null) {
-      debugLogInfo(
-        'Reading thumbnail from direct locator chat/message for $mediaId.',
-        type: LogType.telegramThumbnail,
-      );
+      debugLogInfo('Reading thumbnail from direct locator chat/message for $mediaId.', type: LogType.telegramThumbnail);
       return _resolveThumbnailMessage(
         mediaId: mediaId,
         chatId: locatorChatId,
@@ -1231,10 +2485,7 @@ class DataRepository {
       return;
     }
     if (lastAttempt != null && now.difference(lastAttempt) < const Duration(seconds: 30)) {
-      debugLogInfo(
-        'Thumbnail recovery throttled for $mediaId. reason=$reason',
-        type: LogType.telegramThumbnail,
-      );
+      debugLogInfo('Thumbnail recovery throttled for $mediaId. reason=$reason', type: LogType.telegramThumbnail);
       return;
     }
 
@@ -1278,6 +2529,7 @@ class DataRepository {
       _thumbnailRecoveryInFlight.remove(mediaId);
     }
   }
+
   Future<(td.Chat, int)?> _openBotPrivateChat(String? botUsername) async {
     final cleaned = botUsername?.trim().replaceFirst(RegExp(r'^@'), '');
     if (cleaned == null || cleaned.isEmpty) return null;
@@ -1300,6 +2552,7 @@ class DataRepository {
 
     return null;
   }
+
   Future<int?> _cachedTdlibChatIdForEnvBotUsername(
     String rawUsername,
     void Function(String message)? onDiagnostic,
@@ -1319,9 +2572,7 @@ class DataRepository {
         return resolved.id;
       }
     } on td.TdError catch (error) {
-      onDiagnostic?.call(
-        'SearchPublicChat failed for @$key: code=${error.code} message=${error.message}',
-      );
+      onDiagnostic?.call('SearchPublicChat failed for @$key: code=${error.code} message=${error.message}');
     } catch (error) {
       onDiagnostic?.call('SearchPublicChat crashed for @$key: $error');
     }
@@ -1341,16 +2592,17 @@ class DataRepository {
     return out;
   }
 
-  Future<void> _openChatsBestEffortForLocator(Iterable<int> chatIds, void Function(String message)? onDiagnostic) async {
+  Future<void> _openChatsBestEffortForLocator(
+    Iterable<int> chatIds,
+    void Function(String message)? onDiagnostic,
+  ) async {
     final seen = <int>{};
     for (final id in chatIds) {
       if (id == 0 || !seen.add(id)) continue;
       try {
         await _tdlib.send(td.OpenChat(chatId: id));
       } on td.TdError catch (error) {
-        onDiagnostic?.call(
-          'OpenChat best-effort failed for chatId=$id: code=${error.code} message=${error.message}',
-        );
+        onDiagnostic?.call('OpenChat best-effort failed for chatId=$id: code=${error.code} message=${error.message}');
       } catch (error) {
         onDiagnostic?.call('OpenChat best-effort crashed for chatId=$id: $error');
       }
@@ -1366,8 +2618,7 @@ class DataRepository {
     void Function(String message)? onDiagnostic,
   }) async {
     String? lastFailureReason;
-    final chatCandidates = _candidateTelegramChatIds(chatId, exactOnly: exactChatIdOnly)
-        .toList(growable: false);
+    final chatCandidates = _candidateTelegramChatIds(chatId, exactOnly: exactChatIdOnly).toList(growable: false);
     final messageCandidates = _candidateTelegramMessageIds(messageId).toList(growable: false);
 
     await _openChatsBestEffortForLocator(chatCandidates, onDiagnostic);
@@ -1382,12 +2633,9 @@ class DataRepository {
           onDiagnostic?.call(
             'Trying Telegram message lookup chatCandidate=$chatCandidate messageCandidate=$messageCandidate',
           );
-          final result = await _tdlib.send(
-            td.GetMessage(chatId: chatCandidate, messageId: messageCandidate),
-          );
+          final result = await _tdlib.send(td.GetMessage(chatId: chatCandidate, messageId: messageCandidate));
           if (result is td.Message) {
-            final resolutionReason =
-                chatCandidate == chatId && messageCandidate == messageId
+            final resolutionReason = chatCandidate == chatId && messageCandidate == messageId
                 ? 'direct_chat_message_exact'
                 : 'direct_chat_message_candidate';
             onDiagnostic?.call(
@@ -1404,12 +2652,14 @@ class DataRepository {
           onDiagnostic?.call(
             'Telegram message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: code=${error.code} message=${error.message}',
           );
-          lastFailureReason = 'Message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: code=${error.code} message=${error.message}';
+          lastFailureReason =
+              'Message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: code=${error.code} message=${error.message}';
         } catch (error) {
           onDiagnostic?.call(
             'Telegram message lookup crashed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: $error',
           );
-          lastFailureReason = 'Message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: $error';
+          lastFailureReason =
+              'Message lookup failed for chatCandidate=$chatCandidate messageCandidate=$messageCandidate: $error';
         }
       }
     }
@@ -1493,15 +2743,7 @@ class DataRepository {
       try {
         onDiagnostic?.call('Trying Telegram SearchMessages (all non-secret chats) query=$query');
         final raw = await _tdlib.send(
-          td.SearchMessages(
-            chatList: null,
-            query: query,
-            offset: '',
-            limit: 50,
-            filter: null,
-            minDate: 0,
-            maxDate: 0,
-          ),
+          td.SearchMessages(chatList: null, query: query, offset: '', limit: 50, filter: null, minDate: 0, maxDate: 0),
         );
         if (raw is! td.FoundMessages) {
           onDiagnostic?.call('SearchMessages unexpected result type=${raw.runtimeType} query=$query');
@@ -1527,9 +2769,7 @@ class DataRepository {
           }
         }
       } on td.TdError catch (error) {
-        onDiagnostic?.call(
-          'SearchMessages failed query=$query: code=${error.code} message=${error.message}',
-        );
+        onDiagnostic?.call('SearchMessages failed query=$query: code=${error.code} message=${error.message}');
       } catch (error) {
         onDiagnostic?.call('SearchMessages crashed query=$query: $error');
       }
@@ -1569,9 +2809,7 @@ class DataRepository {
         );
         if (result is! td.Messages || result.messages.isEmpty) {
           if (page == 0) {
-            onDiagnostic?.call(
-              'Telegram history locator scan found no messages for chatCandidate=$chatId',
-            );
+            onDiagnostic?.call('Telegram history locator scan found no messages for chatCandidate=$chatId');
             return null;
           }
           break;
@@ -1653,9 +2891,7 @@ class DataRepository {
         'Telegram history locator scan failed for chatCandidate=$chatId: code=${error.code} message=${error.message}',
       );
     } catch (error) {
-      onDiagnostic?.call(
-        'Telegram history locator scan crashed for chatCandidate=$chatId: $error',
-      );
+      onDiagnostic?.call('Telegram history locator scan crashed for chatCandidate=$chatId: $error');
     }
 
     return null;
@@ -1667,16 +2903,11 @@ class DataRepository {
     required String? fileUniqueId,
     void Function(String message)? onDiagnostic,
   }) async {
-    final queries = <String>{
-      _buildMediaLocatorSearchTag(mediaId),
-      'oxm_${mediaId.trim()}',
-    }.toList(growable: false);
+    final queries = <String>{_buildMediaLocatorSearchTag(mediaId), 'oxm_${mediaId.trim()}'}.toList(growable: false);
 
     for (final query in queries) {
       try {
-        onDiagnostic?.call(
-          'Telegram SearchChatMessages (locator tag) chatCandidate=$chatId query=$query',
-        );
+        onDiagnostic?.call('Telegram SearchChatMessages (locator tag) chatCandidate=$chatId query=$query');
         final result = await _tdlib.send(
           td.SearchChatMessages(
             chatId: chatId,
@@ -1690,9 +2921,7 @@ class DataRepository {
           ),
         );
         if (result is! td.Messages || result.messages.isEmpty) {
-          onDiagnostic?.call(
-            'SearchChatMessages returned no messages for chatCandidate=$chatId query=$query',
-          );
+          onDiagnostic?.call('SearchChatMessages returned no messages for chatCandidate=$chatId query=$query');
           continue;
         }
 
@@ -1714,9 +2943,7 @@ class DataRepository {
           'SearchChatMessages failed for chatCandidate=$chatId query=$query: code=${error.code} message=${error.message}',
         );
       } catch (error) {
-        onDiagnostic?.call(
-          'SearchChatMessages crashed for chatCandidate=$chatId query=$query: $error',
-        );
+        onDiagnostic?.call('SearchChatMessages crashed for chatCandidate=$chatId query=$query: $error');
       }
     }
 
@@ -1731,9 +2958,7 @@ class DataRepository {
     required int? locatorMessageId,
     required String? locatorRemoteFileId,
   }) async {
-    if (locatorType == 'CHAT_MESSAGE' &&
-        locatorChatId != null &&
-        locatorMessageId != null) {
+    if (locatorType == 'CHAT_MESSAGE' && locatorChatId != null && locatorMessageId != null) {
       final lookup = await _resolveThumbnailMessage(
         mediaId: mediaId,
         chatId: locatorChatId,
@@ -1762,8 +2987,7 @@ class DataRepository {
             locatorDebugInfo(
               'Stored locator direct lookup did not resolve exact message for mediaFileId=$mediaId. Locator fallback recovered resolvedChatId=${lookup.resolvedChatId} resolvedMessageId=${lookup.resolvedMessageId} requestedChatId=$locatorChatId requestedMessageId=$locatorMessageId reason=${lookup.resolutionReason} fileId=${file.id}',
             );
-          } else if (lookup.resolvedMessageId != locatorMessageId ||
-              lookup.resolvedChatId != locatorChatId) {
+          } else if (lookup.resolvedMessageId != locatorMessageId || lookup.resolvedChatId != locatorChatId) {
             locatorDebugInfo(
               'Stored locator direct lookup resolved with alternate candidate for mediaFileId=$mediaId requestedChatId=$locatorChatId requestedMessageId=$locatorMessageId resolvedChatId=${lookup.resolvedChatId} resolvedMessageId=${lookup.resolvedMessageId} reason=${lookup.resolutionReason} fileId=${file.id}',
             );
@@ -1808,33 +3032,22 @@ class DataRepository {
         locatorDebugInfo(
           'Trying Telegram remote file fallback for mediaFileId=$mediaId remoteFileId=$trimmedLocatorRemote',
         );
-        final remoteFile = await _tdlib.send(
-          td.GetRemoteFile(
-            remoteFileId: trimmedLocatorRemote,
-            fileType: null,
-          ),
-        );
+        final remoteFile = await _tdlib.send(td.GetRemoteFile(remoteFileId: trimmedLocatorRemote, fileType: null));
         if (remoteFile is td.File) {
-          locatorDebugInfo(
-            'Telegram remote file fallback succeeded for mediaFileId=$mediaId fileId=${remoteFile.id}',
-          );
+          locatorDebugInfo('Telegram remote file fallback succeeded for mediaFileId=$mediaId fileId=${remoteFile.id}');
           return _ResolvedPlayableTelegramFile(
             file: remoteFile,
             locatorType: 'REMOTE_FILE_ID',
             resolutionReason: 'get_remote_file_locator_remote',
           );
         }
-        locatorDebugInfo(
-          'Telegram remote file fallback returned ${remoteFile.runtimeType} for mediaFileId=$mediaId',
-        );
+        locatorDebugInfo('Telegram remote file fallback returned ${remoteFile.runtimeType} for mediaFileId=$mediaId');
       } on td.TdError catch (error) {
         locatorDebugInfo(
           'Telegram remote file fallback failed for mediaFileId=$mediaId: code=${error.code} message=${error.message}',
         );
       } catch (error) {
-        locatorDebugInfo(
-          'Telegram remote file fallback crashed for mediaFileId=$mediaId: $error',
-        );
+        locatorDebugInfo('Telegram remote file fallback crashed for mediaFileId=$mediaId: $error');
       }
     }
 
@@ -1928,9 +3141,7 @@ class DataRepository {
       'Locator tag ($logContext) inspecting tagMessageId=${tagMessage.id} replyChatId=${replyTo.chatId} replyMessageId=${replyTo.messageId}',
     );
     try {
-      final replied = await _tdlib.send(
-        td.GetMessage(chatId: replyTo.chatId, messageId: replyTo.messageId),
-      );
+      final replied = await _tdlib.send(td.GetMessage(chatId: replyTo.chatId, messageId: replyTo.messageId));
       if (replied is! td.Message) return null;
       if (trimmedFileUniqueId.isNotEmpty && _messageFileUniqueId(replied) != trimmedFileUniqueId) {
         onDiagnostic?.call(
@@ -1973,7 +3184,7 @@ class DataRepository {
 
     if (emit(chatId)) yield chatId;
 
-  if (exactOnly) return;
+    if (exactOnly) return;
 
     // Basic-group style chats are often addressed as negative ids in TDLib.
     if (chatId > 0 && emit(-chatId)) yield -chatId;
@@ -1986,9 +3197,7 @@ class DataRepository {
     }
   }
 
-  Iterable<int> _candidateTelegramMessageIds(
-    int messageId,
-  ) sync* {
+  Iterable<int> _candidateTelegramMessageIds(int messageId) sync* {
     final tdlibScaled = messageId * 1048576;
     yield messageId;
     if (tdlibScaled != messageId) {
@@ -1996,10 +3205,7 @@ class DataRepository {
     }
   }
 
-  Future<String?> _downloadMessageThumbnailToCache({
-    required td.Message message,
-    required File cachedFile,
-  }) async {
+  Future<String?> _downloadMessageThumbnailToCache({required td.Message message, required File cachedFile}) async {
     int? thumbFileId;
     final content = message.content;
     if (content is td.MessageVideo) {
@@ -2016,10 +3222,7 @@ class DataRepository {
     return cachedFile.path;
   }
 
-  Future<String?> _generateMessageThumbnailToCache({
-    required td.Message message,
-    required File cachedFile,
-  }) async {
+  Future<String?> _generateMessageThumbnailToCache({required td.Message message, required File cachedFile}) async {
     final sourceFileId = _messagePlayableFileId(message);
     if (sourceFileId == null) {
       debugLogError(
@@ -2052,31 +3255,22 @@ class DataRepository {
   }) async {
     if (Platform.isAndroid) {
       try {
-        final result = await _mediaToolsChannel.invokeMethod<String>(
-          'generateVideoThumbnail',
-          <String, Object?>{
-            'sourcePath': sourceVideoPath,
-            'targetPath': cachedFile.path,
-            'maxWidth': 480,
-            'quality': 78,
-            'timeMs': 1200,
-          },
-        );
+        final result = await _mediaToolsChannel.invokeMethod<String>('generateVideoThumbnail', <String, Object?>{
+          'sourcePath': sourceVideoPath,
+          'targetPath': cachedFile.path,
+          'maxWidth': 480,
+          'quality': 78,
+          'timeMs': 1200,
+        });
         if (result != null && result.isNotEmpty) {
           return result;
         }
       } catch (error) {
-        debugLogError(
-          'Native thumbnail generation failed for $logContext: $error',
-          type: LogType.telegramThumbnail,
-        );
+        debugLogError('Native thumbnail generation failed for $logContext: $error', type: LogType.telegramThumbnail);
         return null;
       }
 
-      debugLogError(
-        'Native thumbnail generation returned no path for $logContext.',
-        type: LogType.telegramThumbnail,
-      );
+      debugLogError('Native thumbnail generation returned no path for $logContext.', type: LogType.telegramThumbnail);
       return null;
     }
 
@@ -2090,18 +3284,12 @@ class DataRepository {
         timeMs: 1200,
       );
     } catch (error) {
-      debugLogError(
-        'video_thumbnail failed for $logContext: $error',
-        type: LogType.telegramThumbnail,
-      );
+      debugLogError('video_thumbnail failed for $logContext: $error', type: LogType.telegramThumbnail);
       return null;
     }
 
     if (bytes == null || bytes.isEmpty) {
-      debugLogError(
-        'video_thumbnail returned no bytes for $logContext.',
-        type: LogType.telegramThumbnail,
-      );
+      debugLogError('video_thumbnail returned no bytes for $logContext.', type: LogType.telegramThumbnail);
       return null;
     }
 
@@ -2109,10 +3297,7 @@ class DataRepository {
     return cachedFile.path;
   }
 
-  Future<String?> _generateResolvedFileThumbnailToCache({
-    required td.File sourceFile,
-    required File cachedFile,
-  }) async {
+  Future<String?> _generateResolvedFileThumbnailToCache({required td.File sourceFile, required File cachedFile}) async {
     final localVideoPath = await _waitForReadableVideoPrefix(sourceFile.id);
     if (localVideoPath == null || localVideoPath.isEmpty) {
       return null;
@@ -2165,15 +3350,7 @@ class DataRepository {
     void Function(int downloadedBytes, int totalBytes)? onProgress,
   }) async {
     try {
-      await _tdlib.send(
-        td.DownloadFile(
-          fileId: fileId,
-          priority: 5,
-          offset: 0,
-          limit: 0,
-          synchronous: false,
-        ),
-      );
+      await _tdlib.send(td.DownloadFile(fileId: fileId, priority: 5, offset: 0, limit: 0, synchronous: false));
     } catch (_) {}
 
     const pollInterval = Duration(milliseconds: 320);
@@ -2219,28 +3396,29 @@ class DataRepository {
       if (file != null) {
         final path = file.local.path.trim();
         final downloaded = file.local.downloadedSize;
-        if (path.isNotEmpty && downloaded >= minVideoPrefixBytes) return path;
+        final total = file.size;
+        // Full local file (any size) — avoids failing videos smaller than [minVideoPrefixBytes].
+        if (path.isNotEmpty && file.local.isDownloadingCompleted) {
+          return path;
+        }
+        if (total > 0 && path.isNotEmpty && downloaded >= total) {
+          return path;
+        }
+        if (path.isNotEmpty && downloaded >= minVideoPrefixBytes) {
+          return path;
+        }
       }
 
       try {
         await _tdlib.send(
-          td.DownloadFile(
-            fileId: fileId,
-            priority: 8,
-            offset: 0,
-            limit: maxTdlibDownloadLimit,
-            synchronous: false,
-          ),
+          td.DownloadFile(fileId: fileId, priority: 8, offset: 0, limit: maxTdlibDownloadLimit, synchronous: false),
         );
       } catch (_) {}
 
       await Future<void>.delayed(pollInterval);
     }
 
-    debugLogError(
-      'Timed out waiting for readable video prefix for fileId=$fileId.',
-      type: LogType.telegramThumbnail,
-    );
+    debugLogError('Timed out waiting for readable video prefix for fileId=$fileId.', type: LogType.telegramThumbnail);
     return null;
   }
 
@@ -2259,11 +3437,7 @@ class DataRepository {
     final dio = _authorizedApiClient();
     final response = await dio.get<Map<String, dynamic>>(
       '/me/library/media',
-      queryParameters: <String, dynamic>{
-        'kind': kind,
-        'limit': limit,
-        'sort': 'created_desc',
-      },
+      queryParameters: <String, dynamic>{'kind': kind, 'limit': limit, 'sort': 'created_desc'},
     );
 
     final items = response.data?['items'];
@@ -2271,29 +3445,33 @@ class DataRepository {
       return const <OxLibraryMediaItem>[];
     }
 
-    return items.whereType<Map>().map((rawItem) {
-      final item = Map<String, dynamic>.from(rawItem);
-      final mediaId = _readOptionalTrimmed(item['mediaId']);
-      final seriesId = _readOptionalTrimmed(item['seriesId']);
-      final globalId = kind == 'series' && seriesId != null ? 'series:$seriesId' : (mediaId ?? '');
+    return items
+        .whereType<Map>()
+        .map((rawItem) {
+          final item = Map<String, dynamic>.from(rawItem);
+          final mediaId = _readOptionalTrimmed(item['mediaId']);
+          final seriesId = _readOptionalTrimmed(item['seriesId']);
+          final globalId = kind == 'series' && seriesId != null ? 'series:$seriesId' : (mediaId ?? '');
 
-      return OxLibraryMediaItem(
-        kind: _readOptionalTrimmed(item['kind']) ?? kind,
-        globalId: globalId,
-        title: _readOptionalTrimmed(item['title']) ?? 'Untitled',
-        createdAt: DateTime.tryParse(item['createdAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
-        fileUniqueId: _readOptionalTrimmed(item['fileUniqueId']),
-        posterPath: _readOptionalTrimmed(item['posterPath']),
-        overview: _readOptionalTrimmed(item['overview']),
-        voteAverage: (item['voteAverage'] as num?)?.toDouble(),
-        locatorType: _readOptionalTrimmed(item['locatorType']),
-        locatorChatId: (item['locatorChatId'] as num?)?.toInt(),
-        locatorMessageId: (item['locatorMessageId'] as num?)?.toInt(),
-        locatorRemoteFileId: _readOptionalTrimmed(item['locatorRemoteFileId']),
-        thumbnailSourceChatId: (item['thumbnailSourceChatId'] as num?)?.toInt(),
-        thumbnailSourceMessageId: (item['thumbnailSourceMessageId'] as num?)?.toInt(),
-      );
-    }).where((item) => item.globalId.isNotEmpty).toList(growable: false);
+          return OxLibraryMediaItem(
+            kind: _readOptionalTrimmed(item['kind']) ?? kind,
+            globalId: globalId,
+            title: _readOptionalTrimmed(item['title']) ?? 'Untitled',
+            createdAt: DateTime.tryParse(item['createdAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+            fileUniqueId: _readOptionalTrimmed(item['fileUniqueId']),
+            posterPath: _readOptionalTrimmed(item['posterPath']),
+            overview: _readOptionalTrimmed(item['overview']),
+            voteAverage: (item['voteAverage'] as num?)?.toDouble(),
+            locatorType: _readOptionalTrimmed(item['locatorType']),
+            locatorChatId: (item['locatorChatId'] as num?)?.toInt(),
+            locatorMessageId: (item['locatorMessageId'] as num?)?.toInt(),
+            locatorRemoteFileId: _readOptionalTrimmed(item['locatorRemoteFileId']),
+            thumbnailSourceChatId: (item['thumbnailSourceChatId'] as num?)?.toInt(),
+            thumbnailSourceMessageId: (item['thumbnailSourceMessageId'] as num?)?.toInt(),
+          );
+        })
+        .where((item) => item.globalId.isNotEmpty)
+        .toList(growable: false);
   }
 
   OxLibraryMediaDetailMedia _parseOxLibraryMediaDetailMedia(Map<String, dynamic> raw) {
@@ -2350,13 +3528,17 @@ class DataRepository {
       return const <OxLibraryGenre>[];
     }
 
-    return rawGenres.whereType<Map>().map((raw) {
-      final genre = Map<String, dynamic>.from(raw);
-      return OxLibraryGenre(
-        id: _readOptionalTrimmed(genre['id']) ?? '',
-        title: _readOptionalTrimmed(genre['title']) ?? '',
-      );
-    }).where((genre) => genre.id.isNotEmpty || genre.title.isNotEmpty).toList(growable: false);
+    return rawGenres
+        .whereType<Map>()
+        .map((raw) {
+          final genre = Map<String, dynamic>.from(raw);
+          return OxLibraryGenre(
+            id: _readOptionalTrimmed(genre['id']) ?? '',
+            title: _readOptionalTrimmed(genre['title']) ?? '',
+          );
+        })
+        .where((genre) => genre.id.isNotEmpty || genre.title.isNotEmpty)
+        .toList(growable: false);
   }
 
   DateTime _readDateTimeOrEpoch(Object? raw) {
@@ -2371,10 +3553,7 @@ class DataRepository {
     }
 
     return Dio(
-      BaseOptions(
-        baseUrl: _config.apiBaseUrl,
-        headers: <String, String>{'Authorization': 'Bearer $accessToken'},
-      ),
+      BaseOptions(baseUrl: _config.apiBaseUrl, headers: <String, String>{'Authorization': 'Bearer $accessToken'}),
     );
   }
 
@@ -2408,20 +3587,25 @@ class DataRepository {
     if (itemsRaw is! List) {
       return OxUserChatListPage(items: const [], total: total);
     }
-    final items = itemsRaw.whereType<Map>().map((raw) {
-      final m = Map<String, dynamic>.from(raw);
-      return OxUserChatRow(
-        id: _readOptionalTrimmed(m['id']) ?? '',
-        tdlibChatId: _readOptionalTrimmed(m['tdlibChatId'] ?? m['telegramChatId']),
-        title: _readOptionalTrimmed(m['title']) ?? '',
-        photoUrl: _readOptionalTrimmed(m['photoUrl']),
-        chatType: _readOptionalTrimmed(m['chatType']) ?? 'private',
-        peerIsBot: m['peerIsBot'] == true,
-        isIndexed: m['isIndexed'] == true,
-        showInVideo: m['showInVideo'] == true,
-        showInMusic: m['showInMusic'] == true,
-      );
-    }).where((r) => r.id.isNotEmpty).toList(growable: false);
+    final items = itemsRaw
+        .whereType<Map>()
+        .map((raw) {
+          final m = Map<String, dynamic>.from(raw);
+          return OxUserChatRow(
+            id: _readOptionalTrimmed(m['id']) ?? '',
+            tdlibChatId: _readOptionalTrimmed(m['tdlibChatId'] ?? m['telegramChatId']),
+            title: _readOptionalTrimmed(m['title']) ?? '',
+            photoUrl: _readOptionalTrimmed(m['photoUrl']),
+            chatType: _readOptionalTrimmed(m['chatType']) ?? 'private',
+            peerIsBot: m['peerIsBot'] == true,
+            isForum: m['isForum'] == true,
+            isIndexed: m['isIndexed'] == true,
+            showInVideo: m['showInVideo'] == true,
+            showInMusic: m['showInMusic'] == true,
+          );
+        })
+        .where((r) => r.id.isNotEmpty)
+        .toList(growable: false);
     return OxUserChatListPage(items: items, total: total);
   }
 
@@ -2430,15 +3614,18 @@ class DataRepository {
     required String title,
     required String chatType,
     bool peerIsBot = false,
+    bool isForum = false,
   }) async {
     final dio = _authorizedApiClient();
     await dio.post<void>(
       '/me/chats/upsert',
       data: <String, dynamic>{
-        'tdlibChatId': tdlibChatId,
+        // String avoids JS JSON number precision issues for large Telegram ids.
+        'tdlibChatId': tdlibChatId.toString(),
         'title': title,
         'chatType': chatType,
         'peerIsBot': peerIsBot,
+        if (chatType == 'supergroup') 'isForum': isForum,
       },
     );
   }
@@ -2452,6 +3639,57 @@ class DataRepository {
     final u = response.data?['updated'];
     if (u is int) return u;
     return int.tryParse(u?.toString() ?? '') ?? 0;
+  }
+
+  /// Indexed `File` rows for a dialog (`isIndexed` must be true on the server).
+  /// When [messageThreadId] is set, only files ingested for that forum topic thread are returned.
+  Future<OxChatMediaPage> fetchIndexedChatMedia({
+    required String tdlibChatId,
+    int? messageThreadId,
+    int limit = 40,
+    int offset = 0,
+  }) async {
+    final dio = _authorizedApiClient();
+    final qp = <String, dynamic>{'limit': limit, 'offset': offset};
+    if (messageThreadId != null) {
+      qp['messageThreadId'] = messageThreadId.toString();
+    }
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/chats/by-tdlib-id/$tdlibChatId/media',
+      queryParameters: qp,
+    );
+    final data = response.data;
+    if (data == null) {
+      return const OxChatMediaPage(items: [], total: 0);
+    }
+    final itemsRaw = data['items'];
+    final total = (data['total'] as num?)?.toInt() ?? 0;
+    if (itemsRaw is! List) {
+      return OxChatMediaPage(items: const [], total: total);
+    }
+    final chatIdInt = int.tryParse(tdlibChatId);
+    final items = itemsRaw
+        .whereType<Map>()
+        .map((raw) {
+          final m = Map<String, dynamic>.from(raw);
+          return OxChatMediaRow(
+            fileId: _readOptionalTrimmed(m['fileId']) ?? '',
+            messageId: _readOptionalTrimmed(m['messageId']) ?? '',
+            remoteFileId: _readOptionalTrimmed(m['remoteFileId']),
+            caption: _readOptionalTrimmed(m['caption']),
+            messageDate: _readOptionalTrimmed(m['messageDate']),
+            fileName: _readOptionalTrimmed(m['fileName']),
+            chatId: chatIdInt,
+          );
+        })
+        .where((r) => r.fileId.isNotEmpty)
+        .toList(growable: false);
+    final loaded = offset + items.length;
+    return OxChatMediaPage(
+      items: items,
+      total: total,
+      hasMoreHistory: loaded < total,
+    );
   }
 
   Future<bool> _ensureTdlibReadyForMediaPlayback() async {
@@ -2481,11 +3719,7 @@ class DataRepository {
       return;
     }
     authDebugInfo('Initializing TDLib client...');
-    await _tdlib.init(
-      apiId: apiId,
-      apiHash: _config.telegramApiHash,
-      sessionString: '',
-    );
+    await _tdlib.init(apiId: apiId, apiHash: _config.telegramApiHash, sessionString: '');
     _tdlibInitialized = true;
     authDebugSuccess('TDLib client initialized.');
   }
@@ -2495,11 +3729,11 @@ class DataRepository {
     authDebugSuccess('Signed Telegram initData fetched.', completeStatus: AuthDebugStatusKey.initDataFetched);
     final identity = await _resolveDeviceIdentity();
     final dio = Dio(BaseOptions(baseUrl: _config.apiBaseUrl));
-    authDebugInfo('Sending Telegram initData to OXPlayer API...', completeStatus: AuthDebugStatusKey.backendRequestSent);
-    debugLogInfo(
-      'Telegram auth request target: ${_formatApiUrl('/auth/telegram')}',
-      type: LogType.backend,
+    authDebugInfo(
+      'Sending Telegram initData to OXPlayer API...',
+      completeStatus: AuthDebugStatusKey.backendRequestSent,
     );
+    debugLogInfo('Telegram auth request target: ${_formatApiUrl('/auth/telegram')}', type: LogType.backend);
     debugLogInfo(
       'Telegram auth payload meta: initDataLength=${initData.length}, deviceId=${identity.deviceId}, deviceName=${identity.deviceName ?? '-'}',
       type: LogType.backend,
@@ -2525,24 +3759,21 @@ class DataRepository {
         type: LogType.backend,
       );
       if (responsePreview.isNotEmpty) {
-        debugLogError(
-          'Telegram auth error response: $responsePreview',
-          type: LogType.backend,
-        );
+        debugLogError('Telegram auth error response: $responsePreview', type: LogType.backend);
       }
       rethrow;
     }
-    debugLogSuccess(
-      'Telegram auth response status=${response.statusCode ?? 200}',
-      type: LogType.backend,
-    );
+    debugLogSuccess('Telegram auth response status=${response.statusCode ?? 200}', type: LogType.backend);
 
     final accessToken = response.data?['accessToken']?.toString() ?? '';
     if (accessToken.isEmpty) {
       authDebugError('Backend response did not include accessToken.');
       throw StateError('API did not return accessToken');
     }
-    authDebugSuccess('OXPlayer API returned backend access token.', completeStatus: AuthDebugStatusKey.backendAuthenticated);
+    authDebugSuccess(
+      'OXPlayer API returned backend access token.',
+      completeStatus: AuthDebugStatusKey.backendAuthenticated,
+    );
 
     String? preferredSubtitleLanguage;
     String? userType;
@@ -2578,9 +3809,7 @@ class DataRepository {
   Future<String> _fetchSignedInitData() async {
     await _tdlib.ensureAuthorized();
     authDebugInfo('Resolving Telegram bot public chat...');
-    final resolved = await _tdlib.send(
-      td.SearchPublicChat(username: _config.botUsername),
-    );
+    final resolved = await _tdlib.send(td.SearchPublicChat(username: _config.botUsername));
     if (resolved is! td.Chat || resolved.type is! td.ChatTypePrivate) {
       throw StateError('Cannot resolve BOT_USERNAME to a private chat');
     }
@@ -2588,9 +3817,7 @@ class DataRepository {
     final botUserId = (resolved.type as td.ChatTypePrivate).userId;
     authDebugSuccess('Telegram bot public chat resolved.');
     authDebugInfo('Opening private chat with Telegram bot...');
-    final privateChat = await _tdlib.send(
-      td.CreatePrivateChat(userId: botUserId, force: false),
-    );
+    final privateChat = await _tdlib.send(td.CreatePrivateChat(userId: botUserId, force: false));
     if (privateChat is! td.Chat) {
       throw StateError('Failed to create private chat with bot');
     }
@@ -2628,12 +3855,7 @@ class DataRepository {
     if (webAppUrl == null && _config.telegramWebAppUrl.isNotEmpty) {
       authDebugInfo('Requesting Telegram WebApp fallback URL...');
       final fallbackResult = await _tdlib.send(
-        td.GetWebAppUrl(
-          botUserId: botUserId,
-          url: _config.telegramWebAppUrl,
-          theme: null,
-          applicationName: 'oxplayer',
-        ),
+        td.GetWebAppUrl(botUserId: botUserId, url: _config.telegramWebAppUrl, theme: null, applicationName: 'oxplayer'),
       );
       if (fallbackResult is td.HttpUrl) {
         webAppUrl = fallbackResult.url;
@@ -2651,10 +3873,7 @@ class DataRepository {
         'Cannot get WebApp URL. Configure OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME or OXPLAYER_TELEGRAM_WEBAPP_URL via --dart-define/--dart-define-from-file or a local assets/env/default.env copied from assets/env/default.env.example.',
       );
     }
-    debugLogInfo(
-      'Telegram WebApp URL resolved: ${_safeUriForLog(webAppUrl)}',
-      type: LogType.auth,
-    );
+    debugLogInfo('Telegram WebApp URL resolved: ${_safeUriForLog(webAppUrl)}', type: LogType.auth);
 
     final initData = _extractTgWebAppData(webAppUrl);
     if (initData == null || initData.isEmpty) {
@@ -2675,9 +3894,7 @@ class DataRepository {
 
     final fragment = uri.fragment;
     if (fragment.isNotEmpty) {
-      final queryFromFragment = fragment.contains('?')
-          ? fragment.substring(fragment.indexOf('?') + 1)
-          : fragment;
+      final queryFromFragment = fragment.contains('?') ? fragment.substring(fragment.indexOf('?') + 1) : fragment;
       final fromFragment = _extractQueryParamRaw(query: queryFromFragment, key: 'tgWebAppData');
       if (fromFragment != null && fromFragment.isNotEmpty) {
         return fromFragment;
@@ -2744,10 +3961,7 @@ class DataRepository {
       storedId = _generateDeviceId();
       await prefs.setString(_kApiDeviceIdPrefsKey, storedId);
     }
-    return _ApiDeviceIdentity(
-      deviceId: storedId,
-      deviceName: _kDefaultDeviceName,
-    );
+    return _ApiDeviceIdentity(deviceId: storedId, deviceName: _kDefaultDeviceName);
   }
 
   String _generateDeviceId() {
@@ -2791,10 +4005,7 @@ class DataRepository {
 }
 
 class _ApiDeviceIdentity {
-  const _ApiDeviceIdentity({
-    required this.deviceId,
-    required this.deviceName,
-  });
+  const _ApiDeviceIdentity({required this.deviceId, required this.deviceName});
 
   final String deviceId;
   final String? deviceName;

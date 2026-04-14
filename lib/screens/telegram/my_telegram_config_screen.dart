@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -8,7 +6,7 @@ import '../../infrastructure/data_repository.dart';
 import '../../infrastructure/telegram/source_chats_tdlib.dart';
 import '../../i18n/strings.g.dart';
 
-/// Pick TDLib dialogs and sync `showInVideo` to the OX API (upsert + PATCH).
+/// Pick TDLib dialogs and sync `showInVideo` to the OX API on explicit Save (Cancel discards).
 class MyTelegramConfigScreen extends StatefulWidget {
   const MyTelegramConfigScreen({super.key});
 
@@ -24,15 +22,26 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   int _listLimit = 50;
   bool _loading = true;
   bool _loadingMore = false;
+  bool _saving = false;
   String? _error;
   int? _selfUserId;
-  final Set<String> _showInVideoTdlibIds = {};
 
-  Timer? _debounce;
-  final Map<int, bool> _pendingShowInVideo = {};
+  /// Last loaded from server (committed).
+  final Set<String> _serverShowInVideoIds = {};
+
+  /// Editable selection; only pushed to server when user taps Save.
+  final Set<String> _draftShowInVideoIds = {};
 
   SourceChatPickerBucket get _currentBucket =>
       SourceChatPickerBucket.values[_tabController.index];
+
+  bool get _isDirty {
+    if (_serverShowInVideoIds.length != _draftShowInVideoIds.length) return true;
+    for (final id in _serverShowInVideoIds) {
+      if (!_draftShowInVideoIds.contains(id)) return true;
+    }
+    return false;
+  }
 
   List<TdlibPickerChatRow> get _visibleRows {
     final bucket = _currentBucket;
@@ -53,10 +62,10 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _tabController.addListener(_onTabChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_bootstrap());
+      _bootstrap();
     });
   }
 
@@ -67,10 +76,6 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    if (_pendingShowInVideo.isNotEmpty) {
-      unawaited(_flushPending());
-    }
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
@@ -84,35 +89,53 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   Future<void> _loadShowInVideoIds() async {
     try {
       final repo = await DataRepository.create();
-      const buckets = ['chats', 'groups', 'channels', 'bots'];
+      const buckets = ['chats', 'groups', 'supergroups', 'channels', 'bots'];
       final next = <String>{};
+      const apiPageLimit = 200;
       for (final b in buckets) {
         try {
-          final page = await repo.fetchUserChats(
-            bucket: b,
-            indexedOnly: false,
-            showInVideoOnly: true,
-            limit: 500,
-          );
-          for (final r in page.items) {
-            final id = r.tdlibChatId;
-            if (id != null && id.isNotEmpty) next.add(id);
+          var offset = 0;
+          while (true) {
+            final page = await repo.fetchUserChats(
+              bucket: b,
+              indexedOnly: false,
+              showInVideoOnly: true,
+              limit: apiPageLimit,
+              offset: offset,
+            );
+            for (final r in page.items) {
+              final id = r.tdlibChatId;
+              if (id != null && id.isNotEmpty) next.add(id);
+            }
+            offset += page.items.length;
+            if (page.items.isEmpty || offset >= page.total) break;
           }
-        } catch (_) {}
+        } catch (e, st) {
+          debugPrint('MyTelegramConfig: load showInVideo ids bucket=$b failed: $e\n$st');
+        }
       }
       if (mounted) {
         setState(() {
-          _showInVideoTdlibIds
+          _serverShowInVideoIds
+            ..clear()
+            ..addAll(next);
+          _draftShowInVideoIds
             ..clear()
             ..addAll(next);
         });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _serverShowInVideoIds.clear();
+          _draftShowInVideoIds.clear();
+        });
+      }
+    }
   }
 
   Future<void> _loadChats({required bool reset}) async {
-    final repo = await DataRepository.create();
-    final facade = repo.telegramTdlib;
+    if (!mounted) return;
     if (reset) {
       setState(() {
         _loading = true;
@@ -123,6 +146,9 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     } else {
       setState(() => _loadingMore = true);
     }
+    final repo = await DataRepository.create();
+    if (!mounted) return;
+    final facade = repo.telegramTdlib;
     try {
       _selfUserId ??= await tdlibGetSelfUserId(facade);
       final self = _selfUserId!;
@@ -135,49 +161,63 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
       final ids = await tdlibGetMainChatIds(facade, _listLimit);
       for (final id in ids) {
         if (_rowsByChatId.containsKey(id)) continue;
-        final chat = await tdlibGetChat(facade, id);
-        if (chat == null) continue;
-        final row = await tdlibBuildPickerRow(
-          facade: facade,
-          chat: chat,
-          selfUserId: self,
-          savedMessagesTitle: t.myTelegram.savedMessages,
-        );
-        if (row != null) {
-          _rowsByChatId[id] = row;
+        try {
+          final chat = await tdlibGetChat(facade, id);
+          if (chat == null) continue;
+          final row = await tdlibBuildPickerRow(
+            facade: facade,
+            chat: chat,
+            selfUserId: self,
+            savedMessagesTitle: t.myTelegram.savedMessages,
+          );
+          if (row != null) {
+            _rowsByChatId[id] = row;
+          }
+        } catch (e, st) {
+          debugPrint('MyTelegramConfig: skip tdlib chat $id: $e\n$st');
         }
       }
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _loadingMore = false;
-          _error = null;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadingMore = false;
+        _error = null;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _loadingMore = false;
-          _error = '$e';
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadingMore = false;
+        _error = '$e';
+      });
     }
   }
 
-  void _scheduleFlush() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), _flushPending);
+  void _toggleRow(TdlibPickerChatRow row) {
+    if (_saving) return;
+    final idStr = row.chatId.toString();
+    setState(() {
+      if (_draftShowInVideoIds.contains(idStr)) {
+        _draftShowInVideoIds.remove(idStr);
+      } else {
+        _draftShowInVideoIds.add(idStr);
+      }
+    });
   }
 
-  Future<void> _flushPending() async {
-    if (_pendingShowInVideo.isEmpty) return;
-    final copy = Map<int, bool>.from(_pendingShowInVideo);
-    _pendingShowInVideo.clear();
-
+  Future<void> _onSavePressed() async {
+    if (!_isDirty || _saving || _loading) return;
+    setState(() => _saving = true);
     try {
       final repo = await DataRepository.create();
-      for (final id in copy.keys) {
+      final toOn = _draftShowInVideoIds.difference(_serverShowInVideoIds);
+      final toOff = _serverShowInVideoIds.difference(_draftShowInVideoIds);
+
+      final patchItems = <Map<String, dynamic>>[];
+
+      for (final idStr in _draftShowInVideoIds) {
+        final id = int.tryParse(idStr);
+        if (id == null) continue;
         final row = _rowsByChatId[id];
         if (row == null) continue;
         await repo.upsertUserChatMapping(
@@ -185,40 +225,50 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
           title: row.title,
           chatType: row.apiChatType,
           peerIsBot: row.peerIsBot,
+          isForum: row.apiChatType == 'supergroup' && row.isForum,
         );
       }
-      final items = copy.entries
-          .map(
-            (e) => <String, dynamic>{
-              'tdlibChatId': e.key,
-              'showInVideo': e.value,
-            },
-          )
-          .toList();
-      await repo.patchUserChatsShowInVideo(items: items);
-    } catch (_) {}
-  }
 
-  void _toggleRow(TdlibPickerChatRow row) {
-    final idStr = row.chatId.toString();
-    final isOn = !_showInVideoTdlibIds.contains(idStr);
-    setState(() {
-      if (isOn) {
-        _showInVideoTdlibIds.add(idStr);
-      } else {
-        _showInVideoTdlibIds.remove(idStr);
+      for (final idStr in toOn) {
+        patchItems.add(<String, dynamic>{'tdlibChatId': idStr, 'showInVideo': true});
       }
-      _pendingShowInVideo[row.chatId] = isOn;
-    });
-    _scheduleFlush();
+
+      for (final idStr in toOff) {
+        patchItems.add(<String, dynamic>{'tdlibChatId': idStr, 'showInVideo': false});
+      }
+
+      const chunkSize = 200;
+      var patched = 0;
+      for (var i = 0; i < patchItems.length; i += chunkSize) {
+        final end = i + chunkSize > patchItems.length ? patchItems.length : i + chunkSize;
+        patched += await repo.patchUserChatsShowInVideo(items: patchItems.sublist(i, end));
+      }
+      if (patchItems.isNotEmpty && patched == 0) {
+        throw StateError('showInVideo patch updated 0 rows (check tdlibChatId / mapping)');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _serverShowInVideoIds
+          ..clear()
+          ..addAll(_draftShowInVideoIds);
+        _saving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(t.myTelegram.saved)),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${t.myTelegram.saveFailed} ($e)')),
+      );
+    }
   }
 
-  Future<void> _onSavePressed() async {
-    await _flushPending();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(t.myTelegram.saved)),
-    );
+  void _onCancelPressed() {
+    if (_saving) return;
     Navigator.of(context).pop();
   }
 
@@ -227,12 +277,7 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     final mt = t.myTelegram;
     final rows = _visibleRows;
     return PopScope(
-      canPop: true,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) {
-          unawaited(_flushPending());
-        }
-      },
+      canPop: !_saving,
       child: Scaffold(
         appBar: AppBar(
           title: Text(mt.configTitle),
@@ -242,15 +287,30 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
             tabs: [
               Tab(text: mt.chatsTab),
               Tab(text: mt.groupsTab),
+              Tab(text: mt.supergroupsTab),
               Tab(text: mt.channelsTab),
               Tab(text: mt.botsTab),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: _loading ? null : _onSavePressed,
-              child: Text(mt.save),
+              onPressed: _loading || _saving ? null : _onCancelPressed,
+              child: Text(t.common.cancel),
             ),
+            TextButton(
+              onPressed: _loading || _saving || !_isDirty ? null : _onSavePressed,
+              child: _saving
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    )
+                  : Text(mt.save),
+            ),
+            const SizedBox(width: 8),
           ],
         ),
         body: Column(
@@ -276,8 +336,8 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
                             ),
                             title: Text(row.title),
                             subtitle: Text(mt.showInVideo),
-                            value: _showInVideoTdlibIds.contains(row.chatId.toString()),
-                            onChanged: (_) => _toggleRow(row),
+                            value: _draftShowInVideoIds.contains(row.chatId.toString()),
+                            onChanged: _saving ? null : (_) => _toggleRow(row),
                           ),
                         if (_loadingMore)
                           const Padding(
@@ -287,7 +347,7 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           child: OutlinedButton.icon(
-                            onPressed: _loadingMore ? null : () => _loadChats(reset: false),
+                            onPressed: _loadingMore || _saving ? null : () => _loadChats(reset: false),
                             icon: const AppIcon(Symbols.expand_more_rounded, fill: 1),
                             label: Text(mt.loadMore),
                           ),

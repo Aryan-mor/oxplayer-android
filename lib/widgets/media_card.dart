@@ -1,26 +1,27 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:oxplayer/utils/content_utils.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
+
 import '../focus/input_mode_tracker.dart';
+import '../i18n/strings.g.dart';
+import '../infrastructure/data_repository.dart';
+import '../infrastructure/media_repository.dart';
 import '../models/plex_metadata.dart';
 import '../models/plex_playlist.dart';
 import '../providers/download_provider.dart';
-import '../services/download_storage_service.dart';
 import '../providers/settings_provider.dart';
-import '../infrastructure/data_repository.dart';
-import '../infrastructure/media_repository.dart';
 import '../screens/media_detail_screen.dart';
+import '../services/download_storage_service.dart';
 import '../services/settings_service.dart';
-import '../utils/provider_extensions.dart';
+import '../theme/mono_tokens.dart';
 import '../utils/formatters.dart';
 import '../utils/media_navigation_helper.dart';
+import '../utils/provider_extensions.dart';
 import '../utils/snackbar_helper.dart';
-import '../theme/mono_tokens.dart';
-import '../i18n/strings.g.dart';
 import 'media_context_menu.dart';
 import 'media_progress_bar.dart';
 import 'plex_optimized_image.dart';
@@ -40,6 +41,9 @@ class MediaCard extends StatefulWidget {
   final bool mixedHubContext; // True when in a hub with mixed content (movies + episodes)
   final bool showServerName; // Show server name in list view (multi-server)
 
+  /// When set, replaces default tap navigation (e.g. My Telegram: action sheet).
+  final Future<void> Function(BuildContext context)? onPrimaryAction;
+
   const MediaCard({
     super.key,
     required this.item,
@@ -55,6 +59,7 @@ class MediaCard extends StatefulWidget {
     this.isOffline = false,
     this.mixedHubContext = false,
     this.showServerName = false,
+    this.onPrimaryAction,
   });
 
   @override
@@ -134,6 +139,12 @@ class MediaCardState extends State<MediaCard> {
       return;
     }
 
+    if (widget.onPrimaryAction != null) {
+      await widget.onPrimaryAction!(context);
+      if (!context.mounted) return;
+      return;
+    }
+
     if (widget.item is PlexMetadata) {
       final metadata = widget.item as PlexMetadata;
       if (metadata.key?.startsWith('ox-preview:') == true) {
@@ -168,9 +179,7 @@ class MediaCardState extends State<MediaCard> {
     Future<void> openDetail(PlexMetadata metadata) async {
       await Navigator.push<void>(
         context,
-        MaterialPageRoute<void>(
-          builder: (_) => MediaDetailScreen(metadata: metadata),
-        ),
+        MaterialPageRoute<void>(builder: (_) => MediaDetailScreen(metadata: metadata)),
       );
     }
 
@@ -563,12 +572,7 @@ class _MediaCardList extends StatelessWidget {
         ),
         Text('$episodeNum · ', style: style),
         Expanded(
-          child: Text(
-            episodeTitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: style,
-          ),
+          child: Text(episodeTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
         ),
       ],
     );
@@ -643,7 +647,10 @@ class _MediaCardList extends StatelessWidget {
                     const SizedBox(height: 2),
                   ],
                   // Subtitle (S# · Episode Title, or year/parent title)
-                  if (item is PlexMetadata && (item as PlexMetadata).isEpisode && (item as PlexMetadata).parentIndex != null && (item as PlexMetadata).parentRatingKey != null) ...[
+                  if (item is PlexMetadata &&
+                      (item as PlexMetadata).isEpisode &&
+                      (item as PlexMetadata).parentIndex != null &&
+                      (item as PlexMetadata).parentRatingKey != null) ...[
                     _buildEpisodeSubtitle(context, item as PlexMetadata),
                     const SizedBox(height: 4),
                   ] else if (subtitle != null) ...[
@@ -738,15 +745,15 @@ Widget _buildPosterImage(
     final episodePosterMode = context.select<SettingsProvider, EpisodePosterMode>((s) => s.episodePosterMode);
     final hideSpoilers = context.select<SettingsProvider, bool>((s) => s.hideSpoilers);
     final shouldBlur =
-        hideSpoilers &&
-        item.shouldHideSpoiler &&
-        episodePosterMode == EpisodePosterMode.episodeThumbnail;
+        hideSpoilers && item.shouldHideSpoiler && episodePosterMode == EpisodePosterMode.episodeThumbnail;
     posterUrl = item.posterThumb(mode: episodePosterMode, mixedHubContext: mixedHubContext);
-    final canUseDirectExternalImage = posterUrl != null &&
+    final canUseDirectExternalImage =
+        posterUrl != null &&
         (posterUrl.startsWith('http://') || posterUrl.startsWith('https://')) &&
         (item.serverId == null || item.serverId == kOxVirtualServerId);
-    final imageClient =
-        canUseDirectExternalImage || isOffline || item.serverId == null ? null : context.tryGetClientForServer(item.serverId);
+    final imageClient = canUseDirectExternalImage || isOffline || item.serverId == null
+        ? null
+        : context.tryGetClientForServer(item.serverId);
 
     Widget image;
 
@@ -833,12 +840,7 @@ class _MediaCardHelpers {
             ),
             Text(' · ', style: subtitleStyle),
             Expanded(
-              child: Text(
-                episodeTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: subtitleStyle,
-              ),
+              child: Text(episodeTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: subtitleStyle),
             ),
           ],
         );
@@ -853,19 +855,9 @@ class _MediaCardHelpers {
 
     // For other media types, show subtitle/parent/year
     if (metadata.displaySubtitle != null) {
-      return Text(
-        metadata.displaySubtitle!,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: subtitleStyle,
-      );
+      return Text(metadata.displaySubtitle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: subtitleStyle);
     } else if (metadata.parentTitle != null) {
-      return Text(
-        metadata.parentTitle!,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: subtitleStyle,
-      );
+      return Text(metadata.parentTitle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: subtitleStyle);
     } else if (metadata.year != null) {
       return Text(
         metadata.editionTitle != null ? '${metadata.year} · ${metadata.editionTitle}' : '${metadata.year}',
@@ -991,11 +983,8 @@ void _navigateToSeason(BuildContext context, PlexMetadata episode, {bool isOffli
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => MediaDetailScreen(
-          metadata: showStub,
-          isOffline: isOffline,
-          initialSeasonIndex: episode.parentIndex,
-        ),
+        builder: (_) =>
+            MediaDetailScreen(metadata: showStub, isOffline: isOffline, initialSeasonIndex: episode.parentIndex),
       ),
     );
   } else if (episode.parentRatingKey != null) {
@@ -1011,7 +1000,12 @@ void _navigateToSeason(BuildContext context, PlexMetadata episode, {bool isOffli
       serverId: episode.serverId,
       serverName: episode.serverName,
     );
-    Navigator.push(context, MaterialPageRoute(builder: (_) => MediaDetailScreen(metadata: seasonStub, isOffline: isOffline)));
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MediaDetailScreen(metadata: seasonStub, isOffline: isOffline),
+      ),
+    );
   }
 }
 
@@ -1077,12 +1071,7 @@ class _ClickableTextState extends State<_ClickableText> {
     final baseStyle = widget.style ?? const TextStyle();
 
     if (isKeyboard) {
-      return Text(
-        widget.text,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: baseStyle,
-      );
+      return Text(widget.text, maxLines: 1, overflow: TextOverflow.ellipsis, style: baseStyle);
     }
 
     return MouseRegion(

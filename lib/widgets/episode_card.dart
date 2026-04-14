@@ -38,6 +38,12 @@ class EpisodeCard extends StatefulWidget {
   final String? downloadGlobalKey;
   final VoidCallback? onDownloadTap;
 
+  /// When false, hides the play affordance on the thumbnail (e.g. episode has multiple files below).
+  final bool showPrimaryPlayAction;
+
+  /// When false, the row is not in the focus order (use when another widget handles playback).
+  final bool canRequestFocus;
+
   const EpisodeCard({
     super.key,
     required this.episode,
@@ -52,6 +58,8 @@ class EpisodeCard extends StatefulWidget {
     this.onNavigateUp,
     this.downloadGlobalKey,
     this.onDownloadTap,
+    this.showPrimaryPlayAction = true,
+    this.canRequestFocus = true,
   });
 
   @override
@@ -122,7 +130,8 @@ class _EpisodeCardState extends State<EpisodeCard> {
       child: FocusableWrapper(
         focusNode: widget.focusNode,
         autofocus: widget.autofocus,
-        enableLongPress: true,
+        canRequestFocus: widget.canRequestFocus,
+        enableLongPress: widget.canRequestFocus,
         onNavigateUp: widget.onNavigateUp,
         onSelect: widget.onTap,
         onLongPress: _showContextMenu,
@@ -171,29 +180,30 @@ class _EpisodeCardState extends State<EpisodeCard> {
                         ),
                       ),
 
-                      // Play overlay
-                      Positioned.fill(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            borderRadius: const BorderRadius.all(Radius.circular(6)),
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, Colors.black.withValues(alpha: 0.2)],
-                            ),
-                          ),
-                          child: Center(
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.6),
-                                shape: BoxShape.circle,
+                      if (widget.showPrimaryPlayAction)
+                        // Play overlay
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: const BorderRadius.all(Radius.circular(6)),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Colors.transparent, Colors.black.withValues(alpha: 0.2)],
                               ),
-                              child: const AppIcon(Symbols.play_arrow_rounded, fill: 1, color: Colors.white, size: 20),
+                            ),
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.6),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const AppIcon(Symbols.play_arrow_rounded, fill: 1, color: Colors.white, size: 20),
+                              ),
                             ),
                           ),
                         ),
-                      ),
 
                       // Progress bar at bottom
                       if (hasActiveProgress)

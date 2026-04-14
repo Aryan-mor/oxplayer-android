@@ -58,6 +58,9 @@ class FocusableMediaCard extends StatefulWidget {
   /// Used to track which grid item was last focused.
   final ValueChanged<bool>? onFocusChange;
 
+  /// When set, replaces default tap navigation on [MediaCard].
+  final Future<void> Function(BuildContext context)? onPrimaryAction;
+
   const FocusableMediaCard({
     super.key,
     required this.item,
@@ -80,6 +83,7 @@ class FocusableMediaCard extends StatefulWidget {
     this.onNavigateRight,
     this.onBack,
     this.onFocusChange,
+    this.onPrimaryAction,
   });
 
   @override
@@ -120,6 +124,7 @@ class _FocusableMediaCardState extends State<FocusableMediaCard> {
         isOffline: widget.isOffline,
         mixedHubContext: widget.mixedHubContext,
         showServerName: widget.showServerName,
+        onPrimaryAction: widget.onPrimaryAction,
       ),
     );
   }

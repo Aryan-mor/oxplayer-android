@@ -104,9 +104,14 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   final FocusNode _firstEpisodeFocusNode = FocusNode(debugLabel: 'first_episode');
   final FocusNode _lastEpisodeFocusNode = FocusNode(debugLabel: 'last_episode');
   final Map<String, List<OxFileOptionItem>> _oxFileOptionsByParentKey = {};
+  /// OX episode [ratingKey] whose multi-file variants are expanded under the episode row.
+  String? _expandedOxMultiFileEpisodeKey;
   PlexMetadata? _selectedOxOptionParent;
   List<FocusNode> _oxOptionTabFocusNodes = [];
   final ScrollController _oxOptionTabsScrollController = ScrollController();
+
+  /// When [PlexClient] was null on first load (common on cold start / slow TV reconnect), retry seasons/episodes.
+  bool _pendingPlexChildrenRetry = false;
 
   /// OX library item is [GENERAL_VIDEO] (mapped to Plex `movie`); drives hero banner + Telegram thumb.
   bool _isOxGeneralVideoDetail = false;
@@ -369,6 +374,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     _overviewFocusNode = FocusNode(debugLabel: 'overview');
     _castFocusNode = FocusNode(debugLabel: 'cast_row');
     _loadFullMetadata();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _retryPlexChildrenIfNeeded();
   }
 
   void _onScroll() {
@@ -1471,6 +1482,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         _playbackData = null;
         _seasons = seasons;
         _episodes = currentEpisodes;
+        _expandedOxMultiFileEpisodeKey = null;
         _selectedOxOptionParent = null;
         _showEpisodesDirectly = shouldShowEpisodesDirectly;
         _selectedSeasonIndex = selectedSeasonIndex;
@@ -1488,6 +1500,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         _seasons = const [];
         _episodes = const [];
         _oxFileOptionsByParentKey.clear();
+        _expandedOxMultiFileEpisodeKey = null;
         _selectedOxOptionParent = null;
         _showEpisodesDirectly = true;
         _isOxGeneralVideoDetail = false;
@@ -1637,11 +1650,21 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       // Use server-specific client for this metadata
       final client = _getClientForMetadata(context);
       if (client == null) {
-        // No client available, use passed metadata
+        // Server client may not be ready yet on cold start (often worse on Android TV than phone).
         setState(() {
           _fullMetadata = widget.metadata;
           _isLoadingMetadata = false;
+          if (widget.metadata.isSeason) {
+            _seasons = [widget.metadata];
+            _showEpisodesDirectly = true;
+          }
         });
+        if (!_isOxLibraryMetadata(widget.metadata) &&
+            !widget.isOffline &&
+            (widget.metadata.isShow || widget.metadata.isSeason)) {
+          _pendingPlexChildrenRetry = true;
+          _schedulePlexChildrenRetryPoll();
+        }
         return;
       }
 
@@ -1854,6 +1877,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       ..sort((a, b) => (a.index ?? 0).compareTo(b.index ?? 0));
 
     setState(() {
+      _expandedOxMultiFileEpisodeKey = null;
       _episodes = seasonEpisodes;
       _isLoadingEpisodes = false;
     });
@@ -1897,6 +1921,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     final cached = _episodeCache[season.ratingKey];
     if (cached != null) {
       setStateIfMounted(() {
+        _expandedOxMultiFileEpisodeKey = null;
         _episodes = List.of(cached);
         _isLoadingSeasonEpisodes = false;
       });
@@ -1914,6 +1939,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           ..sort((a, b) => (a.index ?? 0).compareTo(b.index ?? 0));
         _episodeCache[season.ratingKey] = seasonEpisodes;
         setStateIfMounted(() {
+          _expandedOxMultiFileEpisodeKey = null;
           _episodes = List.of(seasonEpisodes);
           _isLoadingSeasonEpisodes = false;
         });
@@ -1933,6 +1959,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
             .toList();
         _episodeCache[season.ratingKey] = episodesWithServerId;
         setStateIfMounted(() {
+          _expandedOxMultiFileEpisodeKey = null;
           _episodes = List.of(episodesWithServerId);
           _isLoadingSeasonEpisodes = false;
         });
@@ -1980,6 +2007,53 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     scrollContextToCenter(key.currentContext);
   }
 
+  void _retryPlexChildrenIfNeeded() {
+    if (!_pendingPlexChildrenRetry || !mounted) return;
+    if (_isOxLibraryMetadata(widget.metadata) || widget.isOffline) return;
+    final client = _getClientForMetadata(context);
+    if (client == null) return;
+    _pendingPlexChildrenRetry = false;
+    if (widget.metadata.isShow) {
+      _loadSeasons();
+    } else if (widget.metadata.isSeason) {
+      _fetchAllEpisodes();
+    }
+  }
+
+  void _schedulePlexChildrenRetryPoll([int attempt = 0]) {
+    if (!_pendingPlexChildrenRetry || !mounted) return;
+    const maxAttempts = 25;
+    Future<void>.delayed(const Duration(milliseconds: 200), () {
+      if (!mounted || !_pendingPlexChildrenRetry) return;
+      final client = _getClientForMetadata(context);
+      if (client != null) {
+        _retryPlexChildrenIfNeeded();
+        return;
+      }
+      if (attempt + 1 < maxAttempts) {
+        _schedulePlexChildrenRetryPoll(attempt + 1);
+      }
+    });
+  }
+
+  /// TV D-pad: OX movies with multiple files list them outside [_episodes]; without this,
+  /// DOWN/UP never reaches that row because episode-based navigation assumes a show.
+  bool _tryFocusOxMovieFilesRow(PlexMetadata metadata) {
+    if (!_isOxMovieWithFileOptions(metadata)) return false;
+    final files = _currentOxFileOptions(metadata);
+    if (files.isNotEmpty) {
+      _firstEpisodeFocusNode.requestFocus();
+      _scrollSectionIntoView(_seasonsSectionKey);
+      return true;
+    }
+    if (_oxOptionTabFocusNodes.isNotEmpty) {
+      _oxOptionTabFocusNodes.first.requestFocus();
+      _scrollSectionIntoView(_seasonsSectionKey);
+      return true;
+    }
+    return false;
+  }
+
   /// Intercept DOWN from the play button row to focus the first available section
   KeyEventResult _handlePlayButtonKeyEvent(FocusNode _, KeyEvent event) {
     final key = event.logicalKey;
@@ -2002,6 +2076,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     if (metadata.summary != null && metadata.summary!.isNotEmpty) {
       _overviewFocusNode.requestFocus();
       _scrollSectionIntoView(_overviewSectionKey);
+      return KeyEventResult.handled;
+    }
+
+    if (_tryFocusOxMovieFilesRow(metadata)) {
       return KeyEventResult.handled;
     }
 
@@ -2064,6 +2142,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
     // DOWN: season tabs → cast → extras
     if (key.isDownKey) {
+      if (_tryFocusOxMovieFilesRow(metadata)) {
+        return KeyEventResult.handled;
+      }
       if (_selectedOxOptionParent != null && _oxOptionTabFocusNodes.isNotEmpty) {
         _oxOptionTabFocusNodes.first.requestFocus();
         _scrollSectionIntoView(_seasonsSectionKey);
@@ -2269,13 +2350,19 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                     focusNode: _seasonTabFocusNodes.length > index ? _seasonTabFocusNodes[index] : null,
                     onSelect: () {
                       if (index == _selectedSeasonIndex) return;
-                      setState(() => _selectedSeasonIndex = index);
+                      setState(() {
+                        _selectedSeasonIndex = index;
+                        _expandedOxMultiFileEpisodeKey = null;
+                      });
                       _fetchSeasonEpisodes(index);
                     },
                     onNavigateLeft: index > 0
                         ? () {
                             final newIndex = index - 1;
-                            setState(() => _selectedSeasonIndex = newIndex);
+                            setState(() {
+                              _selectedSeasonIndex = newIndex;
+                              _expandedOxMultiFileEpisodeKey = null;
+                            });
                             _seasonTabFocusNodes[newIndex].requestFocus();
                             _scrollSeasonTabIntoView(newIndex);
                             _fetchSeasonEpisodes(newIndex);
@@ -2284,7 +2371,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                     onNavigateRight: index < _seasons.length - 1
                         ? () {
                             final newIndex = index + 1;
-                            setState(() => _selectedSeasonIndex = newIndex);
+                            setState(() {
+                              _selectedSeasonIndex = newIndex;
+                              _expandedOxMultiFileEpisodeKey = null;
+                            });
                             _seasonTabFocusNodes[newIndex].requestFocus();
                             _scrollSeasonTabIntoView(newIndex);
                             _fetchSeasonEpisodes(newIndex);
@@ -2381,6 +2471,8 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       if (metadata.role != null && metadata.role!.isNotEmpty) {
         _castFocusNode.requestFocus();
         _scrollSectionIntoView(_castSectionKey);
+      } else if (_tryFocusOxMovieFilesRow(metadata)) {
+        // Focused OX movie files row (no cast row above extras)
       } else if (_selectedOxOptionParent != null && _oxOptionTabFocusNodes.isNotEmpty) {
         _oxOptionTabFocusNodes.first.requestFocus();
         _scrollSectionIntoView(_seasonsSectionKey);
@@ -2451,6 +2543,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         target.requestFocus();
         return KeyEventResult.handled;
       }
+      if (_tryFocusOxMovieFilesRow(metadata)) {
+        return KeyEventResult.handled;
+      }
       if (metadata.isShow && !_showEpisodesDirectly && _seasons.isNotEmpty && _seasonTabFocusNodes.isNotEmpty) {
         _seasonTabFocusNodes[_selectedSeasonIndex].requestFocus();
         _scrollSectionIntoView(_seasonsSectionKey);
@@ -2481,6 +2576,128 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     return KeyEventResult.ignored;
   }
 
+  void _navigateUpFromFirstEpisodeRow() {
+    if (!_showEpisodesDirectly) {
+      _focusSelectedSeasonTab();
+    } else if ((_fullMetadata ?? widget.metadata).summary?.isNotEmpty == true) {
+      _overviewFocusNode.requestFocus();
+      _scrollSectionIntoView(_overviewSectionKey);
+    } else {
+      _scrollController.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+      _playButtonFocusNode.requestFocus();
+    }
+  }
+
+  /// OX episode with multiple files: collapsed until the row is activated; then a bordered section (episode + files).
+  Widget _buildOxMultiFileEpisodeRow({
+    required PlexMetadata episode,
+    required List<OxFileOptionItem> options,
+    required int episodeIndex,
+    required PlexClient? client,
+    required String? localPosterPath,
+  }) {
+    final expanded = _expandedOxMultiFileEpisodeKey == episode.ratingKey;
+    final theme = Theme.of(context);
+    final borderColor = theme.colorScheme.outline.withValues(alpha: 0.55);
+
+    void onEpisodeHeaderTap() {
+      if (expanded) {
+        setStateIfMounted(() => _expandedOxMultiFileEpisodeKey = null);
+      } else {
+        setStateIfMounted(() => _expandedOxMultiFileEpisodeKey = episode.ratingKey);
+      }
+    }
+
+    FocusNode? episodeRowFocusNode() {
+      if (episodeIndex == 0) return _firstEpisodeFocusNode;
+      if (episodeIndex == _episodes.length - 1 && _episodes.length > 1) return _lastEpisodeFocusNode;
+      return null;
+    }
+
+    final episodeHeader = EpisodeCard(
+      episode: episode,
+      client: client,
+      isOffline: widget.isOffline,
+      autofocus: false,
+      showPrimaryPlayAction: false,
+      focusNode: episodeRowFocusNode(),
+      onNavigateUp: episodeIndex == 0 ? _navigateUpFromFirstEpisodeRow : null,
+      onTap: onEpisodeHeaderTap,
+      localPosterPath: localPosterPath,
+      onRefresh: widget.isOffline
+          ? null
+          : (_) async {
+              await _loadFullMetadata();
+            },
+      onListRefresh: widget.isOffline ? null : _loadFullMetadata,
+    );
+
+    if (!expanded) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: episodeHeader,
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: borderColor, width: 1.5),
+          borderRadius: BorderRadius.circular(12),
+          color: theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.65),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              EpisodeCard(
+                episode: episode,
+                client: client,
+                isOffline: widget.isOffline,
+                autofocus: false,
+                showPrimaryPlayAction: false,
+                focusNode: episodeIndex == 0 ? _firstEpisodeFocusNode : null,
+                onNavigateUp: episodeIndex == 0 ? _navigateUpFromFirstEpisodeRow : null,
+                onTap: onEpisodeHeaderTap,
+                localPosterPath: localPosterPath,
+                onRefresh: widget.isOffline
+                    ? null
+                    : (_) async {
+                        await _loadFullMetadata();
+                      },
+                onListRefresh: widget.isOffline ? null : _loadFullMetadata,
+              ),
+              const SizedBox(height: 8),
+              ...options.asMap().entries.map((entry) {
+                final optIndex = entry.key;
+                final option = entry.value;
+                final isGlobalLast =
+                    episodeIndex == _episodes.length - 1 && optIndex == options.length - 1 && _episodes.length > 1;
+                final downloadMeta = buildOxDownloadMetadata(parentMetadata: episode, file: option.file);
+                return OxFileOptionCard(
+                  title: option.title,
+                  badgeLabel: option.badgeLabel,
+                  infoLine: option.infoLine,
+                  summary: option.summary,
+                  imageUrl: episode.thumb,
+                  localPosterPath: localPosterPath,
+                  downloadGlobalKey: downloadMeta.globalKey,
+                  onDownloadTap: () => _queueOxFileDownload(episode, option),
+                  focusNode: isGlobalLast ? _lastEpisodeFocusNode : null,
+                  onTap: () async {
+                    await _playOxFileOption(episode, option);
+                  },
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Build episode list directly when the library hides seasons for single-season shows
   Widget _buildEpisodesList() {
     final client = _getClientForMetadata(context);
@@ -2492,12 +2709,26 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       itemBuilder: (context, index) {
         final episode = _episodes[index];
         final isOxEpisode = _isOxLibraryMetadata(episode);
-        final singleOxOption = isOxEpisode ? _singleOxFileOption(episode) : null;
+        final oxOptions = isOxEpisode
+            ? (_oxFileOptionsByParentKey[episode.ratingKey] ?? const <OxFileOptionItem>[])
+            : const <OxFileOptionItem>[];
+        final singleOxOption = isOxEpisode && oxOptions.length == 1 ? oxOptions.first : null;
         String? localPosterPath;
         if (widget.isOffline && episode.serverId != null) {
           final artworkRef = context.read<DownloadProvider>().getArtworkPaths(episode.globalKey);
           localPosterPath = artworkRef?.getLocalPath(DownloadStorageService.instance, episode.serverId!);
         }
+
+        if (isOxEpisode && oxOptions.length > 1) {
+          return _buildOxMultiFileEpisodeRow(
+            episode: episode,
+            options: oxOptions,
+            episodeIndex: index,
+            client: client,
+            localPosterPath: localPosterPath,
+          );
+        }
+
         return EpisodeCard(
           episode: episode,
           client: client,
@@ -2508,19 +2739,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               : index == _episodes.length - 1 && _episodes.length > 1
               ? _lastEpisodeFocusNode
               : null,
-          onNavigateUp: index == 0
-              ? () {
-                  if (!_showEpisodesDirectly) {
-                    _focusSelectedSeasonTab();
-                  } else if ((_fullMetadata ?? widget.metadata).summary?.isNotEmpty == true) {
-                    _overviewFocusNode.requestFocus();
-                    _scrollSectionIntoView(_overviewSectionKey);
-                  } else {
-                    _scrollController.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-                    _playButtonFocusNode.requestFocus();
-                  }
-                }
-              : null,
+          onNavigateUp: index == 0 ? _navigateUpFromFirstEpisodeRow : null,
           localPosterPath: localPosterPath,
           downloadGlobalKey: singleOxOption != null
               ? buildOxDownloadMetadata(parentMetadata: episode, file: singleOxOption.file).globalKey
@@ -2609,6 +2828,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   Future<void> _fetchAllEpisodes() async {
     if (_isOxLibraryMetadata(widget.metadata)) {
       setStateIfMounted(() {
+        _expandedOxMultiFileEpisodeKey = null;
         _episodes = _flattenOxEpisodes(
           _seasons.map(
             (season) => OxSeriesSeasonGroup(

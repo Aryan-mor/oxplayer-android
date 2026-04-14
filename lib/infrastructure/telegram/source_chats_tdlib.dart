@@ -6,7 +6,7 @@ import 'package:tdlib/td_api.dart' as td;
 import 'tdlib_facade.dart';
 
 /// Picker bucket aligned with API `GET /me/chats` `bucket` query.
-enum SourceChatPickerBucket { chats, groups, channels, bots }
+enum SourceChatPickerBucket { chats, groups, supergroups, channels, bots }
 
 /// Lightweight row for the TDLib-backed My Telegram config list.
 class TdlibPickerChatRow {
@@ -16,15 +16,19 @@ class TdlibPickerChatRow {
     required this.apiChatType,
     required this.peerIsBot,
     required this.isSavedMessages,
+    this.isForum = false,
     this.localAvatarPath,
   });
 
   final int chatId;
   final String title;
+
   /// Prisma/API enum string: private, group, supergroup, channel, saved_messages
   final String apiChatType;
   final bool peerIsBot;
   final bool isSavedMessages;
+  /// `GetSupergroup.is_forum` when [apiChatType] is `supergroup`.
+  final bool isForum;
   final String? localAvatarPath;
 
   bool matchesBucket(SourceChatPickerBucket b) {
@@ -32,7 +36,9 @@ class TdlibPickerChatRow {
       case SourceChatPickerBucket.chats:
         return isSavedMessages || (apiChatType == 'private' && !peerIsBot);
       case SourceChatPickerBucket.groups:
-        return apiChatType == 'group' || apiChatType == 'supergroup';
+        return apiChatType == 'group' || (apiChatType == 'supergroup' && !isForum);
+      case SourceChatPickerBucket.supergroups:
+        return apiChatType == 'supergroup' && isForum;
       case SourceChatPickerBucket.channels:
         return apiChatType == 'channel';
       case SourceChatPickerBucket.bots:
@@ -48,24 +54,14 @@ Future<int> tdlibGetSelfUserId(TdlibFacade facade) async {
 
 Future<void> tdlibLoadChatsPage(TdlibFacade facade, {int limit = 40}) async {
   try {
-    await facade.send(
-      td.LoadChats(
-        chatList: const td.ChatListMain(),
-        limit: limit,
-      ),
-    );
+    await facade.send(td.LoadChats(chatList: const td.ChatListMain(), limit: limit));
   } catch (_) {
     // 404 = nothing more to load
   }
 }
 
 Future<List<int>> tdlibGetMainChatIds(TdlibFacade facade, int limit) async {
-  final res = await facade.send(
-    td.GetChats(
-      chatList: const td.ChatListMain(),
-      limit: limit,
-    ),
-  );
+  final res = await facade.send(td.GetChats(chatList: const td.ChatListMain(), limit: limit));
   if (res is! td.Chats) return const [];
   return List<int>.from(res.chatIds);
 }
@@ -90,7 +86,7 @@ Future<TdlibPickerChatRow?> tdlibBuildPickerRow({
     final apiType = isSelf ? 'saved_messages' : 'private';
     return TdlibPickerChatRow(
       chatId: chat.id,
-      title: isSelf ? savedMessagesTitle : chat.title.trim(),
+      title: isSelf ? savedMessagesTitle : (chat.title.trim().isEmpty ? 'User' : chat.title.trim()),
       apiChatType: apiType,
       peerIsBot: isBot,
       isSavedMessages: isSelf,
@@ -108,12 +104,20 @@ Future<TdlibPickerChatRow?> tdlibBuildPickerRow({
     );
   }
   if (t is td.ChatTypeSupergroup) {
+    var isForum = false;
+    if (!t.isChannel) {
+      try {
+        final sg = await facade.send(td.GetSupergroup(supergroupId: t.supergroupId));
+        if (sg is td.Supergroup) isForum = sg.isForum;
+      } catch (_) {}
+    }
     return TdlibPickerChatRow(
       chatId: chat.id,
       title: chat.title.trim().isEmpty ? (t.isChannel ? 'Channel' : 'Group') : chat.title.trim(),
       apiChatType: t.isChannel ? 'channel' : 'supergroup',
       peerIsBot: false,
       isSavedMessages: false,
+      isForum: isForum,
       localAvatarPath: localAvatarPath,
     );
   }
@@ -149,15 +153,7 @@ Future<String?> tdlibCacheChatPhotoIfNeeded({
   }
   try {
     final remote = p.small;
-    await facade.send(
-      td.DownloadFile(
-        fileId: remote.id,
-        priority: 16,
-        offset: 0,
-        limit: 0,
-        synchronous: true,
-      ),
-    );
+    await facade.send(td.DownloadFile(fileId: remote.id, priority: 16, offset: 0, limit: 0, synchronous: true));
     final info = await facade.send(td.GetFile(fileId: remote.id)) as td.File;
     final path = info.local.path;
     if (path.isEmpty) return null;
@@ -169,4 +165,37 @@ Future<String?> tdlibCacheChatPhotoIfNeeded({
   } catch (_) {
     return null;
   }
+}
+
+/// Loads all [td.ForumTopic] rows for a forum supergroup (paginated [GetForumTopics]).
+Future<List<td.ForumTopic>> tdlibLoadAllForumTopics(TdlibFacade facade, int chatId) async {
+  final out = <td.ForumTopic>[];
+  var offsetDate = 0;
+  var offsetMessageId = 0;
+  var offsetThreadId = 0;
+  while (true) {
+    final raw = await facade.send(
+      td.GetForumTopics(
+        chatId: chatId,
+        query: '',
+        offsetDate: offsetDate,
+        offsetMessageId: offsetMessageId,
+        offsetMessageThreadId: offsetThreadId,
+        limit: 100,
+      ),
+    );
+    if (raw is! td.ForumTopics) break;
+    out.addAll(raw.topics);
+    if (raw.topics.isEmpty) break;
+    offsetDate = raw.nextOffsetDate;
+    offsetMessageId = raw.nextOffsetMessageId;
+    offsetThreadId = raw.nextOffsetMessageThreadId;
+    if (offsetDate == 0 && offsetMessageId == 0 && offsetThreadId == 0) break;
+  }
+  out.sort((a, b) {
+    if (a.info.isGeneral != b.info.isGeneral) return a.info.isGeneral ? -1 : 1;
+    if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+    return a.info.name.toLowerCase().compareTo(b.info.name.toLowerCase());
+  });
+  return out;
 }

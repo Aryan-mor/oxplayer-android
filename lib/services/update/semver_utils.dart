@@ -14,14 +14,33 @@ class SemVer {
   }
 }
 
+/// Strips a leading `v` / `V` and Flutter/Gradle `+build` metadata so `1.31.3+67`
+/// and `v1.31.3` compare equal for update prompts.
+String normalizeComparableVersionCore(String raw) {
+  var s = raw.trim();
+  if (s.isEmpty) return s;
+  if (s.startsWith('v') || s.startsWith('V')) {
+    s = s.substring(1).trim();
+  }
+  final plusIndex = s.indexOf('+');
+  if (plusIndex >= 0) {
+    s = s.substring(0, plusIndex).trim();
+  }
+  return s;
+}
+
 SemVer? tryParseSemVer(String raw) {
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return null;
 
-  final normalized =
+  var normalized =
       (trimmed.startsWith('v') || trimmed.startsWith('V'))
       ? trimmed.substring(1)
       : trimmed;
+  final plusIndex = normalized.indexOf('+');
+  if (plusIndex >= 0) {
+    normalized = normalized.substring(0, plusIndex).trim();
+  }
   final parts = normalized.split('.');
   if (parts.length != 3) return null;
 

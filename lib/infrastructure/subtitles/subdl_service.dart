@@ -1,26 +1,22 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../config/app_config.dart';
 import '../../models/plex_metadata.dart';
 import '../../services/auth_debug_service.dart';
 import '../../services/storage_service.dart';
 import '../../utils/app_logger.dart';
 import '../../utils/subtitle_text_encoding.dart';
+import '../config/app_config.dart';
 
 class SubdlSearchResult {
-  const SubdlSearchResult({
-    required this.displayLabel,
-    required this.rawDownload,
-    this.languageCode,
-  });
+  const SubdlSearchResult({required this.displayLabel, required this.rawDownload, this.languageCode});
 
   final String displayLabel;
   final String rawDownload;
@@ -28,11 +24,7 @@ class SubdlSearchResult {
 }
 
 class DownloadedSubtitleFile {
-  const DownloadedSubtitleFile({
-    required this.file,
-    required this.displayLabel,
-    this.languageCode,
-  });
+  const DownloadedSubtitleFile({required this.file, required this.displayLabel, this.languageCode});
 
   final File file;
   final String displayLabel;
@@ -42,23 +34,19 @@ class DownloadedSubtitleFile {
 class SubdlService {
   static const Duration _searchTimeout = Duration(seconds: 70);
   static const Duration _downloadTimeout = Duration(seconds: 70);
-  static const MethodChannel _mediaToolsChannel = MethodChannel(
-    'de.aryanmo.oxplayer/media_tools',
-  );
+  static const MethodChannel _mediaToolsChannel = MethodChannel('de.aryanmo.oxplayer/media_tools');
 
   SubdlService({Dio? dio})
-      : _dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(seconds: 30),
-                receiveTimeout: const Duration(seconds: 60),
-                sendTimeout: const Duration(seconds: 60),
-                headers: const {
-                  'Accept': 'application/json',
-                  'User-Agent': 'OXPlayer/Android SubDL',
-                },
-              ),
-            );
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 30),
+              receiveTimeout: const Duration(seconds: 60),
+              sendTimeout: const Duration(seconds: 60),
+              headers: const {'Accept': 'application/json', 'User-Agent': 'OXPlayer/Android SubDL'},
+            ),
+          );
 
   final Dio _dio;
 
@@ -114,9 +102,7 @@ class SubdlService {
         )
         .timeout(
           _searchTimeout,
-          onTimeout: () => throw TimeoutException(
-            'OX subtitle search timed out after ${_searchTimeout.inSeconds}s.',
-          ),
+          onTimeout: () => throw TimeoutException('OX subtitle search timed out after ${_searchTimeout.inSeconds}s.'),
         );
 
     final status = response.statusCode ?? 0;
@@ -135,9 +121,7 @@ class SubdlService {
 
     final fromCache = data['fromCache'];
     final items = data['items'];
-    playMediaDebugInfo(
-      'OX subtitle search ok (fromCache=$fromCache, items=${items is List ? items.length : 0})',
-    );
+    playMediaDebugInfo('OX subtitle search ok (fromCache=$fromCache, items=${items is List ? items.length : 0})');
     if (items is! List) {
       return const <Map<String, dynamic>>[];
     }
@@ -179,9 +163,8 @@ class SubdlService {
         )
         .timeout(
           _downloadTimeout,
-          onTimeout: () => throw TimeoutException(
-            'OX subtitle download timed out after ${_downloadTimeout.inSeconds}s.',
-          ),
+          onTimeout: () =>
+              throw TimeoutException('OX subtitle download timed out after ${_downloadTimeout.inSeconds}s.'),
         );
 
     final status = response.statusCode ?? 0;
@@ -209,11 +192,7 @@ class SubdlService {
     await rewriteSubtitleFileAsUtf8(file);
     appLogger.i('OX subtitle proxy wrote ${file.path}');
     playMediaDebugSuccess('OX subtitle proxy download finished.');
-    return DownloadedSubtitleFile(
-      file: file,
-      displayLabel: displayLabel,
-      languageCode: languageCode,
-    );
+    return DownloadedSubtitleFile(file: file, displayLabel: displayLabel, languageCode: languageCode);
   }
 
   Future<List<SubdlSearchResult>?> searchWithNativeUi({
@@ -224,7 +203,8 @@ class SubdlService {
     final config = await AppConfig.load();
     final storage = await StorageService.getInstance();
     final token = storage.getApiAccessToken()?.trim() ?? '';
-    final isTvContent = metadata.mediaType == PlexMediaType.episode ||
+    final isTvContent =
+        metadata.mediaType == PlexMediaType.episode ||
         metadata.mediaType == PlexMediaType.season ||
         metadata.mediaType == PlexMediaType.show;
     final (seasonN, episodeN) = metadata.subdlSeasonEpisodeNumbers;
@@ -254,9 +234,7 @@ class SubdlService {
     }
 
     if (config.subdlApiKey.isEmpty) {
-      throw Exception(
-        'Subtitle search needs OXPlayer login (API URL + session) or SUBDL_API_KEY in env.',
-      );
+      throw Exception('Subtitle search needs OXPlayer login (API URL + session) or SUBDL_API_KEY in env.');
     }
     final result = await _mediaToolsChannel.invokeMethod<List<dynamic>?>('searchSubdlWithDialog', {
       'apiKey': config.subdlApiKey,
@@ -290,13 +268,12 @@ class SubdlService {
     final token = storage.getApiAccessToken()?.trim() ?? '';
     if (config.subdlApiKey.isEmpty) {
       if (_canUseOxSubtitleProxy(config.apiBaseUrl, token)) {
-        throw Exception(
-          'Native SubDL picker needs SUBDL_API_KEY, or use in-app Search Subtitles (OXPlayer proxy).',
-        );
+        throw Exception('Native SubDL picker needs SUBDL_API_KEY, or use in-app Search Subtitles (OXPlayer proxy).');
       }
       throw Exception('SUBDL_API_KEY is not configured.');
     }
-    final isTvContent = metadata.mediaType == PlexMediaType.episode ||
+    final isTvContent =
+        metadata.mediaType == PlexMediaType.episode ||
         metadata.mediaType == PlexMediaType.season ||
         metadata.mediaType == PlexMediaType.show;
     final (seasonN, episodeN) = metadata.subdlSeasonEpisodeNumbers;
@@ -331,12 +308,14 @@ class SubdlService {
     required PlexMetadata metadata,
     required String languageCode,
     String? titleOverride,
+
     /// When null, [PlexMetadata.subdlSeasonEpisodeNumbers] is used.
     int? seasonNumberOverride,
     int? episodeNumberOverride,
   }) async {
     final stopwatch = Stopwatch()..start();
-    final isTvContent = metadata.mediaType == PlexMediaType.episode ||
+    final isTvContent =
+        metadata.mediaType == PlexMediaType.episode ||
         metadata.mediaType == PlexMediaType.season ||
         metadata.mediaType == PlexMediaType.show;
     final contentType = isTvContent ? 'tv' : 'movie';
@@ -376,15 +355,9 @@ class SubdlService {
             imdbId: imdbId,
             tmdbId: tmdbId,
           );
-          playMediaDebugInfo(
-            'Subtitle search used OXPlayer API proxy (${rawResults.length} raw rows).',
-          );
+          playMediaDebugInfo('Subtitle search used OXPlayer API proxy (${rawResults.length} raw rows).');
         } catch (e, st) {
-          appLogger.w(
-            'OX subtitle search failed, falling back to SubDL: $e',
-            error: e,
-            stackTrace: st,
-          );
+          appLogger.w('OX subtitle search failed, falling back to SubDL: $e', error: e, stackTrace: st);
           playMediaDebugError('OX subtitle search failed, trying SubDL: $e');
           if (config.subdlApiKey.isEmpty) {
             rethrow;
@@ -394,91 +367,61 @@ class SubdlService {
 
       if (rawResults.isEmpty && !(oxReady && config.subdlApiKey.isEmpty)) {
         if (config.subdlApiKey.isEmpty) {
-          throw Exception(
-            'Subtitle search needs OXPlayer login (API URL + session) or SUBDL_API_KEY in env.',
-          );
+          throw Exception('Subtitle search needs OXPlayer login (API URL + session) or SUBDL_API_KEY in env.');
         }
-        rawResults =
-            (defaultTargetPlatform == TargetPlatform.android && !kIsWeb)
-                ? await _searchOnAndroid(
-                    apiKey: config.subdlApiKey,
-                    title: title,
-                    contentType: contentType,
-                    languageCode: normalizedLanguageCode,
-                    year: metadata.year,
-                    seasonNumber: seasonN,
-                    episodeNumber: episodeN,
-                    imdbId: imdbId,
-                    tmdbId: tmdbId,
-                  )
-                : await _searchDirect(
-                    apiKey: config.subdlApiKey,
-                    title: title,
-                    contentType: contentType,
-                    languageCode: normalizedLanguageCode,
-                    year: metadata.year,
-                    seasonNumber: seasonN,
-                    episodeNumber: episodeN,
-                    imdbId: imdbId,
-                    tmdbId: tmdbId,
-                  );
+        rawResults = (defaultTargetPlatform == TargetPlatform.android && !kIsWeb)
+            ? await _searchOnAndroid(
+                apiKey: config.subdlApiKey,
+                title: title,
+                contentType: contentType,
+                languageCode: normalizedLanguageCode,
+                year: metadata.year,
+                seasonNumber: seasonN,
+                episodeNumber: episodeN,
+                imdbId: imdbId,
+                tmdbId: tmdbId,
+              )
+            : await _searchDirect(
+                apiKey: config.subdlApiKey,
+                title: title,
+                contentType: contentType,
+                languageCode: normalizedLanguageCode,
+                year: metadata.year,
+                seasonNumber: seasonN,
+                episodeNumber: episodeN,
+                imdbId: imdbId,
+                tmdbId: tmdbId,
+              );
       }
 
       if (rawResults.isEmpty) {
-        appLogger.i(
-          'SubDL search finished with 0 results in ${stopwatch.elapsedMilliseconds}ms',
-        );
-        playMediaDebugInfo(
-          'SubDL search finished with 0 results in ${stopwatch.elapsedMilliseconds}ms',
-        );
+        appLogger.i('SubDL search finished with 0 results in ${stopwatch.elapsedMilliseconds}ms');
+        playMediaDebugInfo('SubDL search finished with 0 results in ${stopwatch.elapsedMilliseconds}ms');
         return const [];
       }
 
-      final results = rawResults
-          .map(_parseSearchResult)
-          .whereType<SubdlSearchResult>()
-          .toList(growable: false);
-      appLogger.i(
-        'SubDL search finished with ${results.length} results in ${stopwatch.elapsedMilliseconds}ms',
-      );
+      final results = rawResults.map(_parseSearchResult).whereType<SubdlSearchResult>().toList(growable: false);
+      appLogger.i('SubDL search finished with ${results.length} results in ${stopwatch.elapsedMilliseconds}ms');
       playMediaDebugSuccess(
         'SubDL search finished with ${results.length} results in ${stopwatch.elapsedMilliseconds}ms',
       );
       return results;
     } on TimeoutException catch (error, stackTrace) {
-      appLogger.e(
-        'SubDL search timed out: $summary',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      playMediaDebugError(
-        'SubDL search timed out after ${_searchTimeout.inSeconds}s',
-      );
+      appLogger.e('SubDL search timed out: $summary', error: error, stackTrace: stackTrace);
+      playMediaDebugError('SubDL search timed out after ${_searchTimeout.inSeconds}s');
       rethrow;
     } on PlatformException catch (error, stackTrace) {
       final message = error.message ?? error.code;
-      appLogger.e(
-        'SubDL native search failed: $summary',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      appLogger.e('SubDL native search failed: $summary', error: error, stackTrace: stackTrace);
       playMediaDebugError('SubDL search failed: $message');
       throw Exception(message);
     } on DioException catch (error, stackTrace) {
       final message = error.message ?? error.toString();
-      appLogger.e(
-        'SubDL search request failed: $summary',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      appLogger.e('SubDL search request failed: $summary', error: error, stackTrace: stackTrace);
       playMediaDebugError('SubDL search request failed: $message');
       rethrow;
     } catch (error, stackTrace) {
-      appLogger.e(
-        'SubDL search failed: $summary',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      appLogger.e('SubDL search failed: $summary', error: error, stackTrace: stackTrace);
       playMediaDebugError('SubDL search failed: $error');
       rethrow;
     }
@@ -507,20 +450,14 @@ class SubdlService {
           fixedFileBaseName: fixedFileBaseName,
         );
       } catch (e, st) {
-        appLogger.w(
-          'OX subtitle download failed, falling back to SubDL: $e',
-          error: e,
-          stackTrace: st,
-        );
+        appLogger.w('OX subtitle download failed, falling back to SubDL: $e', error: e, stackTrace: st);
         playMediaDebugError('OX subtitle download failed, trying SubDL zip: $e');
         if (config.subdlApiKey.isEmpty) {
           rethrow;
         }
       }
     } else if (config.subdlApiKey.isEmpty) {
-      throw Exception(
-        'Subtitle download needs OXPlayer login (API URL + session) or SUBDL_API_KEY in env.',
-      );
+      throw Exception('Subtitle download needs OXPlayer login (API URL + session) or SUBDL_API_KEY in env.');
     }
 
     final url = _downloadUrl(rawDownload);
@@ -528,15 +465,11 @@ class SubdlService {
     playMediaDebugInfo('SubDL subtitle download started: $displayLabel');
 
     final response = await _dio
-        .get<List<int>>(
-          url,
-          options: Options(responseType: ResponseType.bytes),
-        )
+        .get<List<int>>(url, options: Options(responseType: ResponseType.bytes))
         .timeout(
           _downloadTimeout,
-          onTimeout: () => throw TimeoutException(
-            'SubDL subtitle download timed out after ${_downloadTimeout.inSeconds}s.',
-          ),
+          onTimeout: () =>
+              throw TimeoutException('SubDL subtitle download timed out after ${_downloadTimeout.inSeconds}s.'),
         );
     final bytes = response.data;
     if (bytes == null || bytes.isEmpty) {
@@ -566,11 +499,7 @@ class SubdlService {
         await rewriteSubtitleFileAsUtf8(file);
         appLogger.i('SubDL subtitle extracted: ${file.path}');
         playMediaDebugSuccess('SubDL subtitle extracted successfully.');
-        return DownloadedSubtitleFile(
-          file: file,
-          displayLabel: displayLabel,
-          languageCode: languageCode,
-        );
+        return DownloadedSubtitleFile(file: file, displayLabel: displayLabel, languageCode: languageCode);
       }
     }
 
@@ -602,31 +531,31 @@ class SubdlService {
     required String? imdbId,
     required String? tmdbId,
   }) async {
-    final result = await _mediaToolsChannel.invokeMethod<List<dynamic>>(
-      'searchSubdl',
-      <String, dynamic>{
-        'apiKey': apiKey,
-        'filmName': title,
-        'contentType': contentType,
-        'languages': languageCode,
-        'year': year,
-        'seasonNumber': seasonNumber,
-        'episodeNumber': episodeNumber,
-        'imdbId': imdbId,
-        'tmdbId': tmdbId,
-      },
-    ).timeout(
-      _searchTimeout,
-      onTimeout: () => throw TimeoutException(
-        'SubDL search timed out after ${_searchTimeout.inSeconds}s.',
-      ),
-    );
+    final result = await _mediaToolsChannel
+        .invokeMethod<List<dynamic>>('searchSubdl', <String, dynamic>{
+          'apiKey': apiKey,
+          'filmName': title,
+          'contentType': contentType,
+          'languages': languageCode,
+          'year': year,
+          'seasonNumber': seasonNumber,
+          'episodeNumber': episodeNumber,
+          'imdbId': imdbId,
+          'tmdbId': tmdbId,
+        })
+        .timeout(
+          _searchTimeout,
+          onTimeout: () => throw TimeoutException('SubDL search timed out after ${_searchTimeout.inSeconds}s.'),
+        );
     if (result == null) {
       return const <Map<String, dynamic>>[];
     }
-    return result.whereType<Map>().map((entry) {
-      return entry.map((key, value) => MapEntry(key.toString(), value));
-    }).toList(growable: false);
+    return result
+        .whereType<Map>()
+        .map((entry) {
+          return entry.map((key, value) => MapEntry(key.toString(), value));
+        })
+        .toList(growable: false);
   }
 
   Future<List<Map<String, dynamic>>> _searchDirect({
@@ -659,10 +588,7 @@ class SubdlService {
       query['episode_number'] = episodeNumber;
     }
     if (imdbId != null && imdbId.isNotEmpty) {
-      query['imdb_id'] = imdbId.replaceFirst(
-        RegExp('^tt', caseSensitive: false),
-        '',
-      );
+      query['imdb_id'] = imdbId.replaceFirst(RegExp('^tt', caseSensitive: false), '');
     }
     if (tmdbId != null && tmdbId.isNotEmpty) {
       query['tmdb_id'] = tmdbId;
@@ -670,20 +596,14 @@ class SubdlService {
 
     final queryForLog = Map<String, dynamic>.from(query);
     final ak = queryForLog['api_key']?.toString() ?? '';
-    queryForLog['api_key'] =
-        ak.length > 8 ? '${ak.substring(0, 4)}…${ak.substring(ak.length - 2)}' : '***';
+    queryForLog['api_key'] = ak.length > 8 ? '${ak.substring(0, 4)}…${ak.substring(ak.length - 2)}' : '***';
     playMediaDebugInfo('SubDL _searchDirect query: $queryForLog');
 
     final response = await _dio
-        .get<Map<String, dynamic>>(
-          'https://api.subdl.com/api/v1/subtitles',
-          queryParameters: query,
-        )
+        .get<Map<String, dynamic>>('https://api.subdl.com/api/v1/subtitles', queryParameters: query)
         .timeout(
           _searchTimeout,
-          onTimeout: () => throw TimeoutException(
-            'SubDL search timed out after ${_searchTimeout.inSeconds}s.',
-          ),
+          onTimeout: () => throw TimeoutException('SubDL search timed out after ${_searchTimeout.inSeconds}s.'),
         );
 
     var responseUriStr = response.requestOptions.uri.toString();
@@ -695,9 +615,7 @@ class SubdlService {
     final data = response.data ?? const <String, dynamic>{};
     if (data['status'] != true) {
       final message = data['error']?.toString().trim();
-      throw Exception(
-        message == null || message.isEmpty ? 'SubDL search failed.' : message,
-      );
+      throw Exception(message == null || message.isEmpty ? 'SubDL search failed.' : message);
     }
 
     final results = data['results'];
@@ -738,20 +656,23 @@ class SubdlService {
         .join('; ');
     playMediaDebugInfo('SubDL API subtitles count=${subtitles.length} sample: $sampleLabels');
 
-    return subtitles.whereType<Map>().map((entry) {
-      return <String, dynamic>{
-        'displayLabel': _buildResultLabel(entry),
-        'rawDownload': (entry['download_link']?.toString() ??
-                entry['url']?.toString() ??
-                entry['zip']?.toString() ??
-                entry['link']?.toString() ??
-                '')
-            .trim(),
-        'languageCode': entry['lang']?.toString().trim(),
-      };
-    }).where((entry) => (entry['rawDownload'] as String).isNotEmpty).toList(
-          growable: false,
-        );
+    return subtitles
+        .whereType<Map>()
+        .map((entry) {
+          return <String, dynamic>{
+            'displayLabel': _buildResultLabel(entry),
+            'rawDownload':
+                (entry['download_link']?.toString() ??
+                        entry['url']?.toString() ??
+                        entry['zip']?.toString() ??
+                        entry['link']?.toString() ??
+                        '')
+                    .trim(),
+            'languageCode': entry['lang']?.toString().trim(),
+          };
+        })
+        .where((entry) => (entry['rawDownload'] as String).isNotEmpty)
+        .toList(growable: false);
   }
 
   String _buildResultLabel(Map<dynamic, dynamic> entry) {
@@ -778,10 +699,7 @@ class SubdlService {
     if (value == null || value.isEmpty) {
       return null;
     }
-    final match = RegExp(
-      '^${RegExp.escape(scheme)}://(.+)',
-      caseSensitive: false,
-    ).firstMatch(value);
+    final match = RegExp('^${RegExp.escape(scheme)}://(.+)', caseSensitive: false).firstMatch(value);
     if (match == null) {
       return null;
     }
@@ -803,11 +721,7 @@ class SubdlService {
   Future<Directory> _createTargetDirectory() async {
     final tempDir = await getTemporaryDirectory();
     final directory = Directory(
-      p.join(
-        tempDir.path,
-        'subdl_subtitles',
-        DateTime.now().millisecondsSinceEpoch.toString(),
-      ),
+      p.join(tempDir.path, 'subdl_subtitles', DateTime.now().millisecondsSinceEpoch.toString()),
     );
     await directory.create(recursive: true);
     return directory;

@@ -278,6 +278,7 @@ class SideNavigationRailState extends State<SideNavigationRail> {
       if (!widget.isOfflineMode || widget.enableOxDiscoverFallback) ...[
         _kHome,
       ],
+      if (!kIsWeb && widget.isOfflineMode) _kMyTelegram,
       if (!widget.isOfflineMode) ...[
         _kLibraries,
         if (_librariesExpanded) ...visibleLibraries.map((lib) => lib.globalKey),
@@ -444,6 +445,21 @@ class SideNavigationRailState extends State<SideNavigationRail> {
                                 isCollapsed: isCollapsed,
                               ),
 
+                              const SizedBox(height: 8),
+                            ],
+
+                            // My Telegram: show on native when offline (was only inside online block before).
+                            if (!kIsWeb && widget.isOfflineMode) ...[
+                              _buildNavItem(
+                                icon: Symbols.chat_rounded,
+                                selectedIcon: Symbols.chat_rounded,
+                                label: Translations.of(context).navigation.myTelegram,
+                                isSelected: widget.selectedTab == NavigationTabId.myTelegram,
+                                isFocused: _focusTracker.isFocused(_kMyTelegram),
+                                onTap: () => widget.onDestinationSelected(NavigationTabId.myTelegram),
+                                focusNode: _focusTracker.get(_kMyTelegram),
+                                isCollapsed: isCollapsed,
+                              ),
                               const SizedBox(height: 8),
                             ],
 

@@ -1821,14 +1821,20 @@ class TranslationsMyTelegramEn {
 	/// en: 'Groups'
 	String get groupsTab => 'Groups';
 
+	/// en: 'Supergroups'
+	String get supergroupsTab => 'Supergroups';
+
 	/// en: 'Channels'
 	String get channelsTab => 'Channels';
 
 	/// en: 'Bots'
 	String get botsTab => 'Bots';
 
-	/// en: 'No chats selected. Use Configure to choose dialogs.'
-	String get empty => 'No chats selected. Use Configure to choose dialogs.';
+	/// en: 'No dialogs in this category with “Show in My Telegram” enabled. Open Configure to pick chats, then check Groups, Channels, or Bots if you do not see them here.'
+	String get empty => 'No dialogs in this category with “Show in My Telegram” enabled. Open Configure to pick chats, then check Groups, Channels, or Bots if you do not see them here.';
+
+	/// en: 'Saved. If this tab is still empty, open Groups, Channels, or Bots — your chat may be listed there.'
+	String get savedCheckOtherTabsHint => 'Saved. If this tab is still empty, open Groups, Channels, or Bots — your chat may be listed there.';
 
 	/// en: 'Could not load chats'
 	String get loadError => 'Could not load chats';
@@ -1842,11 +1848,89 @@ class TranslationsMyTelegramEn {
 	/// en: 'Saved'
 	String get saved => 'Saved';
 
+	/// en: 'Could not save. Check your connection and try again.'
+	String get saveFailed => 'Could not save. Check your connection and try again.';
+
 	/// en: 'Show in My Telegram'
 	String get showInVideo => 'Show in My Telegram';
 
 	/// en: 'Load more'
 	String get loadMore => 'Load more';
+
+	/// en: 'Library indexing on'
+	String get indexedForLibrary => 'Library indexing on';
+
+	/// en: 'Turn on library indexing for this chat to list indexed files here.'
+	String get notIndexedForMedia => 'Turn on library indexing for this chat to list indexed files here.';
+
+	/// en: 'Media'
+	String get mediaTitle => 'Media';
+
+	/// en: 'No indexed media files in this chat yet.'
+	String get mediaEmpty => 'No indexed media files in this chat yet.';
+
+	/// en: 'Could not load media'
+	String get mediaLoadError => 'Could not load media';
+
+	/// en: 'Load more'
+	String get loadMoreMedia => 'Load more';
+
+	/// en: 'More videos may appear as Telegram finishes loading this chat.'
+	String get mediaSyncMayLoadMore => 'More videos may appear as Telegram finishes loading this chat.';
+
+	/// en: 'Check for more videos'
+	String get checkForMoreVideos => 'Check for more videos';
+
+	/// en: 'No more videos to load in this chat.'
+	String get mediaEndOfList => 'No more videos to load in this chat.';
+
+	/// en: 'No videos found in Telegram history for this chat yet. Only regular videos and sent video files are listed (like Telegram’s Videos tab), not GIFs or video notes. This is not the library “indexed” list.'
+	String get tdlibChatMediaEmpty => 'No videos found in Telegram history for this chat yet. Only regular videos and sent video files are listed (like Telegram’s Videos tab), not GIFs or video notes. This is not the library “indexed” list.';
+
+	/// en: 'Could not load forum topics'
+	String get forumTopicsLoadError => 'Could not load forum topics';
+
+	/// en: 'No topics found for this forum.'
+	String get forumTopicsEmpty => 'No topics found for this forum.';
+
+	/// en: 'All videos'
+	String get forumAllVideosTab => 'All videos';
+
+	/// en: 'Index (forward to main bot)'
+	String get videoActionIndex => 'Index (forward to main bot)';
+
+	/// en: 'Stream'
+	String get videoActionStream => 'Stream';
+
+	/// en: 'Download'
+	String get videoActionDownload => 'Download';
+
+	/// en: 'Stop'
+	String get videoStopDownload => 'Stop';
+
+	/// en: 'Resume'
+	String get videoResumeDownload => 'Resume';
+
+	/// en: 'Delete'
+	String get videoDeleteDownload => 'Delete';
+
+	/// en: 'Play'
+	String get videoPlay => 'Play';
+
+	/// en: 'Forwarded to bot for indexing'
+	String get forwardToProviderSent => 'Forwarded to bot for indexing';
+
+	/// en: 'Could not forward message'
+	String get forwardToProviderFailed => 'Could not forward message';
+
+	/// en: 'Missing Telegram chat info for this video'
+	String get telegramChatIdMissing => 'Missing Telegram chat info for this video';
+
+	/// en: 'Could not start streaming'
+	String get streamFailed => 'Could not start streaming';
+
+	/// en: 'Download failed'
+	String get downloadFailed => 'Download failed';
 }
 
 // Path: liveTv
@@ -3642,15 +3726,43 @@ extension on Translations {
 			'myTelegram.configTitle' => 'My Telegram — configure',
 			'myTelegram.chatsTab' => 'Chats',
 			'myTelegram.groupsTab' => 'Groups',
+			'myTelegram.supergroupsTab' => 'Supergroups',
 			'myTelegram.channelsTab' => 'Channels',
 			'myTelegram.botsTab' => 'Bots',
-			'myTelegram.empty' => 'No chats selected. Use Configure to choose dialogs.',
+			'myTelegram.empty' => 'No dialogs in this category with “Show in My Telegram” enabled. Open Configure to pick chats, then check Groups, Channels, or Bots if you do not see them here.',
+			'myTelegram.savedCheckOtherTabsHint' => 'Saved. If this tab is still empty, open Groups, Channels, or Bots — your chat may be listed there.',
 			'myTelegram.loadError' => 'Could not load chats',
 			'myTelegram.savedMessages' => 'Saved Messages',
 			'myTelegram.save' => 'Save',
 			'myTelegram.saved' => 'Saved',
+			'myTelegram.saveFailed' => 'Could not save. Check your connection and try again.',
 			'myTelegram.showInVideo' => 'Show in My Telegram',
 			'myTelegram.loadMore' => 'Load more',
+			'myTelegram.indexedForLibrary' => 'Library indexing on',
+			'myTelegram.notIndexedForMedia' => 'Turn on library indexing for this chat to list indexed files here.',
+			'myTelegram.mediaTitle' => 'Media',
+			'myTelegram.mediaEmpty' => 'No indexed media files in this chat yet.',
+			'myTelegram.mediaLoadError' => 'Could not load media',
+			'myTelegram.loadMoreMedia' => 'Load more',
+			'myTelegram.mediaSyncMayLoadMore' => 'More videos may appear as Telegram finishes loading this chat.',
+			'myTelegram.checkForMoreVideos' => 'Check for more videos',
+			'myTelegram.mediaEndOfList' => 'No more videos to load in this chat.',
+			'myTelegram.tdlibChatMediaEmpty' => 'No videos found in Telegram history for this chat yet. Only regular videos and sent video files are listed (like Telegram’s Videos tab), not GIFs or video notes. This is not the library “indexed” list.',
+			'myTelegram.forumTopicsLoadError' => 'Could not load forum topics',
+			'myTelegram.forumTopicsEmpty' => 'No topics found for this forum.',
+			'myTelegram.forumAllVideosTab' => 'All videos',
+			'myTelegram.videoActionIndex' => 'Index (forward to main bot)',
+			'myTelegram.videoActionStream' => 'Stream',
+			'myTelegram.videoActionDownload' => 'Download',
+			'myTelegram.videoStopDownload' => 'Stop',
+			'myTelegram.videoResumeDownload' => 'Resume',
+			'myTelegram.videoDeleteDownload' => 'Delete',
+			'myTelegram.videoPlay' => 'Play',
+			'myTelegram.forwardToProviderSent' => 'Forwarded to bot for indexing',
+			'myTelegram.forwardToProviderFailed' => 'Could not forward message',
+			'myTelegram.telegramChatIdMissing' => 'Missing Telegram chat info for this video',
+			'myTelegram.streamFailed' => 'Could not start streaming',
+			'myTelegram.downloadFailed' => 'Download failed',
 			'liveTv.title' => 'Live TV',
 			'liveTv.guide' => 'Guide',
 			'liveTv.noChannels' => 'No channels available',

@@ -267,9 +267,16 @@ class UpdateService {
       final cleanVersion = release.tagName.startsWith('v')
           ? release.tagName.substring(1)
           : release.tagName;
-      final hasUpdate = currentSemver != null && latestSemver != null
+      var hasUpdate = currentSemver != null && latestSemver != null
           ? isRemoteNewer(currentSemver, latestSemver)
           : _isNewerVersion(cleanVersion, currentVersion);
+
+      // Package name vs release tag can differ only by `v` or `+buildNumber`; treat as same.
+      if (hasUpdate &&
+          normalizeComparableVersionCore(currentVersion) ==
+              normalizeComparableVersionCore(cleanVersion)) {
+        hasUpdate = false;
+      }
 
       if (!hasUpdate) {
         if (respectCooldown) {
@@ -279,7 +286,9 @@ class UpdateService {
       }
 
       final skippedVersion = await getSkippedVersion();
-      if (skippedVersion == cleanVersion) {
+      if (skippedVersion != null &&
+          normalizeComparableVersionCore(skippedVersion) ==
+              normalizeComparableVersionCore(cleanVersion)) {
         if (respectCooldown) {
           await _updateLastCheckTime();
         }

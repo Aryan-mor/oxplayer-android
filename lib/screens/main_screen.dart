@@ -967,6 +967,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
     if (isOffline && widget.enableOxDiscoverFallback) {
       return allNavigationTabs.where((tab) {
         return tab.id == NavigationTabId.discover ||
+            tab.id == NavigationTabId.myTelegram ||
             tab.id == NavigationTabId.downloads ||
             tab.id == NavigationTabId.settings;
       }).toList(growable: false);

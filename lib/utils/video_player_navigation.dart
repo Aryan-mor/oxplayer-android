@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 
@@ -16,6 +17,14 @@ import '../utils/provider_extensions.dart';
 import 'app_logger.dart';
 
 const String kVideoPlayerRouteName = '/video_player';
+
+/// Local filesystem path or URL suitable for [Media] / MPV (`file:///...` on all platforms).
+String normalizeLocalPlaybackUrl(String videoUrl) {
+  final t = videoUrl.trim();
+  if (t.isEmpty) return t;
+  if (t.contains('://')) return t;
+  return Uri.file(t, windows: Platform.isWindows).toString();
+}
 
 class WatchTogetherPlaybackNavigationException implements Exception {
   final String message;
@@ -147,7 +156,7 @@ Future<bool?> navigateToInternalVideoPlayerForUrl(
   bool usePushReplacement = false,
 }) async {
   final navigator = Navigator.of(context);
-  final normalizedUrl = videoUrl.contains('://') ? videoUrl : 'file://$videoUrl';
+  final normalizedUrl = normalizeLocalPlaybackUrl(videoUrl);
 
   if (!usePushReplacement && VideoPlayerScreenState.activeRatingKey == metadata.ratingKey) {
     appLogger.d(

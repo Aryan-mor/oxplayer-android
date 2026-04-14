@@ -32,6 +32,7 @@ class NavigationTab {
     return allNavigationTabs.where((tab) {
       if (isOffline && tab.onlineOnly) return false;
       if (tab.id == NavigationTabId.liveTv && !hasLiveTv) return false;
+      // TDLib is unavailable on web; hide this surface everywhere on web.
       if (tab.id == NavigationTabId.myTelegram && kIsWeb) return false;
       return true;
     }).toList();
@@ -59,7 +60,8 @@ const allNavigationTabs = [
   ),
   NavigationTab(
     id: NavigationTabId.myTelegram,
-    onlineOnly: true,
+    // Like Downloads/Settings: keep visible when Plex/offline UI is limited so Telegram+OX flows stay reachable.
+    onlineOnly: false,
     icon: Symbols.chat_rounded,
     getLabel: _getMyTelegramLabel,
   ),
