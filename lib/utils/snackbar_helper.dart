@@ -46,6 +46,13 @@ void showAppSnackBar(BuildContext context, String message, {Duration? duration})
   showSnackBar(context, message, type: SnackBarType.info, duration: duration);
 }
 
+/// Shows a standard snackbar using the root ScaffoldMessenger.
+void showGlobalAppSnackBar(String message, {Duration? duration}) {
+  rootScaffoldMessengerKey.currentState?.showSnackBar(
+    SnackBar(content: Text(message), duration: duration ?? const Duration(seconds: 3)),
+  );
+}
+
 /// Shows an error snackbar with a message
 ///
 /// [context] The build context

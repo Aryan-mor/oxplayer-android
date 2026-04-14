@@ -78,13 +78,19 @@ class SubdlService {
       'contentType': contentType,
       'languages': languageCode.trim().toUpperCase(),
       if (title.isNotEmpty) 'filmName': title,
-      if (year != null) 'year': year,
-      if (seasonNumber != null) 'seasonNumber': seasonNumber,
-      if (episodeNumber != null) 'episodeNumber': episodeNumber,
       if (imdbId != null && imdbId.isNotEmpty) 'imdbId': imdbId,
       if (tmdbId != null && tmdbId.isNotEmpty) 'tmdbId': tmdbId,
       if (mediaId != null && mediaId.isNotEmpty) 'mediaId': mediaId,
     };
+    if (year != null) {
+      body['year'] = year;
+    }
+    if (seasonNumber != null) {
+      body['seasonNumber'] = seasonNumber;
+    }
+    if (episodeNumber != null) {
+      body['episodeNumber'] = episodeNumber;
+    }
     playMediaDebugInfo('OX subtitle proxy POST /api/subtitles/search');
 
     final response = await _dio

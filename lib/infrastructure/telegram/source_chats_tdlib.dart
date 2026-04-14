@@ -1,6 +1,3 @@
-import 'dart:convert' show base64Decode;
-import 'dart:io' as io;
-
 import 'package:tdlib/td_api.dart' as td;
 
 import '../../utils/app_logger.dart';
@@ -136,44 +133,6 @@ Future<TdlibPickerChatRow?> tdlibBuildPickerRow({
 Future<td.Chat?> tdlibGetChat(TdlibFacade facade, int chatId) async {
   final o = await facade.send(td.GetChat(chatId: chatId));
   return o is td.Chat ? o : null;
-}
-
-/// Best-effort: download small chat photo when [writeJpeg] is provided.
-Future<String?> tdlibCacheChatPhotoIfNeeded({
-  required TdlibFacade facade,
-  required int telegramChatId,
-  required td.ChatPhotoInfo? photo,
-  required Future<String?> Function(int id) existingPath,
-  required Future<void> Function(int id, List<int> bytes) writeJpeg,
-}) async {
-  final cur = await existingPath(telegramChatId);
-  if (cur != null) return cur;
-  final p = photo;
-  if (p == null) return null;
-  final mini = p.minithumbnail;
-  if (mini != null && mini.data.isNotEmpty) {
-    try {
-      final bytes = base64Decode(mini.data);
-      if (bytes.isNotEmpty) {
-        await writeJpeg(telegramChatId, bytes);
-      }
-    } catch (_) {}
-    return existingPath(telegramChatId);
-  }
-  try {
-    final remote = p.small;
-    await facade.send(td.DownloadFile(fileId: remote.id, priority: 16, offset: 0, limit: 0, synchronous: true));
-    final info = await facade.send(td.GetFile(fileId: remote.id)) as td.File;
-    final path = info.local.path;
-    if (path.isEmpty) return null;
-    final bytes = await io.File(path).readAsBytes();
-    if (bytes.isNotEmpty) {
-      await writeJpeg(telegramChatId, bytes);
-    }
-    return existingPath(telegramChatId);
-  } catch (_) {
-    return null;
-  }
 }
 
 /// Loads all [td.ForumTopic] rows for a forum supergroup (paginated [GetForumTopics]).

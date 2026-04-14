@@ -215,7 +215,7 @@ class MediaCardState extends State<MediaCard> {
       try {
         await openDetail(stub);
       } catch (_) {
-        showAppSnackBar(context, 'Failed to open detail page. Please try again.');
+        showGlobalAppSnackBar('Failed to open detail page. Please try again.');
       }
     }
   }
@@ -284,7 +284,7 @@ class MediaCardState extends State<MediaCard> {
     final localPosterPath = _getLocalPosterPath(context);
 
     final cardWidget = viewMode == ViewMode.grid
-        ? _buildGridCard(context, semanticLabel, localPosterPath)
+        ? _buildGridCard(context, localPosterPath)
         : _MediaCardList(
             item: widget.item,
             semanticLabel: semanticLabel,
@@ -316,7 +316,7 @@ class MediaCardState extends State<MediaCard> {
 
   /// Grid layout — inlined from former _MediaCardGrid, _PosterOverlay, and
   /// flattened Column. Semantics removed (InkWell provides button semantics).
-  Widget _buildGridCard(BuildContext context, String semanticLabel, String? localPosterPath) {
+  Widget _buildGridCard(BuildContext context, String? localPosterPath) {
     final item = widget.item;
     // Compute actual poster dimensions from card dimensions
     final posterWidth = widget.width != null ? widget.width! - 6 : null; // 3px padding each side
