@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection' show ListQueue;
 import 'dart:io';
 import 'dart:math';
 
@@ -19,8 +20,6 @@ import '../mpv/player/platform/player_android.dart';
 
 import '../../services/bif_thumbnail_service.dart';
 import '../../services/plex_client.dart';
-import '../models/livetv_capture_buffer.dart';
-import '../models/livetv_channel.dart';
 import '../services/plex_api_cache.dart';
 import '../models/plex_media_version.dart';
 import '../models/plex_metadata.dart';
@@ -35,6 +34,7 @@ import '../models/companion_remote/remote_command.dart';
 import '../providers/companion_remote_provider.dart';
 import '../services/companion_remote/companion_remote_receiver.dart';
 import '../services/fullscreen_state_manager.dart';
+import '../services/auth_debug_service.dart';
 import '../services/discord_rpc_service.dart';
 import '../services/episode_navigation_service.dart';
 import '../services/media_controls_manager.dart';
@@ -60,8 +60,9 @@ import '../utils/orientation_helper.dart';
 import '../utils/platform_detector.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/snackbar_helper.dart';
-import '../utils/plex_url_helper.dart';
 import '../utils/video_player_navigation.dart';
+import '../infrastructure/data_repository.dart';
+import 'telegram/telegram_video_metadata.dart';
 import '../widgets/overlay_sheet.dart';
 import '../widgets/video_controls/video_controls.dart';
 import '../focus/focusable_button.dart';
@@ -93,16 +94,9 @@ class VideoPlayerScreen extends StatefulWidget {
   final bool isOffline;
   final PlexVideoPlaybackData? playbackData;
 
-  // Live TV fields
-  final bool isLive;
-  final String? liveChannelName;
-  final String? liveStreamUrl;
-  final List<LiveTvChannel>? liveChannels;
-  final int? liveCurrentChannelIndex;
-  final String? liveDvrKey;
-  final PlexClient? liveClient;
-  final String? liveSessionIdentifier;
-  final String? liveSessionPath;
+  /// Sequential My Telegram streams: same chat/topic list; [telegramStreamPlaylistIndex] is current item.
+  final List<TelegramVideoMetadata>? telegramStreamPlaylist;
+  final int telegramStreamPlaylistIndex;
 
   const VideoPlayerScreen({
     super.key,
@@ -113,15 +107,8 @@ class VideoPlayerScreen extends StatefulWidget {
     this.selectedMediaIndex = 0,
     this.isOffline = false,
     this.playbackData,
-    this.isLive = false,
-    this.liveChannelName,
-    this.liveStreamUrl,
-    this.liveChannels,
-    this.liveCurrentChannelIndex,
-    this.liveDvrKey,
-    this.liveClient,
-    this.liveSessionIdentifier,
-    this.liveSessionPath,
+    this.telegramStreamPlaylist,
+    this.telegramStreamPlaylistIndex = 0,
   });
 
   @override
@@ -130,7 +117,6 @@ class VideoPlayerScreen extends StatefulWidget {
 
 class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindingObserver {
   static const Duration _resumeThreshold = Duration(minutes: 2);
-  static const int _liveEdgeThresholdSeconds = 5;
 
   // Track the currently active video to guard against duplicate navigation
   static String? _activeRatingKey;
@@ -158,6 +144,10 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   StreamSubscription<void>? _backendSwitchedSubscription;
   TrackManager? _trackManager;
   StreamSubscription<PlayerLog>? _logSubscription;
+
+  /// Recent MPV warn/error/fatal lines (oldest → newest) for Debug Logs when playback fails.
+  final ListQueue<String> _mpvRecentLogLines = ListQueue<String>();
+  static const int _kMpvRecentLogMax = 28;
   StreamSubscription<void>? _sleepTimerSubscription;
   StreamSubscription<bool>? _mediaControlsPlayingSubscription;
   StreamSubscription<Duration>? _mediaControlsPositionSubscription;
@@ -168,28 +158,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   bool _isDisposingForNavigation = false;
   bool _isHandlingBack = false;
   BifThumbnailService? _bifService;
-
-  // Live TV channel navigation
-  int _liveChannelIndex = -1;
-  String? _liveChannelName;
-  String? _liveSessionIdentifier;
-  String? _liveSessionPath;
-  Timer? _liveTimelineTimer;
-  DateTime? _livePlaybackStartTime;
-  String? _liveRatingKey;
-  int? _liveDurationMs;
-
-  // Live TV time-shift
-  CaptureBuffer? _captureBuffer;
-  int? _programBeginsAt;
-  double _streamStartEpoch = 0;
-  bool _isAtLiveEdge = true;
-  String? _transcodeSessionId;
-
-  /// Fallback level for live TV stream errors (mirrors Plex web client behavior).
-  /// 0 = directStream+directStreamAudio, 1 = no directStream, 2 = no DS + no DS audio.
-  int _liveStreamFallbackLevel = 0;
-  bool _isRetryingLiveStream = false;
 
   // Auto-play next episode
   Timer? _autoPlayTimer;
@@ -264,12 +232,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
     _activeRatingKey = widget.metadata.ratingKey;
     _activeMediaIndex = widget.selectedMediaIndex;
-
-    // Initialize live TV channel tracking
-    _liveChannelIndex = widget.liveCurrentChannelIndex ?? -1;
-    _liveChannelName = widget.liveChannelName;
-    _liveSessionIdentifier = widget.liveSessionIdentifier;
-    _liveSessionPath = widget.liveSessionPath;
 
     // Initialize Play Next dialog focus nodes
     _playNextCancelFocusNode = FocusNode(debugLabel: 'PlayNextCancel');
@@ -418,7 +380,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     if (!mounted || currentPlayer != player) return;
 
     _hiddenForBackground = true;
-    _liveTimelineTimer?.cancel();
     await currentPlayer.setVisible(false);
     appLogger.d('Render layer hidden due to app being hidden');
   }
@@ -435,9 +396,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
       if (!mounted || currentPlayer != player) return;
 
       _hiddenForBackground = false;
-      if (_liveSessionIdentifier != null) {
-        _startLiveTimelineUpdates();
-      }
       appLogger.d('Render layer restored after app resumed');
     }
 
@@ -641,8 +599,13 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
       // Listen to error-level log messages for user-visible snackbars
       _logSubscription = player!.streams.log
-          .where((log) => log.level == PlayerLogLevel.error || log.level == PlayerLogLevel.fatal)
-          .listen(_onPlayerLogError);
+          .where(
+            (log) =>
+                log.level == PlayerLogLevel.warn ||
+                log.level == PlayerLogLevel.error ||
+                log.level == PlayerLogLevel.fatal,
+          )
+          .listen(_onPlayerLogForDebug);
 
       // Listen for backend switched event (ExoPlayer -> MPV fallback on Android)
       if (Platform.isAndroid && useExoPlayer) {
@@ -656,7 +619,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
       // When server comes back online while buffering, force mpv to reconnect
       // immediately instead of waiting for ffmpeg's exponential backoff
-      if (!widget.isOffline && !widget.isLive) {
+      if (!widget.isOffline) {
         final serverId = widget.metadata.serverId;
         if (serverId != null) {
           if (!mounted) return;
@@ -677,7 +640,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
       // Listen to playback restart to detect first frame ready
       _playbackRestartSubscription = player!.streams.playbackRestart.listen((_) async {
         _lastLogError = null;
-        _liveStreamFallbackLevel = 0;
         if (!_hasFirstFrame.value) {
           _hasFirstFrame.value = true;
           Sentry.addBreadcrumb(Breadcrumb(message: 'First frame ready', category: 'player'));
@@ -844,12 +806,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   Future<void> _initializeServices() async {
     if (!mounted || player == null) return;
 
-    // Live TV: send timeline heartbeats to keep transcode session alive
-    if (widget.isLive) {
-      _startLiveTimelineUpdates();
-      return;
-    }
-
     // Get client (null in offline mode)
     final client = widget.isOffline ? null : _getClientForMetadata(context);
 
@@ -959,9 +915,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     // Skip play queue in offline mode (requires server connection)
     if (widget.isOffline) return;
 
-    // Skip play queue for live TV (would interfere with tuner session)
-    if (widget.isLive) return;
-
     // Only create play queues for episodes
     if (!widget.metadata.isEpisode) {
       return;
@@ -1016,7 +969,12 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   }
 
   Future<void> _loadAdjacentEpisodes() async {
-    if (!mounted || widget.isLive) return;
+    if (!mounted) return;
+
+    if (widget.telegramStreamPlaylist != null && widget.telegramStreamPlaylist!.isNotEmpty) {
+      _applyTelegramStreamPlaylistAdjacency();
+      return;
+    }
 
     if (widget.isOffline) {
       // Offline mode: find next/previous from downloaded episodes
@@ -1087,110 +1045,109 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     }
   }
 
-  Future<void> _startPlayback() async {
+  void _applyTelegramStreamPlaylistAdjacency() {
+    final pl = widget.telegramStreamPlaylist;
+    if (pl == null || pl.isEmpty) return;
+    final i = widget.telegramStreamPlaylistIndex.clamp(0, pl.length - 1);
     if (!mounted) return;
+    setState(() {
+      _nextEpisode = i < pl.length - 1 ? pl[i + 1] : null;
+      _previousEpisode = i > 0 ? pl[i - 1] : null;
+    });
+  }
 
-    // Live TV mode: bypass standard playback initialization
-    if (widget.isLive) {
-      try {
-        _hasFirstFrame.value = false;
-        await player!.requestAudioFocus();
-        await _setLiveStreamOptions();
+  /// True when My Telegram stream-all can advance from the current item (not on last video).
+  bool _canSkipToNextTelegramStreamItem() {
+    final pl = widget.telegramStreamPlaylist;
+    return pl != null &&
+        pl.length > 1 &&
+        widget.telegramStreamPlaylistIndex < pl.length - 1;
+  }
 
-        String streamUrl;
-        if (widget.liveStreamUrl != null) {
-          streamUrl = widget.liveStreamUrl!;
-        } else {
-          // Tune channel inside the player (shows loading spinner while tuning)
-          final channels = widget.liveChannels;
-          final channelIndex = _liveChannelIndex;
-          if (channels == null || channelIndex < 0 || channelIndex >= channels.length) {
-            throw Exception('No channel to tune');
-          }
-          final channel = channels[channelIndex];
-          appLogger.d('Tune: dvrKey=${widget.liveDvrKey} channelKey=${channel.key}');
-          final client = widget.liveClient!;
-          final tuneResult = await client.tuneChannel(widget.liveDvrKey!, channel.key);
-          if (tuneResult == null) throw Exception('Failed to tune channel');
-
-          _liveSessionIdentifier = tuneResult.sessionIdentifier;
-          _liveSessionPath = tuneResult.sessionPath;
-          _liveRatingKey = tuneResult.metadata.ratingKey;
-          _liveDurationMs = tuneResult.metadata.duration;
-          _captureBuffer = tuneResult.captureBuffer;
-          _programBeginsAt = tuneResult.beginsAt;
-          _transcodeSessionId = PlexClient.generateSessionIdentifier();
-
-          // Show "Watch from Start" dialog when an existing capture session has >60s of history.
-          // On a fresh tune (no active recording), the buffer is empty so this won't trigger.
-          int? offsetSeconds;
-          if (_captureBuffer != null && _programBeginsAt != null) {
-            final nowEpoch = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-            final effectiveStart = max(_captureBuffer!.seekableStartEpoch, _programBeginsAt!);
-            final elapsed = nowEpoch - effectiveStart;
-            appLogger.d('Time-shift: buffer=${_captureBuffer!.seekableDurationSeconds}s, '
-                'beginsAt=$_programBeginsAt, elapsed=${elapsed}s (need >60 for dialog)');
-            if (elapsed > 60) {
-              final watchFromStart = await _showWatchFromStartDialog(effectiveStart, nowEpoch);
-              if (!mounted) return;
-              if (watchFromStart == true) {
-                final programBeginsAtOffset = _programBeginsAt! - _captureBuffer!.startedAt.round();
-                offsetSeconds = max(programBeginsAtOffset, _captureBuffer!.seekStartSeconds.round());
-              }
-            }
-          }
-
-          // Build the stream URL (with optional offset for time-shift)
-          final streamPath = await client.buildLiveStreamPath(
-            sessionPath: tuneResult.sessionPath,
-            sessionIdentifier: tuneResult.sessionIdentifier,
-            transcodeSessionId: _transcodeSessionId!,
-            offsetSeconds: offsetSeconds,
-          );
-          if (streamPath == null || !mounted) throw Exception('Failed to build stream path');
-
-          streamUrl = '${client.config.baseUrl}$streamPath'.withPlexToken(client.config.token);
-
-          // Track stream start epoch for position calculations
-          if (offsetSeconds != null) {
-            _streamStartEpoch = _captureBuffer!.startedAt + offsetSeconds;
-            _isAtLiveEdge = false;
-          } else {
-            _streamStartEpoch = DateTime.now().millisecondsSinceEpoch / 1000.0;
-            _isAtLiveEdge = true;
-          }
-        }
-
-        _livePlaybackStartTime = DateTime.now();
-        await player!.open(Media(streamUrl, headers: const {'Accept-Language': 'en'}), play: true, isLive: true);
-
-        _trackManager?.cacheExternalSubtitles(const []);
-
-        await _initVideoFilterAndPip();
-
-        if (mounted) {
-          setState(() {
-            _availableVersions = [];
-            _currentMediaInfo = null;
-            _isPlayerInitialized = true;
-          });
-          _trackManager?.mediaInfo = null;
-        }
-      } catch (e) {
-        appLogger.e('Failed to start live TV playback', error: e);
-        _sendLiveTimeline('stopped');
-        if (mounted) {
-          showErrorSnackBar(context, e.toString());
-          _handleBackButton();
-        }
+  /// After [disposePlayerForNavigation], opening playlist index [failedPlaylistIndex] failed — try the next item or exit.
+  Future<void> _continueTelegramStreamAfterNavigationFailure(int failedPlaylistIndex) async {
+    final pl = widget.telegramStreamPlaylist;
+    if (pl == null || failedPlaylistIndex + 1 >= pl.length) {
+      playMediaDebugError(
+        'My Telegram stream-all: stopping after failed playlist index $failedPlaylistIndex '
+        '(no more items; ${pl?.length ?? 0} total)',
+      );
+      if (mounted) {
+        setState(() => _isLoadingNext = false);
+        await _handleBackButton();
       }
       return;
     }
+    await _navigateToTelegramStreamItem(pl[failedPlaylistIndex + 1], failedPlaylistIndex + 1);
+  }
+
+  Future<void> _navigateToTelegramStreamItem(TelegramVideoMetadata meta, int newIndex) async {
+    _isReplacingWithVideo = true;
+    DiscordRPCService.instance.stopPlayback();
+    await disposePlayerForNavigation();
+    if (!mounted) return;
+    final repo = await DataRepository.create();
+    try {
+      final cid = meta.row.chatId;
+      final mid = int.tryParse(meta.row.messageId);
+      if (cid == null || mid == null) {
+        playMediaDebugError(
+          'My Telegram stream-all: missing chatId or messageId for playlist index $newIndex '
+          '("${meta.displayTitle}", ratingKey=${meta.ratingKey})',
+        );
+        if (mounted) {
+          showGlobalErrorSnackBar(t.myTelegram.telegramChatIdMissing);
+          setState(() => _isLoadingNext = false);
+          await _continueTelegramStreamAfterNavigationFailure(newIndex);
+        }
+        return;
+      }
+      final uri = await repo.resolveTelegramChatMessageStreamUrlForPlayback(chatId: cid, messageId: mid);
+      if (!mounted) return;
+      if (uri == null) {
+        playMediaDebugError(
+          'My Telegram stream-all: resolveTelegramChatMessageStreamUrlForPlayback returned null '
+          '(chatId=$cid messageId=$mid index=$newIndex "${meta.displayTitle}") — see Play Media logs above for TDLib/range details',
+        );
+        if (mounted) {
+          showGlobalErrorSnackBar(t.myTelegram.streamFailed);
+          setState(() => _isLoadingNext = false);
+          await _continueTelegramStreamAfterNavigationFailure(newIndex);
+        }
+        return;
+      }
+      await navigateToInternalVideoPlayerForUrl(
+        context,
+        metadata: meta,
+        videoUrl: uri.toString(),
+        usePushReplacement: true,
+        telegramStreamPlaylist: widget.telegramStreamPlaylist,
+        telegramStreamPlaylistIndex: newIndex,
+      );
+    } catch (e, st) {
+      playMediaDebugError(
+        'My Telegram stream-all: exception while opening playlist index $newIndex "${meta.displayTitle}": $e\n$st',
+      );
+      if (mounted) {
+        setState(() => _isLoadingNext = false);
+        showGlobalErrorSnackBar('$e');
+        await _continueTelegramStreamAfterNavigationFailure(newIndex);
+      }
+    } finally {
+      await repo.releaseOxMediaPlaybackSession(reason: 'telegram_playlist_advance');
+    }
+  }
+
+  Future<void> _startPlayback() async {
+    if (!mounted) return;
 
     // Capture providers before async gaps
     final offlineWatchService = widget.isOffline ? context.read<OfflineWatchSyncService>() : null;
 
     try {
+      _mpvRecentLogLines.clear();
+      _lastLogError = null;
+
       PlaybackInitializationResult result;
       Map<String, String>? plexHeaders;
 
@@ -1245,7 +1202,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         );
 
         // Enable FFmpeg auto-reconnect for VOD streams (covers network drops up to 10 min)
-        if (!widget.isOffline && !widget.isLive) {
+        if (!widget.isOffline) {
           await player!.setProperty(
             'stream-lavf-o',
             'reconnect=1,reconnect_on_network_error=1,reconnect_streamed=1,reconnect_delay_max=600',
@@ -1981,8 +1938,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     _progressTracker?.sendProgress('stopped');
     _progressTracker?.stopTracking();
     _progressTracker?.dispose();
-    _sendLiveTimeline('stopped');
-    _stopLiveTimelineUpdates();
 
     // Remove PiP state listener, clear callbacks, disable auto-PiP, and dispose video filter manager
     _videoPIPManager?.isPipActive.removeListener(_onPipStateChanged);
@@ -2142,9 +2097,15 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   }
 
   void _onVideoCompleted(bool completed) async {
-    // Live TV streams are continuous — ignore spurious EOF events caused by
-    // inter-segment gaps in the chunked MKV transcode stream.
-    if (widget.isLive) return;
+    if (completed &&
+        widget.telegramStreamPlaylist != null &&
+        widget.telegramStreamPlaylist!.length > 1 &&
+        widget.telegramStreamPlaylistIndex < widget.telegramStreamPlaylist!.length - 1 &&
+        !_completionTriggered) {
+      _completionTriggered = true;
+      unawaited(_playNext());
+      return;
+    }
 
     if (completed &&
         _nextEpisode != null &&
@@ -2183,17 +2144,45 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     }
   }
 
+  String? _telegramPlaybackLocatorLine() {
+    final m = widget.metadata;
+    if (m is! TelegramVideoMetadata) return null;
+    final row = m.row;
+    return 'chatId=${row.chatId} messageId=${row.messageId} fileId=${row.fileId}';
+  }
+
+  void _logPlaybackErrorToDebugModal(String error) {
+    final fromLog = (_lastLogError != null && _lastLogError!.isNotEmpty) ? _lastLogError! : null;
+    final detail = fromLog ?? error;
+    final loc = _telegramPlaybackLocatorLine();
+    final locSuffix = loc != null ? ' | $loc' : '';
+    final mpvCtx = _mpvRecentLogLines.isEmpty
+        ? ''
+        : '\n--- MPV log context (oldest first, includes warn) ---\n${_mpvRecentLogLines.join('\n')}';
+    final pl = widget.telegramStreamPlaylist;
+    if (pl != null && pl.isNotEmpty) {
+      final i = widget.telegramStreamPlaylistIndex;
+      playMediaDebugError(
+        'My Telegram stream [${i + 1}/${pl.length}] "${widget.metadata.displayTitle}"$locSuffix\n'
+        'Error event: $error\n'
+        'Detail (last MPV error line or event): $detail$mpvCtx',
+      );
+    } else {
+      playMediaDebugError('Playback error: $error\nDetail: $detail$mpvCtx');
+    }
+  }
+
   void _onPlayerError(String error) {
     appLogger.e('[Player ERROR] $error');
     if (!mounted || _isExiting.value) return;
 
-    // Live TV: retry with progressively degraded stream settings
-    // (mirrors Plex web client fallback chain).
-    if (widget.isLive && _liveStreamFallbackLevel < 2 && !_isRetryingLiveStream) {
-      _liveStreamFallbackLevel++;
-      _isRetryingLiveStream = true;
-      appLogger.w('Live stream failed, retrying with fallback level $_liveStreamFallbackLevel');
-      _retryLiveStream().whenComplete(() => _isRetryingLiveStream = false);
+    _logPlaybackErrorToDebugModal(error);
+
+    // My Telegram stream-all: skip to the next item instead of closing the player.
+    if (_canSkipToNextTelegramStreamItem()) {
+      if (_isLoadingNext) return;
+      showGlobalErrorSnackBar(_lastLogError ?? error);
+      unawaited(_playNext());
       return;
     }
 
@@ -2203,9 +2192,19 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
   String? _lastLogError;
 
-  void _onPlayerLogError(PlayerLog log) {
-    appLogger.e('[Player LOG ERROR] [${log.prefix}] ${log.text}');
-    _lastLogError = log.text.trim();
+  void _onPlayerLogForDebug(PlayerLog log) {
+    final line = '[${log.prefix}] ${log.text}'.trim();
+    final tagged = '${log.level.name.toUpperCase()} $line';
+    _mpvRecentLogLines.add(tagged);
+    while (_mpvRecentLogLines.length > _kMpvRecentLogMax) {
+      _mpvRecentLogLines.removeFirst();
+    }
+    if (log.level == PlayerLogLevel.error || log.level == PlayerLogLevel.fatal) {
+      _lastLogError = line;
+      appLogger.e('[Player LOG] $tagged');
+    } else if (log.level == PlayerLogLevel.warn) {
+      appLogger.w('[Player LOG] $tagged');
+    }
   }
 
   /// Handle notification when native player switched from ExoPlayer to MPV
@@ -2225,8 +2224,10 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     if (!mounted || manager == null || currentPlayer == null) return;
 
     final playbackState = context.read<PlaybackStateProvider>();
-    final canNavigateEpisodes = widget.metadata.isEpisode || playbackState.isPlaylistActive;
-    final canSeek = !widget.isLive && currentPlayer.state.seekable;
+    final canNavigateEpisodes = widget.metadata.isEpisode ||
+        playbackState.isPlaylistActive ||
+        (widget.telegramStreamPlaylist != null && widget.telegramStreamPlaylist!.length > 1);
+    final canSeek = currentPlayer.state.seekable;
 
     if (!mounted || currentPlayer != player || manager != _mediaControlsManager) return;
 
@@ -2291,7 +2292,29 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   }
 
   Future<void> _playNext() async {
-    if (_nextEpisode == null || _isLoadingNext) return;
+    if (_isLoadingNext) return;
+
+    final pl = widget.telegramStreamPlaylist;
+    if (pl != null && pl.isNotEmpty) {
+      final i = widget.telegramStreamPlaylistIndex;
+      if (i >= pl.length - 1) return;
+      final nextMeta = pl[i + 1];
+
+      _autoPlayTimer?.cancel();
+      _dismissStillWatching();
+
+      _notifyWatchTogetherMediaChange(metadata: nextMeta);
+
+      setState(() {
+        _isLoadingNext = true;
+        _showPlayNextDialog = false;
+      });
+
+      await _navigateToTelegramStreamItem(nextMeta, i + 1);
+      return;
+    }
+
+    if (_nextEpisode == null) return;
 
     // Cancel auto-play timer if running
     _autoPlayTimer?.cancel();
@@ -2309,6 +2332,18 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   }
 
   Future<void> _playPrevious() async {
+    final pl = widget.telegramStreamPlaylist;
+    if (pl != null && pl.isNotEmpty) {
+      final i = widget.telegramStreamPlaylistIndex;
+      if (i <= 0) return;
+      final prevMeta = pl[i - 1];
+
+      _notifyWatchTogetherMediaChange(metadata: prevMeta);
+
+      await _navigateToTelegramStreamItem(prevMeta, i - 1);
+      return;
+    }
+
     if (_previousEpisode == null) return;
 
     // Notify Watch Together of episode change before navigating
@@ -2323,127 +2358,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     await _navigateToEpisode(metadata);
   }
 
-  bool _isSwitchingChannel = false;
-
-  /// Switch to an adjacent live TV channel (delta: +1 for next, -1 for previous)
-  /// Start periodic timeline heartbeats for live TV transcode session.
-  void _startLiveTimelineUpdates() {
-    _liveTimelineTimer?.cancel();
-    _liveTimelineTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      final state = player?.state.playing == true ? 'playing' : 'paused';
-      _sendLiveTimeline(state);
-    });
-    // Delay initial heartbeat to let the transcode session stabilize.
-    // Sending time=0 immediately after player.open() causes the server
-    // to spawn a duplicate transcode job with offset=-1 that 404s.
-    Future.delayed(const Duration(seconds: 3), () {
-      if (_liveTimelineTimer != null) {
-        final state = player?.state.playing == true ? 'playing' : 'paused';
-        _sendLiveTimeline(state);
-      }
-    });
-  }
-
-  void _stopLiveTimelineUpdates() {
-    _liveTimelineTimer?.cancel();
-    _liveTimelineTimer = null;
-  }
-
-  Future<void> _sendLiveTimeline(String state) async {
-    final sessionId = _liveSessionIdentifier;
-    final sessionPath = _liveSessionPath;
-    if (sessionId == null || sessionPath == null) return;
-
-    final client = widget.liveClient;
-    if (client == null) return;
-
-    try {
-      // Use the program ratingKey from tune metadata, not the channel key
-      final ratingKey = _liveRatingKey ?? widget.metadata.ratingKey;
-
-      // playbackTime: wall-clock ms since playback started
-      final playbackTime = _livePlaybackStartTime != null
-          ? DateTime.now().difference(_livePlaybackStartTime!).inMilliseconds
-          : 0;
-
-      // For live TV, player position/duration are unreliable (often 0).
-      // Use playbackTime as time, and program duration from tune metadata.
-      final time = playbackTime;
-      final duration = _liveDurationMs ?? 0;
-
-      final updatedBuffer = await client.updateLiveTimeline(
-        ratingKey: ratingKey,
-        sessionPath: sessionPath,
-        sessionIdentifier: sessionId,
-        state: state,
-        time: time,
-        duration: duration,
-        playbackTime: playbackTime,
-      );
-      if (updatedBuffer != null && mounted) {
-        setState(() {
-          _captureBuffer = updatedBuffer;
-          _isAtLiveEdge = (_currentPositionEpoch >= updatedBuffer.seekableEndEpoch - _liveEdgeThresholdSeconds);
-        });
-      }
-    } catch (e) {
-      appLogger.d('Live timeline update failed', error: e);
-    }
-  }
-
-  /// Retry the live stream with degraded direct-stream settings.
-  /// Re-tunes the channel for a fresh server session (the old one expires
-  /// while MPV exhausts its reconnect attempts).
-  Future<void> _retryLiveStream() async {
-    final client = widget.liveClient;
-    final channels = widget.liveChannels;
-    final channelIndex = _liveChannelIndex;
-    if (client == null || channels == null || channelIndex < 0 || channelIndex >= channels.length || widget.liveDvrKey == null) {
-      appLogger.w('Cannot retry live stream — missing session info');
-      showGlobalErrorSnackBar(_lastLogError ?? 'Live stream failed');
-      _handleBackButton();
-      return;
-    }
-
-    final ds = _liveStreamFallbackLevel < 1;
-    final dsa = _liveStreamFallbackLevel < 2;
-    final channel = channels[channelIndex];
-    appLogger.i('Retrying live stream (re-tune ${channel.key}): directStream=$ds directStreamAudio=$dsa');
-
-    // Re-tune to get a fresh capture session — the previous one is dead.
-    final tuneResult = await client.tuneChannel(widget.liveDvrKey!, channel.key);
-    if (tuneResult == null || !mounted) {
-      showGlobalErrorSnackBar(_lastLogError ?? 'Live stream failed');
-      _handleBackButton();
-      return;
-    }
-
-    _liveSessionIdentifier = tuneResult.sessionIdentifier;
-    _liveSessionPath = tuneResult.sessionPath;
-    _transcodeSessionId = PlexClient.generateSessionIdentifier();
-
-    final streamPath = await client.buildLiveStreamPath(
-      sessionPath: tuneResult.sessionPath,
-      sessionIdentifier: tuneResult.sessionIdentifier,
-      transcodeSessionId: _transcodeSessionId!,
-      directStream: ds,
-      directStreamAudio: dsa,
-    );
-    if (streamPath == null || !mounted) {
-      showGlobalErrorSnackBar(_lastLogError ?? 'Live stream failed');
-      _handleBackButton();
-      return;
-    }
-
-    final streamUrl = '${client.config.baseUrl}$streamPath'.withPlexToken(client.config.token);
-    _livePlaybackStartTime = DateTime.now();
-    _streamStartEpoch = DateTime.now().millisecondsSinceEpoch / 1000.0;
-    _isAtLiveEdge = true;
-
-    await _setLiveStreamOptions();
-    await player!.open(Media(streamUrl, headers: const {'Accept-Language': 'en'}), play: true, isLive: true);
-  }
-
   /// Force mpv to reconnect its HTTP stream by seeking to the current position.
   /// This bypasses ffmpeg's exponential reconnect backoff when the app detects
   /// that network connectivity has been restored.
@@ -2454,161 +2368,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     appLogger.i('Network restored while buffering, forcing stream reconnect at ${pos.inSeconds}s');
     p.seek(pos);
   }
-
-  /// Configure MPV options for live streaming.
-  /// The official Plex Media Player does not set client-side reconnect options —
-  /// reconnection is handled by the server's transcoder on the input side.
-  Future<void> _setLiveStreamOptions() async {
-    await player!.setProperty('force-seekable', 'no');
-  }
-
-  /// The current playback position as an absolute epoch second (for live TV time-shift).
-  int get _currentPositionEpoch =>
-      (_streamStartEpoch + (player?.state.position.inSeconds ?? 0)).round();
-
-  /// Show "Watch from Start" / "Watch Live" dialog.
-  /// Returns true if user chose "Watch from start", false for "Watch Live", null if dismissed.
-  Future<bool?> _showWatchFromStartDialog(int effectiveStartEpoch, int nowEpoch) {
-    final minutesAgo = ((nowEpoch - effectiveStartEpoch) / 60).round();
-    return showOptionPickerDialog<bool>(
-      context,
-      title: t.liveTv.joinSession,
-      options: [
-        (icon: Symbols.replay_rounded, label: t.liveTv.watchFromStart(minutes: minutesAgo), value: true),
-        (icon: Symbols.live_tv_rounded, label: t.liveTv.watchLive, value: false),
-      ],
-    );
-  }
-
-  /// Seek the live TV stream to an absolute epoch second.
-  /// Creates a new transcode session at the target offset.
-  Future<void> _seekLivePosition(int targetEpochSeconds) async {
-    if (_captureBuffer == null || _liveSessionPath == null || _liveSessionIdentifier == null || _transcodeSessionId == null) return;
-
-    final clamped = targetEpochSeconds.clamp(
-      _captureBuffer!.seekableStartEpoch,
-      _captureBuffer!.seekableEndEpoch,
-    );
-
-    final offsetSeconds = clamped - _captureBuffer!.startedAt.round();
-
-    final client = widget.liveClient;
-    if (client == null) return;
-
-    final streamPath = await client.buildLiveStreamPath(
-      sessionPath: _liveSessionPath!,
-      sessionIdentifier: _liveSessionIdentifier!,
-      transcodeSessionId: _transcodeSessionId!,
-      offsetSeconds: offsetSeconds,
-    );
-    if (streamPath == null || !mounted) return;
-
-    final streamUrl = '${client.config.baseUrl}$streamPath'.withPlexToken(client.config.token);
-
-    _streamStartEpoch = _captureBuffer!.startedAt + offsetSeconds;
-    _isAtLiveEdge = (clamped >= _captureBuffer!.seekableEndEpoch - _liveEdgeThresholdSeconds);
-    _livePlaybackStartTime = DateTime.now();
-
-    await _setLiveStreamOptions();
-    await player!.open(
-      Media(streamUrl, headers: const {'Accept-Language': 'en'}),
-      play: true,
-      isLive: true,
-    );
-    if (mounted) setState(() {});
-  }
-
-  /// Jump to the live edge of the capture buffer.
-  Future<void> _jumpToLiveEdge() async {
-    if (_captureBuffer == null) return;
-    await _seekLivePosition(_captureBuffer!.seekableEndEpoch);
-  }
-
-  Future<void> _switchLiveChannel(int delta) async {
-    final channels = widget.liveChannels;
-    if (channels == null || channels.isEmpty) return;
-    if (_isSwitchingChannel) return; // debounce concurrent switches
-
-    final newIndex = _liveChannelIndex + delta;
-    if (newIndex < 0 || newIndex >= channels.length) return;
-
-    _isSwitchingChannel = true;
-
-    // Stop old session heartbeats and notify server
-    _stopLiveTimelineUpdates();
-    await _sendLiveTimeline('stopped');
-
-    final channel = channels[newIndex];
-    appLogger.d('Switching to channel: ${channel.displayName} (${channel.key})');
-
-    if (!mounted) return;
-    setState(() => _hasFirstFrame.value = false);
-
-    try {
-      // Look up the correct client/DVR for this channel's server
-      final multiServer = context.read<MultiServerProvider>();
-      final serverInfo =
-          multiServer.liveTvServers.where((s) => s.serverId == channel.serverId).firstOrNull ??
-          multiServer.liveTvServers.firstOrNull;
-
-      if (serverInfo == null) return;
-
-      final client = multiServer.getClientForServer(serverInfo.serverId);
-      if (client == null) return;
-
-      final tuneResult = await client.tuneChannel(serverInfo.dvrKey, channel.key);
-      if (tuneResult == null || !mounted) return;
-
-      _transcodeSessionId = PlexClient.generateSessionIdentifier();
-      _liveStreamFallbackLevel = 0;
-
-      final streamPath = await client.buildLiveStreamPath(
-        sessionPath: tuneResult.sessionPath,
-        sessionIdentifier: tuneResult.sessionIdentifier,
-        transcodeSessionId: _transcodeSessionId!,
-      );
-      if (streamPath == null || !mounted) return;
-
-      final streamUrl = '${client.config.baseUrl}$streamPath'.withPlexToken(client.config.token);
-
-      await _setLiveStreamOptions();
-      await player!.open(Media(streamUrl, headers: const {'Accept-Language': 'en'}), play: true, isLive: true);
-
-      _livePlaybackStartTime = DateTime.now();
-      _liveRatingKey = tuneResult.metadata.ratingKey;
-      _liveDurationMs = tuneResult.metadata.duration;
-
-      // Reset time-shift state for new channel
-      _captureBuffer = tuneResult.captureBuffer;
-      _programBeginsAt = tuneResult.beginsAt;
-      _streamStartEpoch = DateTime.now().millisecondsSinceEpoch / 1000.0;
-      _isAtLiveEdge = true;
-
-      if (!mounted) return;
-      setState(() {
-        _liveChannelIndex = newIndex;
-        _liveChannelName = channel.displayName;
-        _liveSessionIdentifier = tuneResult.sessionIdentifier;
-        _liveSessionPath = tuneResult.sessionPath;
-      });
-
-      // Restart timeline heartbeats for the new session
-      _startLiveTimelineUpdates();
-    } catch (e) {
-      appLogger.e('Failed to switch channel', error: e);
-      if (mounted) showErrorSnackBar(context, e.toString());
-    } finally {
-      _isSwitchingChannel = false;
-    }
-  }
-
-  bool get _hasNextChannel =>
-      widget.isLive &&
-      widget.liveChannels != null &&
-      _liveChannelIndex >= 0 &&
-      _liveChannelIndex < (widget.liveChannels!.length - 1);
-
-  bool get _hasPreviousChannel => widget.isLive && widget.liveChannels != null && _liveChannelIndex > 0;
 
   void _startAutoPlayTimer() {
     _autoPlayTimer?.cancel();
@@ -3002,19 +2761,8 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
                       // Watch Together not available, default to can control
                     }
 
-                    VoidCallback? onNext;
-                    if (widget.isLive) {
-                      onNext = _hasNextChannel ? () => _switchLiveChannel(1) : null;
-                    } else {
-                      onNext = (_nextEpisode != null && _canNavigateEpisodes()) ? _playNext : null;
-                    }
-
-                    VoidCallback? onPrevious;
-                    if (widget.isLive) {
-                      onPrevious = _hasPreviousChannel ? () => _switchLiveChannel(-1) : null;
-                    } else {
-                      onPrevious = (_previousEpisode != null && _canNavigateEpisodes()) ? _playPrevious : null;
-                    }
+                    final onNext = (_nextEpisode != null && _canNavigateEpisodes()) ? _playNext : null;
+                    final onPrevious = (_previousEpisode != null && _canNavigateEpisodes()) ? _playPrevious : null;
 
                     return Video(
                       player: player!,
@@ -3055,14 +2803,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
                         // ignore: no-empty-block - setState triggers rebuild to reflect shader change
                         onShaderChanged: () => setState(() {}),
                         thumbnailDataBuilder: _bifService?.isAvailable == true ? _getThumbnailData : null,
-                        isLive: widget.isLive,
-                        liveChannelName: _liveChannelName,
-                        captureBuffer: _captureBuffer,
-                        isAtLiveEdge: _isAtLiveEdge,
-                        streamStartEpoch: _streamStartEpoch,
-                        currentPositionEpoch: widget.isLive ? _currentPositionEpoch : null,
-                        onLiveSeek: _captureBuffer != null ? _seekLivePosition : null,
-                        onJumpToLive: _captureBuffer != null && !_isAtLiveEdge ? _jumpToLiveEdge : null,
                         isAmbientLightingEnabled: _ambientLightingService?.isEnabled ?? false,
                         onToggleAmbientLighting: _toggleAmbientLighting,
                       ),

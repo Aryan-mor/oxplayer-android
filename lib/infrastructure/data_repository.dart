@@ -365,6 +365,7 @@ class OxChatMediaRow {
     this.fileName,
     this.chatId,
     this.durationSeconds,
+    this.fileSizeBytes,
   });
 
   final String fileId;
@@ -381,6 +382,9 @@ class OxChatMediaRow {
 
   /// Video duration in seconds when known.
   final int? durationSeconds;
+
+  /// Raw file size in bytes when known (TDLib [File.size] or API).
+  final int? fileSizeBytes;
 }
 
 class OxChatMediaPage {
@@ -591,6 +595,19 @@ bool _documentPassesMergedGalleryDocumentPolicy(td.Document doc) {
       n.endsWith('.mov');
 }
 
+int? _tdlibMessageVideoFileSizeBytes(td.Message message) {
+  final content = message.content;
+  if (content is td.MessageVideo) {
+    final n = content.video.video.size;
+    return n > 0 ? n : null;
+  }
+  if (content is td.MessageDocument) {
+    final n = content.document.document.size;
+    return n > 0 ? n : null;
+  }
+  return null;
+}
+
 OxChatMediaRow? _oxChatMediaRowFromDocumentMessageForMergedGallery(td.Message message, int chatId) {
   final content = message.content;
   if (content is! td.MessageDocument) return null;
@@ -608,6 +625,7 @@ OxChatMediaRow? _oxChatMediaRowFromDocumentMessageForMergedGallery(td.Message me
     fileName: doc.fileName,
     chatId: chatId,
     durationSeconds: null,
+    fileSizeBytes: _tdlibMessageVideoFileSizeBytes(message),
   );
 }
 
@@ -660,6 +678,7 @@ OxChatMediaRow? _oxChatMediaRowFromTdVideoMessage(td.Message message, int chatId
       fileName: v.fileName,
       chatId: chatId,
       durationSeconds: v.duration,
+      fileSizeBytes: _tdlibMessageVideoFileSizeBytes(message),
     );
   }
   if (content is td.MessageDocument) {
@@ -676,6 +695,7 @@ OxChatMediaRow? _oxChatMediaRowFromTdVideoMessage(td.Message message, int chatId
       fileName: doc.fileName,
       chatId: chatId,
       durationSeconds: null,
+      fileSizeBytes: _tdlibMessageVideoFileSizeBytes(message),
     );
   }
   return null;
@@ -1422,10 +1442,18 @@ class DataRepository {
       playMediaDebugError('GetMessage failed for My Telegram stream: $e\n$st');
       return null;
     }
-    if (msg == null) return null;
+    if (msg == null) {
+      playMediaDebugError('GetMessage returned no message for My Telegram stream chatId=$chatId messageId=$messageId');
+      return null;
+    }
 
     final playable = _messagePlayableFile(msg);
-    if (playable == null) return null;
+    if (playable == null) {
+      playMediaDebugError(
+        'My Telegram stream: message has no playable file (chatId=$chatId messageId=$messageId content=${msg.content.runtimeType})',
+      );
+      return null;
+    }
 
     String? mime;
     final content = msg.content;
@@ -1443,7 +1471,10 @@ class DataRepository {
       playMediaDebugError('GetFile failed for My Telegram stream: $e\n$st');
       return null;
     }
-    if (fresh == null) return null;
+    if (fresh == null) {
+      playMediaDebugError('GetFile returned null for My Telegram stream fileId=${playable.id} chatId=$chatId messageId=$messageId');
+      return null;
+    }
 
     final streamUrl = await TelegramRangePlayback.instance.openResolvedFile(
       tdlib: _tdlib,
@@ -1474,6 +1505,9 @@ class DataRepository {
         return localUri;
       }
 
+      playMediaDebugError(
+        'My Telegram stream: all fallbacks failed for chatId=$chatId messageId=$messageId fileId=${fresh.id} (range + prefix + full download)',
+      );
       return null;
     }
 
@@ -3669,6 +3703,8 @@ class DataRepository {
             messageDate: _readOptionalTrimmed(m['messageDate']),
             fileName: _readOptionalTrimmed(m['fileName']),
             chatId: chatIdInt,
+            durationSeconds: _readOptionalInt(m['durationSeconds']) ?? _readOptionalInt(m['duration']),
+            fileSizeBytes: _readOptionalInt(m['fileSizeBytes']) ?? _readOptionalInt(m['fileSize']) ?? _readOptionalInt(m['size']),
           );
         })
         .where((r) => r.fileId.isNotEmpty)

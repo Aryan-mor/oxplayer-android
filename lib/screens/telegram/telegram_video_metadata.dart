@@ -102,6 +102,9 @@ class TelegramVideoMetadata implements PlexMetadata {
   int? get duration => row.durationSeconds != null && row.durationSeconds! > 0 ? row.durationSeconds! * 1000 : null;
 
   @override
+  int? get primaryFileSize => row.fileSizeBytes;
+
+  @override
   int? get addedAt => null;
 
   @override
@@ -311,6 +314,7 @@ class TelegramVideoMetadata implements PlexMetadata {
     String? subtype,
     int? extraType,
     String? primaryExtraKey,
+    int? primaryFileSize,
     String? serverId,
     String? serverName,
     String? clearLogo,

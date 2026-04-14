@@ -1,0 +1,22 @@
+---
+description: Telegram-first video scope — TDLib videos and video documents; no generic public HTTP video as default
+alwaysApply: true
+---
+
+# Telegram video scope
+
+When implementing or reasoning about **playback, download, or streaming** in `oxplayer-android`:
+
+## Product focus
+
+- **We are a Telegram client for video:** the primary media surface is **Telegram** — **videos** (`MessageVideo`) and **video documents** (playable **video files** sent as documents) resolved through **TDLib**.
+- **We do not** treat **generic public HTTP(S) video** (arbitrary web URLs, random HTTPS hosts, or “any link” playback) as a first-class product path. Do **not** add or rely on **youtube-dl / yt-dlp**-style site extractors unless the user explicitly asks for that capability.
+
+## Implementation defaults
+
+- Prefer existing **TDLib** flows, **range / loopback** playback helpers, and **app-side downloads** for Telegram files.
+- Keep the **MPV** path aligned with **direct** media only (e.g. `ytdl` disabled); Telegram streaming uses **local** proxies fed by TDLib, not public web video stacks.
+
+## Codebase note
+
+Legacy or parallel **Plex / library HTTPS** code may exist; treat it as **existing integration** unless the task is explicitly about it. For **new** video behavior, default to **Telegram videos and Telegram video documents** and the rules above.

@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
 import '../../infrastructure/data_repository.dart';
+import '../../services/auth_debug_service.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/video_player_navigation.dart';
 import 'my_telegram_video_detail_screen.dart';
@@ -132,6 +133,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
   int? _nextHistoryFromMessageId;
 
   bool _loadingMore = false;
+  bool _streamAllStarting = false;
   bool _initialLoading = true;
   String? _error;
 
@@ -530,6 +532,56 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     }
   }
 
+  Future<void> _streamAllInOrder() async {
+    if (_items.isEmpty || _streamAllStarting) return;
+    setState(() => _streamAllStarting = true);
+    final repo = await DataRepository.create();
+    try {
+      final playlist = List<TelegramVideoMetadata>.from(_items);
+      final first = playlist.first;
+      final cid = first.row.chatId;
+      final mid = int.tryParse(first.row.messageId);
+      if (cid == null || mid == null) {
+        playMediaDebugError(
+          'Stream all: missing chatId or messageId for first item "${first.displayTitle}" (ratingKey=${first.ratingKey})',
+        );
+        if (mounted) {
+          showSnackBar(context, t.myTelegram.telegramChatIdMissing, type: SnackBarType.error);
+        }
+        return;
+      }
+      final uri = await repo.resolveTelegramChatMessageStreamUrlForPlayback(
+        chatId: cid,
+        messageId: mid,
+      );
+      if (!mounted) return;
+      if (uri == null) {
+        playMediaDebugError(
+          'Stream all: could not resolve stream URL for first video (chatId=$cid messageId=$mid "${first.displayTitle}")',
+        );
+        showSnackBar(context, t.myTelegram.streamFailed, type: SnackBarType.error);
+        return;
+      }
+      await navigateToInternalVideoPlayerForUrl(
+        context,
+        metadata: first,
+        videoUrl: uri.toString(),
+        telegramStreamPlaylist: playlist.length > 1 ? playlist : null,
+        telegramStreamPlaylistIndex: 0,
+      );
+    } catch (e, st) {
+      playMediaDebugError('Stream all: failed before or during player open: $e\n$st');
+      if (mounted) {
+        showSnackBar(context, '${t.myTelegram.streamFailed}: $e', type: SnackBarType.error);
+      }
+    } finally {
+      await repo.releaseOxMediaPlaybackSession(reason: 'my_telegram_stream_all_closed');
+      if (mounted) {
+        setState(() => _streamAllStarting = false);
+      }
+    }
+  }
+
   Future<void> _streamTelegramVideo(
     BuildContext context,
     TelegramVideoMetadata video,
@@ -544,6 +596,10 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       );
       if (!context.mounted) return;
       if (uri == null) {
+        playMediaDebugError(
+          'My Telegram single stream: resolveTelegramChatMessageStreamUrlForPlayback returned null '
+          '(chatId=$chatId messageId=$messageId "${video.displayTitle}")',
+        );
         showSnackBar(context, t.myTelegram.streamFailed, type: SnackBarType.error);
         return;
       }
@@ -552,7 +608,10 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         metadata: video,
         videoUrl: uri.toString(),
       );
-    } catch (e) {
+    } catch (e, st) {
+      playMediaDebugError(
+        'My Telegram single stream: exception (chatId=$chatId messageId=$messageId "${video.displayTitle}"): $e\n$st',
+      );
       if (context.mounted) {
         showSnackBar(context, '${t.myTelegram.streamFailed}: $e', type: SnackBarType.error);
       }
@@ -932,6 +991,24 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     // Show video grid (month groups like Telegram) with load more
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: FilledButton.tonalIcon(
+            onPressed: _initialLoading || _streamAllStarting || _items.isEmpty ? null : _streamAllInOrder,
+            icon: _streamAllStarting
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const AppIcon(Symbols.playlist_play_rounded, fill: 1),
+            label: Text(t.myTelegram.streamAll),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              alignment: Alignment.center,
+            ),
+          ),
+        ),
         Expanded(
           child: _buildVideoGalleryScroll(),
         ),

@@ -22,6 +22,7 @@ You are the OXPlayer stack engineer. Workspace roles:
 
 ## Core rules
 
+- **Telegram video scope:** For playback, download, and streaming, default to **Telegram client** behavior — **Telegram videos and video documents** via TDLib; do not assume generic public HTTP(S) web video or youtube-dl-style extractors. See **`telegram-video-scope.mdc`**.
 - Prefer **current backend contract** over legacy when they differ; adapt the app cleanly, do not copy legacy verbatim.
 - Allow **cross-repo edits** when needed; keep the change surface minimal and explicit.
 - **Validate** new app code does not bypass repository boundaries for Telegram or API work.

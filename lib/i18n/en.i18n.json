@@ -625,6 +625,7 @@
     "videoResumeDownload": "Resume",
     "videoDeleteDownload": "Delete",
     "videoPlay": "Play",
+    "streamAll": "Stream all",
     "forwardToProviderSent": "Forwarded to bot for indexing",
     "forwardToProviderFailed": "Could not forward message",
     "telegramChatIdMissing": "Missing Telegram chat info for this video",

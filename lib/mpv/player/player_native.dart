@@ -129,6 +129,11 @@ class PlayerNative extends PlayerBase {
       }
     }
 
+    // OXPlayer does not use youtube-dl/yt-dlp. Playback is direct media only: Plex/OX HTTPS,
+    // files, and Telegram via TDLib (local loopback). Disable MPV's ytdl hook so mobile builds
+    // never try to spawn a missing yt-dlp binary.
+    await setProperty('ytdl', 'no');
+
     await command(['loadfile', uri, 'replace']);
   }
 

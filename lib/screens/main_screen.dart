@@ -42,7 +42,6 @@ import '../focus/dpad_navigator.dart';
 import '../focus/key_event_utils.dart';
 import 'discover_screen.dart';
 import 'libraries/libraries_screen.dart';
-import 'livetv/live_tv_screen.dart';
 import 'search_screen.dart';
 import 'downloads/downloads_screen.dart';
 import 'settings/settings_screen.dart';
@@ -125,8 +124,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
   bool _autoSwitchedToDownloads = false;
 
   OfflineModeProvider? _offlineModeProvider;
-  MultiServerProvider? _multiServerProvider;
-  bool _lastHasLiveTv = false;
 
   /// Whether a reconnection attempt is in progress
   bool _isReconnecting = false;
@@ -191,7 +188,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
   final GlobalKey<State<DiscoverScreen>> _discoverKey = GlobalKey();
   final GlobalKey<State<LibrariesScreen>> _librariesKey = GlobalKey();
   final GlobalKey<State<MyTelegramScreen>> _myTelegramKey = GlobalKey();
-  final GlobalKey<State<LiveTvScreen>> _liveTvKey = GlobalKey();
   final GlobalKey<State<SearchScreen>> _searchKey = GlobalKey();
   final GlobalKey<State<DownloadsScreen>> _downloadsKey = GlobalKey();
   final GlobalKey<State<SettingsScreen>> _settingsKey = GlobalKey();
@@ -219,13 +215,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
     _lastOnlineTabId = startOnDiscover ? NavigationTabId.discover : null;
     _autoSwitchedToDownloads = _isOffline && !widget.enableOxDiscoverFallback;
 
-    // Synchronize _lastHasLiveTv with provider before building screens
-    // so _buildScreens and _hasLiveTv getter agree from the start.
-    try {
-      _lastHasLiveTv = context.read<MultiServerProvider>().hasLiveTv;
-    } catch (_) {
-      _lastHasLiveTv = false;
-    }
     _screens = _buildScreens(_isOffline);
 
     // Set up Watch Together callbacks immediately (must be synchronous to catch early messages)
@@ -442,14 +431,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
       _offlineModeProvider!.addListener(_handleOfflineStatusChanged);
     }
 
-    // Listen for Live TV / DVR availability changes
-    final multiServer = context.read<MultiServerProvider>();
-    if (multiServer != _multiServerProvider) {
-      _multiServerProvider?.removeListener(_handleLiveTvChanged);
-      _multiServerProvider = multiServer;
-      _multiServerProvider!.addListener(_handleLiveTvChanged);
-    }
-
     // Wire up Companion Remote command routing (host devices only, once)
     if (!_companionRemoteSetup && PlatformDetector.shouldActAsRemoteHost(context)) {
       _companionRemoteSetup = true;
@@ -507,7 +488,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
       windowManager.setPreventClose(false);
     }
     _offlineModeProvider?.removeListener(_handleOfflineStatusChanged);
-    _multiServerProvider?.removeListener(_handleLiveTvChanged);
     _sidebarFocusScope.dispose();
     _contentFocusScope.dispose();
 
@@ -589,7 +569,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
             ),
           NavigationTabId.libraries => LibrariesScreen(key: _librariesKey, onLibraryOrderChanged: _onLibraryOrderChanged),
           NavigationTabId.myTelegram => MyTelegramScreen(key: _myTelegramKey),
-          NavigationTabId.liveTv => LiveTvScreen(key: _liveTvKey),
           NavigationTabId.search => SearchScreen(key: _searchKey),
           NavigationTabId.downloads => DownloadsScreen(key: _downloadsKey),
           NavigationTabId.settings => SettingsScreen(key: _settingsKey),
@@ -637,17 +616,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
         setState(() => _isReconnecting = false);
       }
     }
-  }
-
-  void _handleLiveTvChanged() {
-    final hasLiveTv = _multiServerProvider?.hasLiveTv ?? false;
-    if (hasLiveTv == _lastHasLiveTv) return;
-    _lastHasLiveTv = hasLiveTv;
-
-    setState(() {
-      _screens = _buildScreens(_isOffline);
-      _currentTab = _normalizeTabForMode(_currentTab, _isOffline);
-    });
   }
 
   void _handleOfflineStatusChanged() {
@@ -957,11 +925,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
     }
   }
 
-  /// Whether the Live TV tab is currently visible
-  /// Use the synchronized value so screens list and nav bar always agree.
-  /// Updated by _handleLiveTvChanged when the provider notifies.
-  bool get _hasLiveTv => _lastHasLiveTv;
-
   /// Get navigation tabs filtered by offline mode
   List<NavigationTab> _getVisibleTabs(bool isOffline) {
     if (isOffline && widget.enableOxDiscoverFallback) {
@@ -972,7 +935,7 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
             tab.id == NavigationTabId.settings;
       }).toList(growable: false);
     }
-    return NavigationTab.getVisibleTabs(isOffline: isOffline, hasLiveTv: _hasLiveTv);
+    return NavigationTab.getVisibleTabs(isOffline: isOffline);
   }
 
   /// Get the GlobalKey for a given tab.
@@ -981,7 +944,6 @@ class _MainScreenState extends State<MainScreen> with RouteAware, WindowListener
       NavigationTabId.discover => _discoverKey,
       NavigationTabId.libraries => _librariesKey,
       NavigationTabId.myTelegram => _myTelegramKey,
-      NavigationTabId.liveTv => _liveTvKey,
       NavigationTabId.search => _searchKey,
       NavigationTabId.downloads => _downloadsKey,
       NavigationTabId.settings => _settingsKey,

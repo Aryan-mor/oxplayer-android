@@ -27,7 +27,6 @@ import '../overlay_sheet.dart';
 import '../../focus/dpad_navigator.dart';
 import '../../focus/focusable_wrapper.dart';
 
-import '../../models/livetv_capture_buffer.dart';
 import '../../services/plex_client.dart';
 import '../../services/plex_api_cache.dart';
 import '../../models/plex_media_info.dart';
@@ -88,14 +87,6 @@ Widget plexVideoControlsBuilder(
   ShaderService? shaderService,
   VoidCallback? onShaderChanged,
   Uint8List? Function(Duration time)? thumbnailDataBuilder,
-  bool isLive = false,
-  String? liveChannelName,
-  CaptureBuffer? captureBuffer,
-  bool isAtLiveEdge = true,
-  double streamStartEpoch = 0,
-  int? currentPositionEpoch,
-  ValueChanged<int>? onLiveSeek,
-  VoidCallback? onJumpToLive,
   bool isAmbientLightingEnabled = false,
   VoidCallback? onToggleAmbientLighting,
 }) {
@@ -123,14 +114,6 @@ Widget plexVideoControlsBuilder(
     shaderService: shaderService,
     onShaderChanged: onShaderChanged,
     thumbnailDataBuilder: thumbnailDataBuilder,
-    isLive: isLive,
-    liveChannelName: liveChannelName,
-    captureBuffer: captureBuffer,
-    isAtLiveEdge: isAtLiveEdge,
-    streamStartEpoch: streamStartEpoch,
-    currentPositionEpoch: currentPositionEpoch,
-    onLiveSeek: onLiveSeek,
-    onJumpToLive: onJumpToLive,
     isAmbientLightingEnabled: isAmbientLightingEnabled,
     onToggleAmbientLighting: onToggleAmbientLighting,
   );
@@ -179,30 +162,6 @@ class PlexVideoControls extends StatefulWidget {
   /// Optional callback that returns thumbnail image bytes for a given timestamp.
   final Uint8List? Function(Duration time)? thumbnailDataBuilder;
 
-  /// Whether this is a live TV stream (disables seek, progress, etc.)
-  final bool isLive;
-
-  /// Channel name for live TV display
-  final String? liveChannelName;
-
-  /// Capture buffer for live TV time-shift (null = no time-shift support)
-  final CaptureBuffer? captureBuffer;
-
-  /// Whether playback is at the live edge
-  final bool isAtLiveEdge;
-
-  /// Epoch seconds corresponding to player position 0 (for live TV)
-  final double streamStartEpoch;
-
-  /// Current playback position as absolute epoch seconds (for live TV)
-  final int? currentPositionEpoch;
-
-  /// Seek callback for live TV time-shift (epoch seconds)
-  final ValueChanged<int>? onLiveSeek;
-
-  /// Jump to live edge callback
-  final VoidCallback? onJumpToLive;
-
   /// Whether ambient lighting is enabled (passed to settings sheet)
   final bool isAmbientLightingEnabled;
 
@@ -234,14 +193,6 @@ class PlexVideoControls extends StatefulWidget {
     this.shaderService,
     this.onShaderChanged,
     this.thumbnailDataBuilder,
-    this.isLive = false,
-    this.liveChannelName,
-    this.captureBuffer,
-    this.isAtLiveEdge = true,
-    this.streamStartEpoch = 0,
-    this.currentPositionEpoch,
-    this.onLiveSeek,
-    this.onJumpToLive,
     this.isAmbientLightingEnabled = false,
     this.onToggleAmbientLighting,
   });
@@ -1169,8 +1120,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
   }
 
   Future<void> _loadPlaybackExtras({bool forceRefresh = false}) async {
-    // Live TV metadata uses EPG rating keys, not library items
-    if (widget.isLive) return;
     if (_isLoadingExtras) return;
     _isLoadingExtras = true;
 
@@ -1315,7 +1264,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
       isAmbientLightingEnabled: widget.isAmbientLightingEnabled,
       onToggleAmbientLighting: widget.player.playerType != 'exoplayer' ? widget.onToggleAmbientLighting : null,
       canControl: widget.canControl,
-      isLive: widget.isLive,
       subtitlesVisible: _subtitlesVisible,
       showQueueButton: playbackState.isQueueActive,
       onQueueItemSelected: playbackState.isQueueActive ? _onQueueItemSelected : null,
@@ -1396,11 +1344,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
   }
 
   Future<void> _seekByOffset(Duration delta, {bool notifyCompletion = true}) async {
-    // Route through live seek callback for time-shifted live TV
-    if (widget.isLive && widget.onLiveSeek != null && widget.currentPositionEpoch != null) {
-      widget.onLiveSeek!(widget.currentPositionEpoch! + delta.inSeconds);
-      return;
-    }
     final target = widget.player.state.position + delta;
     final clamped = clampSeekPosition(widget.player, target);
     await widget.player.seek(clamped);
@@ -1611,7 +1554,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
 
   /// Handle long-press start - activate 2x speed
   void _handleLongPressStart() {
-    if (!widget.canControl || widget.isLive) return;
+    if (!widget.canControl) return;
 
     setState(() {
       _isLongPressing = true;
@@ -2294,12 +2237,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
                                                 canControl: widget.canControl,
                                                 hasFirstFrame: widget.hasFirstFrame,
                                                 thumbnailDataBuilder: widget.thumbnailDataBuilder,
-                                                isLive: widget.isLive,
-                                                liveChannelName: widget.liveChannelName,
-                                                captureBuffer: widget.captureBuffer,
-                                                isAtLiveEdge: widget.isAtLiveEdge,
-                                                streamStartEpoch: widget.streamStartEpoch,
-                                                onLiveSeek: widget.onLiveSeek,
                                                 serverId: widget.metadata.serverId,
                                                 showQueueTab: playbackState.isQueueActive,
                                                 onQueueItemSelected: playbackState.isQueueActive
@@ -2460,13 +2397,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
         onBack: widget.onBack,
         hasFirstFrame: widget.hasFirstFrame,
         thumbnailDataBuilder: widget.thumbnailDataBuilder,
-        liveChannelName: widget.liveChannelName,
-        captureBuffer: widget.captureBuffer,
-        isAtLiveEdge: widget.isAtLiveEdge,
-        streamStartEpoch: widget.streamStartEpoch,
-        currentPositionEpoch: widget.currentPositionEpoch,
-        onLiveSeek: widget.onLiveSeek,
-        onJumpToLive: widget.onJumpToLive,
         useDpadNavigation: useDpad,
         serverId: widget.metadata.serverId,
         showQueueTab: playbackState.isQueueActive,

@@ -55,6 +55,7 @@ import '../widgets/focusable_tab_chip.dart';
 import '../widgets/horizontal_scroll_with_arrows.dart';
 import '../widgets/media_card.dart';
 import '../widgets/media_context_menu.dart';
+import '../widgets/media_thumbnail_info_overlay.dart';
 import '../widgets/overlay_sheet.dart';
 import '../widgets/ox_file_option_card.dart';
 import '../widgets/placeholder_container.dart';
@@ -3216,6 +3217,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   Widget build(BuildContext context) {
     // Use full metadata if loaded, otherwise use passed metadata
     final metadata = _fullMetadata ?? widget.metadata;
+    final fileTechSummary = videoFileTechnicalSummary(metadata);
     final isShow = metadata.isShow;
     final isMobile = PlatformDetector.isMobile(context);
     final isTv = PlatformDetector.isTV();
@@ -3362,6 +3364,13 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                           ),
                         ),
 
+                        if (fileTechSummary != null && shouldShowVideoPosterTechnicalOverlay(metadata))
+                          Positioned(
+                            top: MediaQuery.paddingOf(context).top + 8,
+                            right: 12,
+                            child: MediaThumbnailInfoPill(text: fileTechSummary),
+                          ),
+
                         // Content at bottom
                         Positioned(
                           bottom: 16,
@@ -3455,6 +3464,16 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                     ),
+                                  if (fileTechSummary != null) ...[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      fileTechSummary,
+                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                            color: Colors.white.withValues(alpha: 0.88),
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                    ),
+                                  ],
                                   const SizedBox(height: 12),
 
                                   // Metadata chips
@@ -3466,7 +3485,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                       if (metadata.editionTitle != null) _buildMetadataChip(metadata.editionTitle!),
                                       if (metadata.contentRating != null)
                                         _buildMetadataChip(formatContentRating(metadata.contentRating!)),
-                                      if (metadata.duration != null)
+                                      if (metadata.duration != null && fileTechSummary == null)
                                         _buildMetadataChip(formatDurationTextual(metadata.duration!)),
                                       ..._buildRatingChips(metadata),
                                     ],

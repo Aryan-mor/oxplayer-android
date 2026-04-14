@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
@@ -18,6 +19,8 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode(debugLabel: 'my_telegram_config_search');
+  bool _searchFieldEditable = false;
 
   final Map<int, TdlibPickerChatRow> _rowsByChatId = {};
   int _listLimit = 50;
@@ -73,6 +76,11 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
     _tabController.addListener(_onTabChanged);
+    _searchFocusNode.addListener(() {
+      if (!_searchFocusNode.hasFocus && mounted) {
+        setState(() => _searchFieldEditable = false);
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bootstrap();
     });
@@ -90,13 +98,21 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   void _clearSearch() {
     if (_searchController.text.isEmpty) return;
     _searchController.clear();
-    setState(() {});
+    setState(() {
+      _searchFieldEditable = false;
+    });
+  }
+
+  void _enableSearchEditing() {
+    if (_searchFieldEditable) return;
+    setState(() => _searchFieldEditable = true);
   }
 
   @override
   void dispose() {
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
+    _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -339,26 +355,43 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-              child: TextField(
-                controller: _searchController,
-                onChanged: _onSearchChanged,
-                textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  hintText: t.common.search,
-                  prefixIcon: const Padding(
-                    padding: EdgeInsetsDirectional.only(start: 12, end: 8),
-                    child: AppIcon(Symbols.search_rounded, fill: 1),
+              child: Focus(
+                onKeyEvent: (node, event) {
+                  if (_searchFieldEditable) return KeyEventResult.ignored;
+                  if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                  final key = event.logicalKey;
+                  if (key == LogicalKeyboardKey.select ||
+                      key == LogicalKeyboardKey.enter ||
+                      key == LogicalKeyboardKey.numpadEnter) {
+                    _enableSearchEditing();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: TextField(
+                  focusNode: _searchFocusNode,
+                  controller: _searchController,
+                  readOnly: !_searchFieldEditable,
+                  onChanged: _onSearchChanged,
+                  onTap: _enableSearchEditing,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: t.common.search,
+                    prefixIcon: const Padding(
+                      padding: EdgeInsetsDirectional.only(start: 12, end: 8),
+                      child: AppIcon(Symbols.search_rounded, fill: 1),
+                    ),
+                    prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            tooltip: t.common.clear,
+                            onPressed: _clearSearch,
+                            icon: const AppIcon(Symbols.close_rounded, fill: 1),
+                          )
+                        : null,
+                    border: const OutlineInputBorder(),
+                    isDense: true,
                   ),
-                  prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          tooltip: t.common.clear,
-                          onPressed: _clearSearch,
-                          icon: const AppIcon(Symbols.close_rounded, fill: 1),
-                        )
-                      : null,
-                  border: const OutlineInputBorder(),
-                  isDense: true,
                 ),
               ),
             ),

@@ -83,9 +83,6 @@ class VideoSettingsSheet extends StatefulWidget {
   /// Whether the user can control playback (false hides speed option in host-only mode).
   final bool canControl;
 
-  /// Whether this is a live TV stream (hides speed settings).
-  final bool isLive;
-
   /// Optional shader service for MPV shader control
   final ShaderService? shaderService;
 
@@ -113,7 +110,6 @@ class VideoSettingsSheet extends StatefulWidget {
     required this.audioSyncOffset,
     required this.subtitleSyncOffset,
     this.canControl = true,
-    this.isLive = false,
     this.shaderService,
     this.onShaderChanged,
     this.isAmbientLightingEnabled = false,
@@ -335,7 +331,7 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
     return ListView(
       children: [
         // Playback Speed - hidden for live TV and when user cannot control playback
-        if (widget.canControl && !widget.isLive)
+        if (widget.canControl)
           StreamBuilder<double>(
             stream: widget.player.streams.rate,
             initialData: widget.player.state.rate,

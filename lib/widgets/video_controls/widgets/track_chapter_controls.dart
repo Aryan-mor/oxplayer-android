@@ -93,7 +93,6 @@ class TrackChapterControls extends StatelessWidget {
   bool get isAmbientLightingEnabled => trackControlsState.isAmbientLightingEnabled;
   VoidCallback? get onToggleAmbientLighting => trackControlsState.onToggleAmbientLighting;
   bool get canControl => trackControlsState.canControl;
-  bool get isLive => trackControlsState.isLive;
   bool get subtitlesVisible => trackControlsState.subtitlesVisible;
   bool get showQueueButton => trackControlsState.showQueueButton;
   Function(PlexMetadata)? get onQueueItemSelected => trackControlsState.onQueueItemSelected;
@@ -217,7 +216,6 @@ class TrackChapterControls extends StatelessWidget {
                           audioSyncOffset: audioSyncOffset,
                           subtitleSyncOffset: subtitleSyncOffset,
                           canControl: canControl,
-                          isLive: isLive,
                           shaderService: shaderService,
                           onShaderChanged: onShaderChanged,
                           isAmbientLightingEnabled: isAmbientLightingEnabled,

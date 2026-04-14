@@ -1215,6 +1215,7 @@ class _TranslationsMyTelegramFr implements TranslationsMyTelegramEn {
 	@override String get videoResumeDownload => 'Resume';
 	@override String get videoDeleteDownload => 'Delete';
 	@override String get videoPlay => 'Play';
+	@override String get streamAll => 'Stream all';
 	@override String get forwardToProviderSent => 'Forwarded to bot for indexing';
 	@override String get forwardToProviderFailed => 'Could not forward message';
 	@override String get telegramChatIdMissing => 'Missing Telegram chat info for this video';
@@ -2289,6 +2290,7 @@ extension on TranslationsFr {
 			'myTelegram.videoResumeDownload' => 'Resume',
 			'myTelegram.videoDeleteDownload' => 'Delete',
 			'myTelegram.videoPlay' => 'Play',
+			'myTelegram.streamAll' => 'Stream all',
 			'myTelegram.forwardToProviderSent' => 'Forwarded to bot for indexing',
 			'myTelegram.forwardToProviderFailed' => 'Could not forward message',
 			'myTelegram.telegramChatIdMissing' => 'Missing Telegram chat info for this video',

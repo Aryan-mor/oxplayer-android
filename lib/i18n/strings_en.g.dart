@@ -1917,6 +1917,9 @@ class TranslationsMyTelegramEn {
 	/// en: 'Play'
 	String get videoPlay => 'Play';
 
+	/// en: 'Stream all'
+	String get streamAll => 'Stream all';
+
 	/// en: 'Forwarded to bot for indexing'
 	String get forwardToProviderSent => 'Forwarded to bot for indexing';
 
@@ -3758,6 +3761,7 @@ extension on Translations {
 			'myTelegram.videoResumeDownload' => 'Resume',
 			'myTelegram.videoDeleteDownload' => 'Delete',
 			'myTelegram.videoPlay' => 'Play',
+			'myTelegram.streamAll' => 'Stream all',
 			'myTelegram.forwardToProviderSent' => 'Forwarded to bot for indexing',
 			'myTelegram.forwardToProviderFailed' => 'Could not forward message',
 			'myTelegram.telegramChatIdMissing' => 'Missing Telegram chat info for this video',

@@ -10,6 +10,7 @@ import '../models/plex_metadata.dart';
 import '../models/plex_video_playback_data.dart';
 import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
+import '../screens/telegram/telegram_video_metadata.dart';
 import '../screens/video_player_screen.dart';
 import '../services/external_player_service.dart';
 import '../services/settings_service.dart';
@@ -154,6 +155,8 @@ Future<bool?> navigateToInternalVideoPlayerForUrl(
   required PlexMetadata metadata,
   required String videoUrl,
   bool usePushReplacement = false,
+  List<TelegramVideoMetadata>? telegramStreamPlaylist,
+  int telegramStreamPlaylistIndex = 0,
 }) async {
   final navigator = Navigator.of(context);
   final normalizedUrl = normalizeLocalPlaybackUrl(videoUrl);
@@ -175,6 +178,8 @@ Future<bool?> navigateToInternalVideoPlayerForUrl(
         mediaInfo: null,
         availableVersions: const [],
       ),
+      telegramStreamPlaylist: telegramStreamPlaylist,
+      telegramStreamPlaylistIndex: telegramStreamPlaylistIndex,
     ),
     transitionDuration: Duration.zero,
     reverseTransitionDuration: Duration.zero,

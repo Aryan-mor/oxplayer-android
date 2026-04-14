@@ -36,7 +36,6 @@ class TrackControlsState {
   final bool isAmbientLightingEnabled;
   final VoidCallback? onToggleAmbientLighting;
   final bool canControl;
-  final bool isLive;
   final bool subtitlesVisible;
   final bool showQueueButton;
   final Function(PlexMetadata)? onQueueItemSelected;
@@ -76,7 +75,6 @@ class TrackControlsState {
     this.isAmbientLightingEnabled = false,
     this.onToggleAmbientLighting,
     this.canControl = true,
-    this.isLive = false,
     this.subtitlesVisible = true,
     this.showQueueButton = false,
     this.onQueueItemSelected,

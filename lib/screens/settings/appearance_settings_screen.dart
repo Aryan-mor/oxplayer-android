@@ -79,7 +79,6 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
 
             // --- Content ---
             SettingsSectionHeader(t.settings.content),
-            _buildLiveTvDefaultFavorites(),
             _buildHideSpoilers(),
             _buildRequireProfileSelection(),
             if (PlatformDetector.isTV()) _buildConfirmExitOnBack(),
@@ -303,22 +302,6 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
   }
 
   // --- Content section ---
-
-  Widget _buildLiveTvDefaultFavorites() {
-    return Consumer<SettingsProvider>(
-      builder: (context, settingsProvider, child) {
-        return SwitchListTile(
-          secondary: const AppIcon(Symbols.star_rounded, fill: 1),
-          title: Text(t.settings.liveTvDefaultFavorites),
-          subtitle: Text(t.settings.liveTvDefaultFavoritesDescription),
-          value: settingsProvider.liveTvDefaultFavorites,
-          onChanged: (value) async {
-            await settingsProvider.setLiveTvDefaultFavorites(value);
-          },
-        );
-      },
-    );
-  }
 
   Widget _buildHideSpoilers() {
     return Consumer<SettingsProvider>(

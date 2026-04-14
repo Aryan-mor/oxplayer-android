@@ -14,7 +14,6 @@ import '../models/plex_library.dart';
 import '../navigation/navigation_tabs.dart';
 import '../providers/hidden_libraries_provider.dart';
 import '../providers/libraries_provider.dart';
-import '../providers/multi_server_provider.dart';
 import '../services/fullscreen_state_manager.dart';
 import '../theme/mono_tokens.dart';
 import '../i18n/strings.g.dart';
@@ -266,13 +265,12 @@ class SideNavigationRailState extends State<SideNavigationRail> {
       _kDownloads,
       _kSettings,
       _kReconnect,
-      'liveTv',
       ...libraries.map((lib) => lib.globalKey),
     };
   }
 
   /// Ordered list of focusable keys matching visual top-to-bottom order.
-  List<String> _buildFocusOrder(List<PlexLibrary> visibleLibraries, {required bool hasLiveTv}) {
+  List<String> _buildFocusOrder(List<PlexLibrary> visibleLibraries) {
     return [
       if (widget.isOfflineMode) _kReconnect,
       if (!widget.isOfflineMode || widget.enableOxDiscoverFallback) ...[
@@ -283,7 +281,6 @@ class SideNavigationRailState extends State<SideNavigationRail> {
         _kLibraries,
         if (_librariesExpanded) ...visibleLibraries.map((lib) => lib.globalKey),
         if (!kIsWeb) _kMyTelegram,
-        if (hasLiveTv) 'liveTv',
         _kSearch,
       ],
       _kDownloads,
@@ -384,8 +381,7 @@ class SideNavigationRailState extends State<SideNavigationRail> {
     _focusTracker.pruneExcept(_buildValidFocusKeys(allLibraries));
 
     final isCollapsed = !_shouldExpand;
-    final hasLiveTv = context.watch<MultiServerProvider>().hasLiveTv;
-    final focusOrder = _buildFocusOrder(visibleLibraries, hasLiveTv: hasLiveTv);
+    final focusOrder = _buildFocusOrder(visibleLibraries);
 
     // Listen to fullscreen changes for macOS
     return ListenableBuilder(
@@ -481,22 +477,6 @@ class SideNavigationRailState extends State<SideNavigationRail> {
                                   focusNode: _focusTracker.get(_kMyTelegram),
                                   isCollapsed: isCollapsed,
                                 ),
-                                const SizedBox(height: 8),
-                              ],
-
-                              // Live TV (only if DVR available)
-                              if (context.watch<MultiServerProvider>().hasLiveTv) ...[
-                                _buildNavItem(
-                                  icon: Symbols.live_tv_rounded,
-                                  selectedIcon: Symbols.live_tv_rounded,
-                                  label: Translations.of(context).navigation.liveTv,
-                                  isSelected: widget.selectedTab == NavigationTabId.liveTv,
-                                  isFocused: _focusTracker.isFocused('liveTv'),
-                                  onTap: () => widget.onDestinationSelected(NavigationTabId.liveTv),
-                                  focusNode: _focusTracker.get('liveTv'),
-                                  isCollapsed: isCollapsed,
-                                ),
-
                                 const SizedBox(height: 8),
                               ],
 

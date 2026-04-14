@@ -6,7 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import '../i18n/strings.g.dart';
 
 /// Navigation tab identifiers
-enum NavigationTabId { discover, libraries, myTelegram, liveTv, search, downloads, settings }
+enum NavigationTabId { discover, libraries, myTelegram, search, downloads, settings }
 
 /// Represents a navigation tab with its configuration
 class NavigationTab {
@@ -22,16 +22,15 @@ class NavigationTab {
   }
 
   /// Get the index for a tab ID in the visible tabs list
-  static int indexFor(NavigationTabId id, {required bool isOffline, bool hasLiveTv = false}) {
-    final tabs = getVisibleTabs(isOffline: isOffline, hasLiveTv: hasLiveTv);
+  static int indexFor(NavigationTabId id, {required bool isOffline}) {
+    final tabs = getVisibleTabs(isOffline: isOffline);
     return tabs.indexWhere((tab) => tab.id == id);
   }
 
   /// Get tabs filtered by offline mode and feature availability
-  static List<NavigationTab> getVisibleTabs({required bool isOffline, bool hasLiveTv = false}) {
+  static List<NavigationTab> getVisibleTabs({required bool isOffline}) {
     return allNavigationTabs.where((tab) {
       if (isOffline && tab.onlineOnly) return false;
-      if (tab.id == NavigationTabId.liveTv && !hasLiveTv) return false;
       // TDLib is unavailable on web; hide this surface everywhere on web.
       if (tab.id == NavigationTabId.myTelegram && kIsWeb) return false;
       return true;
@@ -44,7 +43,6 @@ class NavigationTab {
 String _getHomeLabel() => t.common.home;
 String _getLibrariesLabel() => t.navigation.libraries;
 String _getMyTelegramLabel() => t.navigation.myTelegram;
-String _getLiveTvLabel() => t.navigation.liveTv;
 String _getSearchLabel() => t.common.search;
 String _getDownloadsLabel() => t.navigation.downloads;
 String _getSettingsLabel() => t.common.settings;
@@ -65,7 +63,6 @@ const allNavigationTabs = [
     icon: Symbols.chat_rounded,
     getLabel: _getMyTelegramLabel,
   ),
-  NavigationTab(id: NavigationTabId.liveTv, onlineOnly: true, icon: Symbols.live_tv_rounded, getLabel: _getLiveTvLabel),
   NavigationTab(id: NavigationTabId.search, onlineOnly: true, icon: Symbols.search_rounded, getLabel: _getSearchLabel),
   NavigationTab(
     id: NavigationTabId.downloads,

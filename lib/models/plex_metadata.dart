@@ -149,6 +149,10 @@ class PlexMetadata with MultiServerFields {
   // Square background art URL (extracted from Image array, used for near-square hero layouts)
   final String? backgroundSquare;
 
+  /// First linked media part size in bytes (`Media[0].Part[0].size`) when the Plex JSON includes it.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  final int? primaryFileSize;
+
   /// Global unique identifier across all servers (serverId:ratingKey)
   String get globalKey => serverId != null ? buildGlobalKey(serverId!, ratingKey) : ratingKey;
 
@@ -249,6 +253,7 @@ class PlexMetadata with MultiServerFields {
     this.serverName,
     this.clearLogo,
     this.backgroundSquare,
+    this.primaryFileSize,
   });
 
   /// Create a copy of this metadata with optional field overrides
@@ -318,6 +323,7 @@ class PlexMetadata with MultiServerFields {
     String? serverName,
     String? clearLogo,
     String? backgroundSquare,
+    int? primaryFileSize,
   }) {
     return PlexMetadata(
       ratingKey: ratingKey ?? this.ratingKey,
@@ -385,6 +391,7 @@ class PlexMetadata with MultiServerFields {
       serverName: serverName ?? this.serverName,
       clearLogo: clearLogo ?? this.clearLogo,
       backgroundSquare: backgroundSquare ?? this.backgroundSquare,
+      primaryFileSize: primaryFileSize ?? this.primaryFileSize,
     );
   }
 
@@ -556,9 +563,27 @@ class PlexMetadata with MultiServerFields {
     return viewCount != null && viewCount! > 0;
   }
 
+  static int? extractPrimaryFileSizeFromPlexJson(Map<String, dynamic> json) {
+    try {
+      final media = json['Media'];
+      if (media is! List || media.isEmpty) return null;
+      final first = media.first;
+      if (first is! Map) return null;
+      final parts = first['Part'];
+      if (parts is! List || parts.isEmpty) return null;
+      final part = parts.first;
+      if (part is! Map) return null;
+      final s = part['size'];
+      if (s is int) return s;
+      if (s is num) return s.toInt();
+    } catch (_) {}
+    return null;
+  }
+
   factory PlexMetadata.fromJson(Map<String, dynamic> json) {
     try {
-      return _$PlexMetadataFromJson(kBlurArtwork ? _obfuscateJson(json) : json);
+      final parsed = _$PlexMetadataFromJson(kBlurArtwork ? _obfuscateJson(json) : json);
+      return parsed.copyWith(primaryFileSize: extractPrimaryFileSizeFromPlexJson(json));
     } on TypeError catch (e, st) {
       Sentry.captureException(e, stackTrace: st, withScope: (scope) {
         scope.setContexts('json', json);

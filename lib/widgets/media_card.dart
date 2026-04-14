@@ -24,6 +24,7 @@ import '../utils/provider_extensions.dart';
 import '../utils/snackbar_helper.dart';
 import 'media_context_menu.dart';
 import 'media_progress_bar.dart';
+import 'media_thumbnail_info_overlay.dart';
 import 'plex_optimized_image.dart';
 
 class MediaCard extends StatefulWidget {
@@ -299,7 +300,10 @@ class MediaCardState extends State<MediaCard> {
                         ),
                       ),
                       // Inlined _PosterOverlay
-                      if (item is PlexMetadata) _MediaCardHelpers.buildWatchProgress(context, item),
+                      if (item is PlexMetadata) ...[
+                        _MediaCardHelpers.buildWatchProgress(context, item),
+                        ..._MediaCardHelpers.posterTechnicalOverlayWidgets(item),
+                      ],
                     ],
                   ),
                 )
@@ -317,7 +321,10 @@ class MediaCardState extends State<MediaCard> {
                           mixedHubContext: widget.mixedHubContext,
                         ),
                       ),
-                      if (item is PlexMetadata) _MediaCardHelpers.buildWatchProgress(context, item),
+                      if (item is PlexMetadata) ...[
+                        _MediaCardHelpers.buildWatchProgress(context, item),
+                        ..._MediaCardHelpers.posterTechnicalOverlayWidgets(item),
+                      ],
                     ],
                   ),
                 ),
@@ -561,7 +568,10 @@ class _MediaCardList extends StatelessWidget {
                     borderRadius: BorderRadius.circular(tokens(context).radiusSm),
                     child: _buildPosterImage(context, item, isOffline: isOffline, localPosterPath: localPosterPath),
                   ),
-                  if (item is PlexMetadata) _MediaCardHelpers.buildWatchProgress(context, item as PlexMetadata),
+                  if (item is PlexMetadata) ...[
+                    _MediaCardHelpers.buildWatchProgress(context, item as PlexMetadata),
+                    ..._MediaCardHelpers.posterTechnicalOverlayWidgets(item as PlexMetadata),
+                  ],
                 ],
               ),
             ),
@@ -908,6 +918,14 @@ class _MediaCardHelpers {
           ),
       ],
     );
+  }
+
+  /// Duration + file size pill (movies, Telegram chat videos).
+  static List<Widget> posterTechnicalOverlayWidgets(PlexMetadata metadata) {
+    if (!shouldShowVideoPosterTechnicalOverlay(metadata)) return const [];
+    final line = videoFileTechnicalSummary(metadata);
+    if (line == null || line.isEmpty) return const [];
+    return [MediaThumbnailInfoOverlay(text: line)];
   }
 }
 
