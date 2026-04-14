@@ -17,6 +17,7 @@ class MyTelegramConfigScreen extends StatefulWidget {
 class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final TextEditingController _searchController = TextEditingController();
 
   final Map<int, TdlibPickerChatRow> _rowsByChatId = {};
   int _listLimit = 50;
@@ -31,6 +32,8 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
 
   /// Editable selection; only pushed to server when user taps Save.
   final Set<String> _draftShowInVideoIds = {};
+
+  String get _searchQuery => _searchController.text.trim().toLowerCase();
 
   SourceChatPickerBucket get _currentBucket =>
       SourceChatPickerBucket.values[_tabController.index];
@@ -59,6 +62,12 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     return list;
   }
 
+  List<TdlibPickerChatRow> get _filteredRows {
+    final query = _searchQuery;
+    if (query.isEmpty) return _visibleRows;
+    return _visibleRows.where((row) => row.title.toLowerCase().contains(query)).toList();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -74,10 +83,21 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     setState(() {});
   }
 
+  void _onSearchChanged(String _) {
+    setState(() {});
+  }
+
+  void _clearSearch() {
+    if (_searchController.text.isEmpty) return;
+    _searchController.clear();
+    setState(() {});
+  }
+
   @override
   void dispose() {
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -275,7 +295,8 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   @override
   Widget build(BuildContext context) {
     final mt = t.myTelegram;
-    final rows = _visibleRows;
+    final rows = _filteredRows;
+    final hasSearch = _searchQuery.isNotEmpty;
     return PopScope(
       canPop: !_saving,
       child: Scaffold(
@@ -316,6 +337,31 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              child: TextField(
+                controller: _searchController,
+                onChanged: _onSearchChanged,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: t.common.search,
+                  prefixIcon: const Padding(
+                    padding: EdgeInsetsDirectional.only(start: 12, end: 8),
+                    child: AppIcon(Symbols.search_rounded, fill: 1),
+                  ),
+                  prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          tooltip: t.common.clear,
+                          onPressed: _clearSearch,
+                          icon: const AppIcon(Symbols.close_rounded, fill: 1),
+                        )
+                      : null,
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.all(12),
@@ -324,36 +370,58 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : ListView(
-                      padding: const EdgeInsets.only(bottom: 24),
-                      children: [
-                        for (final row in rows)
-                          SwitchListTile.adaptive(
-                            secondary: CircleAvatar(
-                              child: Text(
-                                row.title.isNotEmpty ? row.title.substring(0, 1).toUpperCase() : '?',
+                  : rows.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const AppIcon(Symbols.search_rounded, fill: 1, size: 48),
+                                const SizedBox(height: 16),
+                                Text(hasSearch ? t.messages.noResultsFound : t.myTelegram.empty),
+                                if (hasSearch) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    t.search.tryDifferentTerm,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.only(bottom: 24),
+                          children: [
+                            for (final row in rows)
+                              SwitchListTile.adaptive(
+                                secondary: CircleAvatar(
+                                  child: Text(
+                                    row.title.isNotEmpty ? row.title.substring(0, 1).toUpperCase() : '?',
+                                  ),
+                                ),
+                                title: Text(row.title),
+                                subtitle: Text(mt.showInVideo),
+                                value: _draftShowInVideoIds.contains(row.chatId.toString()),
+                                onChanged: _saving ? null : (_) => _toggleRow(row),
+                              ),
+                            if (_loadingMore)
+                              const Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Center(child: CircularProgressIndicator()),
+                              ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              child: OutlinedButton.icon(
+                                onPressed: _loadingMore || _saving ? null : () => _loadChats(reset: false),
+                                icon: const AppIcon(Symbols.expand_more_rounded, fill: 1),
+                                label: Text(mt.loadMore),
                               ),
                             ),
-                            title: Text(row.title),
-                            subtitle: Text(mt.showInVideo),
-                            value: _draftShowInVideoIds.contains(row.chatId.toString()),
-                            onChanged: _saving ? null : (_) => _toggleRow(row),
-                          ),
-                        if (_loadingMore)
-                          const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Center(child: CircularProgressIndicator()),
-                          ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: OutlinedButton.icon(
-                            onPressed: _loadingMore || _saving ? null : () => _loadChats(reset: false),
-                            icon: const AppIcon(Symbols.expand_more_rounded, fill: 1),
-                            label: Text(mt.loadMore),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
             ),
           ],
         ),
