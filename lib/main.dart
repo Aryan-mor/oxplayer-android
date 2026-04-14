@@ -153,9 +153,9 @@ Future<void> _bootstrapApp() async {
     TvDetectionService.setTvOverride(true);
   }
 
-  // Initialize logger level based on debug setting
+  // Initialize logger level and auth debug UI based on debug setting
   final debugEnabled = settings.getEnableDebugLogging();
-  setLoggerLevel(debugEnabled);
+  applyDebugLoggingPreference(debugEnabled);
 
   // Log app version and git commit at startup
   final packageInfo = await PackageInfo.fromPlatform();

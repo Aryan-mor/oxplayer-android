@@ -1,7 +1,7 @@
 name: oxplayer
 description: "A beautiful Telegram client for organizing media."
 publish_to: "none"
-version: 1.31.3+67
+version: 1.1.0+0
 
 environment:
   sdk: ^3.8.1

@@ -2,6 +2,7 @@ import 'dart:collection';
 
 import 'package:logger/logger.dart';
 
+import '../services/auth_debug_service.dart';
 import 'log_redaction_manager.dart';
 
 /// Redacts sensitive information from log messages based on known values.
@@ -168,4 +169,10 @@ void setLoggerLevel(bool debugEnabled) {
 
   // Also set the static level for consistency
   Logger.level = newLevel;
+}
+
+/// Applies Settings → Debug Logging: console/logger level and in-app debug log capture + FAB.
+void applyDebugLoggingPreference(bool enabled) {
+  setLoggerLevel(enabled);
+  AuthDebugService.instance.applyDebugLoggingSetting(enabled);
 }

@@ -402,40 +402,71 @@ class OxChatMediaPage {
   /// Use as `from_message_id` with `offset: 0` for the following page — must match the batch, not a filtered subset.
   final int? nextHistoryFromMessageId;
 
-  /// When true, the next [fetchLiveChatVideos] page must use [SearchMessagesFilterDocument] with the same anchor.
+  /// True when the last merged batch ran a [SearchMessagesFilterDocument] pass (same anchor as video).
   final bool liveSearchUsesDocumentFilter;
 }
 
 /// TDLib requires a string; empty [query] means "no keyword filter" — must be `""`, not omitted or whitespace.
 const String _kLiveSearchChatMessagesQuery = '';
 
+/// Warms server-side search index for a peer: [viewMessages] on a known message id.
+/// If [chat] has no usable [Chat.lastMessage], performs **mandatory** [getChatHistory]
+/// (`from_message_id: 0`, `limit: 1`) and uses that message id (cold peer hydration).
 Future<void> _viewMessagesForSearchActivation({
   required TdlibFacade tdlib,
   required int chatId,
   td.Chat? chat,
 }) async {
-  final lastId = chat?.lastMessage?.id ?? 0;
-  if (lastId <= 0) {
+  var messageId = chat?.lastMessage?.id ?? 0;
+  if (messageId <= 0) {
     debugLogInfo(
-      'DEBUG: viewMessages skipped (no lastMessage id) chatId=$chatId',
+      'DEBUG: [SearchActivation] no last_message in snapshot — GetChatHistory(limit=1, from_message_id=0) '
+      'chatId=$chatId',
       type: LogType.backend,
     );
-    return;
+    try {
+      final hist = await tdlib.send(
+        td.GetChatHistory(
+          chatId: chatId,
+          fromMessageId: 0,
+          offset: 0,
+          limit: 1,
+          onlyLocal: false,
+        ),
+      );
+      final msgs = hist is td.Messages ? hist.messages : const <td.Message>[];
+      if (msgs.isEmpty) {
+        debugLogInfo(
+          'DEBUG: [SearchActivation] GetChatHistory returned 0 messages (empty chat or not yet loaded) chatId=$chatId',
+          type: LogType.backend,
+        );
+        return;
+      }
+      messageId = msgs.first.id;
+      debugLogInfo(
+        'DEBUG: [SearchActivation] using message_id=$messageId from cold history chatId=$chatId',
+        type: LogType.backend,
+      );
+    } catch (e) {
+      debugLogError('DEBUG: [SearchActivation] GetChatHistory failed chatId=$chatId: $e', type: LogType.backend);
+      return;
+    }
   }
+  if (messageId <= 0) return;
   try {
     await tdlib.send(
       td.ViewMessages(
         chatId: chatId,
-        messageIds: <int>[lastId],
+        messageIds: <int>[messageId],
         forceRead: false,
       ),
     );
     debugLogInfo(
-      'DEBUG: viewMessages completed for search index activation chatId=$chatId messageId=$lastId',
+      'DEBUG: [SearchActivation] viewMessages completed for search index chatId=$chatId messageId=$messageId',
       type: LogType.backend,
     );
   } catch (e) {
-    debugLogError('DEBUG: viewMessages failed chatId=$chatId: $e', type: LogType.backend);
+    debugLogError('DEBUG: [SearchActivation] viewMessages failed chatId=$chatId: $e', type: LogType.backend);
   }
 }
 
@@ -507,17 +538,6 @@ List<td.Message> _tdMessagesFromSearchResult(td.TdObject raw) {
   return const <td.Message>[];
 }
 
-String _debugTdMessageContentTag(td.Message message) {
-  final content = message.content;
-  if (content is td.MessageVideo) return 'MessageVideo';
-  if (content is td.MessageVideoNote) return 'MessageVideoNote';
-  if (content is td.MessageAnimation) return 'MessageAnimation';
-  if (content is td.MessageDocument) {
-    return 'MessageDocument(${content.document.mimeType.trim().isEmpty ? 'no-mime' : content.document.mimeType})';
-  }
-  return content.runtimeType.toString();
-}
-
 bool _tdlibDocumentMimeLooksLikeVideo(String mimeType) {
   final m = mimeType.trim().toLowerCase();
   if (m.isEmpty) return false;
@@ -556,6 +576,66 @@ bool _tdlibDocumentLooksLikeAnimationOrGif(td.Document doc) {
   final n = doc.fileName.trim().toLowerCase();
   if (n.endsWith('.gif')) return true;
   return false;
+}
+
+/// [SearchMessagesFilterDocument] path: keep **video/* MIME**, common MKV containers, or **.mkv / .mp4 / .avi / .mov** only.
+bool _documentPassesMergedGalleryDocumentPolicy(td.Document doc) {
+  if (_tdlibDocumentLooksLikeAnimationOrGif(doc)) return false;
+  final m = doc.mimeType.trim().toLowerCase();
+  if (m.startsWith('video/')) return true;
+  if (m == 'application/x-matroska' || m == 'application/mp4') return true;
+  final n = doc.fileName.trim().toLowerCase();
+  return n.endsWith('.mkv') ||
+      n.endsWith('.mp4') ||
+      n.endsWith('.avi') ||
+      n.endsWith('.mov');
+}
+
+OxChatMediaRow? _oxChatMediaRowFromDocumentMessageForMergedGallery(td.Message message, int chatId) {
+  final content = message.content;
+  if (content is! td.MessageDocument) return null;
+  final doc = content.document;
+  if (!_documentPassesMergedGalleryDocumentPolicy(doc)) return null;
+  final date = DateTime.fromMillisecondsSinceEpoch(message.date * 1000);
+  final fileId = doc.document.id.toString();
+  if (fileId.isEmpty) return null;
+  return OxChatMediaRow(
+    fileId: fileId,
+    messageId: message.id.toString(),
+    remoteFileId: doc.document.remote.uniqueId,
+    caption: content.caption.text,
+    messageDate: date.toIso8601String(),
+    fileName: doc.fileName,
+    chatId: chatId,
+    durationSeconds: null,
+  );
+}
+
+List<OxChatMediaRow> _rowsFromDocumentSearchForMergedGallery(List<td.Message> messages, int chatId) {
+  final out = <OxChatMediaRow>[];
+  final seen = <String>{};
+  for (final m in messages) {
+    final row = _oxChatMediaRowFromDocumentMessageForMergedGallery(m, chatId);
+    if (row == null) continue;
+    if (seen.add(row.messageId)) out.add(row);
+  }
+  return out;
+}
+
+List<OxChatMediaRow> _dedupeOxChatMediaRowsByMessageId(List<OxChatMediaRow> rows) {
+  final seen = <String>{};
+  return rows.where((r) => seen.add(r.messageId)).toList();
+}
+
+/// Newest first (Telegram-like ordering for the grid).
+List<OxChatMediaRow> _sortOxChatMediaRowsByMessageDateDesc(List<OxChatMediaRow> rows) {
+  final copy = List<OxChatMediaRow>.from(rows);
+  copy.sort((a, b) {
+    final da = DateTime.tryParse(a.messageDate ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final db = DateTime.tryParse(b.messageDate ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+    return db.compareTo(da);
+  });
+  return copy;
 }
 
 /// Maps a TDLib [td.Message] to [OxChatMediaRow] for chat video grid.
@@ -629,25 +709,14 @@ List<OxChatMediaRow> _rowsFromLiveVideoMessages(List<td.Message> messages, int c
   return out;
 }
 
-List<OxChatMediaRow> _dedupeOxChatMediaRowsByMessageId(List<OxChatMediaRow> rows) {
-  final seen = <String>{};
-  return rows.where((r) => seen.add(r.messageId)).toList();
+/// Next `from_message_id` after a merged Video + Document search at the same anchor (smaller id = older).
+int? _nextSearchAnchorFromVideoDocBatches(List<td.Message> videoMsgs, List<td.Message> docMsgs) {
+  final ids = <int>[];
+  if (videoMsgs.isNotEmpty) ids.add(videoMsgs.last.id);
+  if (docMsgs.isNotEmpty) ids.add(docMsgs.last.id);
+  if (ids.isEmpty) return null;
+  return ids.reduce((a, b) => a < b ? a : b);
 }
-
-/// Newest first (Telegram-like ordering for the grid).
-List<OxChatMediaRow> _sortOxChatMediaRowsByMessageDateDesc(List<OxChatMediaRow> rows) {
-  final copy = List<OxChatMediaRow>.from(rows);
-  copy.sort((a, b) {
-    final da = DateTime.tryParse(a.messageDate ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
-    final db = DateTime.tryParse(b.messageDate ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
-    return db.compareTo(da);
-  });
-  return copy;
-}
-
-/// [searchChatMessages] / [getChatHistory] return newest-first; [batch.last] is chronologically oldest = next `from_message_id`.
-int? _liveSearchPaginationAnchorFromBatch(List<td.Message> batch) =>
-    batch.isEmpty ? null : batch.last.id;
 
 bool _isChatLastMessageOlderThanDays(td.Chat? chat, int days) {
   final lm = chat?.lastMessage;
@@ -664,44 +733,6 @@ List<td.Message> _filterTdMessagesForForumTopic(
 }) {
   if (!isForum || topicId == 0) return messages;
   return messages.where((m) => m.messageThreadId == topicId).toList(growable: false);
-}
-
-/// When [searchChatMessages] returns no usable rows (cold index), map [GetChatHistory] primer messages locally.
-OxChatMediaPage? _oxChatMediaPageFromPrimerIfSearchEmpty({
-  required List<td.Message> primerMessages,
-  required int chatId,
-  required int tdLimit,
-  required bool isForum,
-  required int topicId,
-  required bool liveSearchUsesDocumentFilter,
-}) {
-  if (primerMessages.isEmpty) return null;
-  final filtered = _filterTdMessagesForForumTopic(
-    primerMessages,
-    topicId: topicId,
-    isForum: isForum,
-  );
-  debugLogInfo(
-    'DEBUG: live search returned 0 rows; primer fallback topicFiltered=${filtered.length} primerRaw=${primerMessages.length} '
-    'topicId=$topicId isForum=$isForum',
-    type: LogType.backend,
-  );
-  final rows = _sortOxChatMediaRowsByMessageDateDesc(
-    _dedupeOxChatMediaRowsByMessageId(_rowsFromLiveVideoMessages(filtered, chatId)),
-  );
-  if (rows.isEmpty) return null;
-  final contributing = filtered
-      .where((m) => _oxChatMediaRowFromLiveTdVideoMessage(m, chatId) != null)
-      .toList(growable: false);
-  final anchor = contributing.isEmpty ? null : _liveSearchPaginationAnchorFromBatch(contributing);
-  final hasMore = primerMessages.length >= tdLimit && anchor != null && anchor > 0;
-  return OxChatMediaPage(
-    items: rows,
-    total: rows.length + (hasMore ? 1 : 0),
-    hasMoreHistory: hasMore,
-    nextHistoryFromMessageId: anchor,
-    liveSearchUsesDocumentFilter: liveSearchUsesDocumentFilter,
-  );
 }
 
 class DataRepository {
@@ -722,6 +753,14 @@ class DataRepository {
 
   /// Avoid repeated [GetChat]/[LoadChats]/[CreatePrivateChat] when opening the same chat’s media gallery.
   final Map<String, int> _resolvedTdlibChatIdCache = <String, int>{};
+
+  /// After [searchChatMessages] returns empty but [getChatHistory] probe finds videos, use history-only
+  /// pagination for this many additional [fetchLiveChatVideos] calls (server index unreliable for this peer).
+  static const int _kLiveGalleryHistoryOnlyFollowUpPages = 2;
+
+  final Map<String, int> _liveGalleryHistoryOnlyPagesRemaining = <String, int>{};
+
+  String _liveGallerySessionKey(int chatId, int effectiveThreadId) => '${chatId}_$effectiveThreadId';
 
   bool _tdlibInitialized = false;
   final Set<String> _thumbnailRecoveryInFlight = <String>{};
@@ -1506,10 +1545,11 @@ class DataRepository {
   }
 
   /// Resolves `message_thread_id` for [searchChatMessages]:
-  /// - Private / bot DMs / saved / **basic group**: omit `message_thread_id` in JSON; logical thread is `0`.
-  /// - **Supergroup (non-forum)** / **channel**: send `message_thread_id: 0`.
-  /// - **Forum — "All"**: send `message_thread_id: 0` (from [requestedMessageThreadId]).
-  /// - **Forum — topic tab**: send `message_thread_id` = topic id ([requestedMessageThreadId]).
+  /// - Private / bot DMs / saved / **basic group**: send **`message_thread_id: 0`** explicitly (some TDLib builds
+  ///   mis-scope search when the field is omitted).
+  /// - **Supergroup (non-forum)** / **channel**: `message_thread_id: 0`.
+  /// - **Forum — "All"**: `message_thread_id: 0`.
+  /// - **Forum — topic tab**: `message_thread_id` = topic id ([requestedMessageThreadId]).
   /// [chat_id] is always the resolved TDLib id (e.g. supergroups/channels `-100…`).
   Future<({int effectiveThreadId, bool omitMessageThreadId, bool isForum, td.Chat? chat})>
   _resolveLiveVideoSearchThreadParams({
@@ -1548,7 +1588,7 @@ class DataRepository {
         }
         return (effectiveThreadId: 0, omitMessageThreadId: false, isForum: false, chat: resolved);
       }
-      return (effectiveThreadId: 0, omitMessageThreadId: true, isForum: false, chat: resolved);
+      return (effectiveThreadId: 0, omitMessageThreadId: false, isForum: false, chat: resolved);
     } catch (e) {
       debugLogError(
         'DEBUG: GetChat failed in _resolveLiveVideoSearchThreadParams: $e',
@@ -1607,81 +1647,16 @@ class DataRepository {
     );
   }
 
-  /// Logs approximate video count and the calendar date of [fromMessageId] (anchor) for Load More debugging.
-  Future<void> _logLiveSearchLoadMoreDiagnostics({
-    required int chatId,
-    required int fromMessageId,
-    required int gapPass,
-  }) async {
-    try {
-      final c = await _tdlib.send(
-        td.GetChatMessageCount(
-          chatId: chatId,
-          filter: const td.SearchMessagesFilterVideo(),
-          returnLocal: false,
-        ),
-      );
-      final n = c is td.Count ? c.count : -1;
-      debugLogInfo(
-        'DEBUG: Load More gapPass=$gapPass getChatMessageCount(video)≈$n chatId=$chatId',
-        type: LogType.backend,
-      );
-    } catch (e) {
-      debugLogInfo('DEBUG: Load More getChatMessageCount failed: $e', type: LogType.backend);
-    }
-    try {
-      final m = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: fromMessageId));
-      if (m is td.Message) {
-        final d = DateTime.fromMillisecondsSinceEpoch(m.date * 1000);
-        debugLogInfo(
-          'DEBUG: Load More from_message_id=$fromMessageId anchorDate=${d.toIso8601String()} '
-          '(if this date stops moving backward, anchor logic is wrong) chatId=$chatId',
-          type: LogType.backend,
-        );
-      }
-    } catch (e) {
-      debugLogInfo(
-        'DEBUG: Load More GetMessage($fromMessageId) failed (deleted/purged?): $e chatId=$chatId',
-        type: LogType.backend,
-      );
-    }
-  }
-
-  /// When [searchChatMessages] returns an empty batch while paginating, jump backward with [GetChatHistory].
-  Future<int?> _jumpPastSearchIndexGap({
+  /// When [searchChatMessages] returns **zero TDLib messages**, advance past a "media desert" with [getChatHistory]
+  /// (`limit`: 100, `offset`: 0), then use the oldest message in the batch as the next `from_message_id`.
+  /// Forum topic tabs: [effectiveThreadId] scopes topic filtering for choosing a stable next anchor when the
+  /// history batch mixes threads ([getChatHistory] has no thread id in this TDLib Dart binding).
+  Future<int?> _jumpSearchPastMediaDesert({
     required int chatId,
     required int anchor,
+    required int effectiveThreadId,
+    required bool isForum,
   }) async {
-    debugLogInfo(
-      'DEBUG: empty searchChatMessages batch; gap recovery GetChat + GetChatHistory(limit=100, offset=0) '
-      'chatId=$chatId anchor=$anchor',
-      type: LogType.backend,
-    );
-    td.Chat? chat;
-    try {
-      final o = await _tdlib.send(td.GetChat(chatId: chatId));
-      if (o is td.Chat) chat = o;
-    } catch (e) {
-      debugLogError('DEBUG: gap recovery GetChat failed: $e', type: LogType.backend);
-      return null;
-    }
-    final lm = chat?.lastMessage;
-    final lastMsgId = lm?.id ?? 0;
-    debugLogInfo(
-      'DEBUG: gap recovery GetChat last_message.id=$lastMsgId '
-      '${lm == null ? '(null — chat may be incomplete)' : ''}',
-      type: LogType.backend,
-    );
-    if (lastMsgId > 0 && anchor > lastMsgId) {
-      debugLogError(
-        'DEBUG: gap recovery anchor $anchor > last_message.id $lastMsgId (unexpected ordering)',
-        type: LogType.backend,
-      );
-    }
-    if (anchor <= 1) {
-      debugLogInfo('DEBUG: gap recovery anchor at floor (<=1), stopping pagination chatId=$chatId', type: LogType.backend);
-      return null;
-    }
     try {
       final hist = await _tdlib.send(
         td.GetChatHistory(
@@ -1693,189 +1668,364 @@ class DataRepository {
         ),
       );
       final msgs = hist is td.Messages ? hist.messages : const <td.Message>[];
-      debugLogInfo(
-        'DEBUG: gap recovery GetChatHistory from_message_id=$anchor limit=100 offset=0 raw=${msgs.length}',
-        type: LogType.backend,
-      );
       if (msgs.isEmpty) {
         return null;
       }
-      final oldest = msgs.last.id;
-      if (oldest >= anchor) {
+      final rawOldest = msgs.last.id;
+      final filtered = _filterTdMessagesForForumTopic(
+        msgs,
+        topicId: effectiveThreadId,
+        isForum: isForum,
+      );
+      final int nextAnchor;
+      if (filtered.isNotEmpty) {
+        nextAnchor = filtered.last.id;
+      } else {
+        nextAnchor = rawOldest;
+      }
+      if (anchor > 0 && nextAnchor >= anchor) {
         debugLogError(
-          'DEBUG: gap recovery oldest id $oldest did not move backward vs anchor $anchor',
+          'DEBUG: [JumpSearch] nextAnchor $nextAnchor did not move backward vs anchor $anchor chatId=$chatId',
           type: LogType.backend,
         );
         return null;
       }
       debugLogInfo(
-        'DEBUG: gap recovery next search anchor oldestRawBatch=$oldest (skip inactive / index gap)',
+        '[JumpSearch] 0 videos found, jumping history from ID $anchor to ID $nextAnchor',
         type: LogType.backend,
       );
-      return oldest;
+      return nextAnchor;
     } catch (e) {
-      debugLogError('DEBUG: gap recovery GetChatHistory failed: $e', type: LogType.backend);
+      debugLogError('DEBUG: [JumpSearch] GetChatHistory failed chatId=$chatId anchor=$anchor: $e', type: LogType.backend);
       return null;
     }
   }
 
-  /// Runs [searchChatMessages] with [offset] 0 only; on empty **continuation** batches, advances anchor via history.
-  Future<OxChatMediaPage> _runLiveSearchWithGapRecovery({
+  static const int _kLiveGalleryHistoryProbeLimit = 50;
+
+  /// Local scan of [getChatHistory] messages for gallery rows (server search index bypass).
+  Future<({List<td.Message> filtered, List<OxChatMediaRow> mergedRows})> _rawHistoryProbeForLiveGallery({
     required int chatId,
-    required bool isFirstPage,
-    required int? searchFromMessageId,
-    required td.SearchMessagesFilter filter,
-    required String filterLabel,
-    required bool usedDocumentFilter,
+    required int fromMessageId,
+    required int effectiveThreadId,
+    required bool isForum,
+    int limit = _kLiveGalleryHistoryProbeLimit,
+  }) async {
+    final hist = await _tdlib.send(
+      td.GetChatHistory(
+        chatId: chatId,
+        fromMessageId: fromMessageId,
+        offset: 0,
+        limit: limit,
+        onlyLocal: false,
+      ),
+    );
+    final msgs = hist is td.Messages ? hist.messages : const <td.Message>[];
+    final filtered = _filterTdMessagesForForumTopic(
+      msgs,
+      topicId: effectiveThreadId,
+      isForum: isForum,
+    );
+    debugLogInfo(
+      'DEBUG: [LiveGallery] HistoryProbe getChatHistory from_message_id=$fromMessageId limit=$limit '
+      'raw=${msgs.length} topicFiltered=${filtered.length} chatId=$chatId',
+      type: LogType.backend,
+    );
+    final videoRows = _rowsFromLiveVideoMessages(filtered, chatId);
+    final docRows = _rowsFromDocumentSearchForMergedGallery(filtered, chatId);
+    final mergedRows = _sortOxChatMediaRowsByMessageDateDesc(
+      _dedupeOxChatMediaRowsByMessageId(<OxChatMediaRow>[...videoRows, ...docRows]),
+    );
+    return (filtered: filtered, mergedRows: mergedRows);
+  }
+
+  /// [searchChatMessages]: [SearchMessagesFilterVideo] first; if raw count is less than [tdLimit], same-anchor
+  /// [SearchMessagesFilterDocument]. Merge, local-filter documents to video MIME / allowed extensions, sort by date desc.
+  /// When **both** searches return zero raw messages: run [getChatHistory] probe (limit 50) before any 100-message jump;
+  /// if the probe finds videos the index missed, enter history-only mode for follow-up pages.
+  Future<OxChatMediaPage> _runLiveVideoSearchWithJumpSearch({
+    required int chatId,
+    required int searchAnchor,
     required int effectiveThreadId,
     required bool omitMessageThreadId,
     required int tdLimit,
+    required bool isForum,
   }) async {
-    var anchor = searchFromMessageId;
-    const maxGapPasses = 6;
-    for (var gapPass = 0; gapPass < maxGapPasses; gapPass++) {
-      if (!isFirstPage && anchor != null && anchor > 0) {
-        await _logLiveSearchLoadMoreDiagnostics(chatId: chatId, fromMessageId: anchor, gapPass: gapPass);
-      }
+    var anchor = searchAnchor;
+    if (anchor < 0) anchor = 0;
+    final sessionKey = _liveGallerySessionKey(chatId, effectiveThreadId);
 
-      final raw = await _sendSearchChatMessagesFiltered(
-        chatId: chatId,
-        tdLimit: tdLimit,
-        filter: filter,
-        effectiveThreadId: effectiveThreadId,
-        omitMessageThreadId: omitMessageThreadId,
-        continueFromMessageId: anchor,
-        filterLabel: gapPass == 0 ? filterLabel : '$filterLabel gapPass=$gapPass',
-      );
-      final page = _oxChatMediaPageFromSearchRaw(
-        raw: raw,
-        chatId: chatId,
-        tdLimit: tdLimit,
-        usedDocumentFilter: usedDocumentFilter,
-      );
-
-      if (page.items.isNotEmpty) {
-        if (!isFirstPage && page.nextHistoryFromMessageId != null) {
-          final a = page.nextHistoryFromMessageId!;
+    var historyOnlyLeft = _liveGalleryHistoryOnlyPagesRemaining[sessionKey] ?? 0;
+    if (historyOnlyLeft > 0) {
+      try {
+        final probe = await _rawHistoryProbeForLiveGallery(
+          chatId: chatId,
+          fromMessageId: anchor,
+          effectiveThreadId: effectiveThreadId,
+          isForum: isForum,
+          limit: _kLiveGalleryHistoryProbeLimit,
+        );
+        if (probe.filtered.isEmpty) {
+          _liveGalleryHistoryOnlyPagesRemaining.remove(sessionKey);
           debugLogInfo(
-            'DEBUG: Load More nextHistoryFromMessageId=$a (strict oldest raw message id in batch) chatId=$chatId',
+            'DEBUG: [LiveGallery] HistoryOnlyMode probe empty — clearing mode, falling back to search chatId=$chatId',
             type: LogType.backend,
           );
+        } else {
+          historyOnlyLeft -= 1;
+          if (historyOnlyLeft <= 0) {
+            _liveGalleryHistoryOnlyPagesRemaining.remove(sessionKey);
+          } else {
+            _liveGalleryHistoryOnlyPagesRemaining[sessionKey] = historyOnlyLeft;
+          }
+          final nextAnchor = probe.filtered.last.id;
+          final hasMore = nextAnchor > 0;
+          final sorted = probe.mergedRows;
+          debugLogInfo(
+            'DEBUG: [LiveGallery] HistoryOnlyMode pagesLeft=$historyOnlyLeft displayable=${sorted.length} '
+            'nextAnchor=$nextAnchor chatId=$chatId',
+            type: LogType.backend,
+          );
+          return OxChatMediaPage(
+            items: sorted,
+            total: sorted.length + (hasMore ? 1 : 0),
+            hasMoreHistory: hasMore,
+            nextHistoryFromMessageId: nextAnchor,
+            liveSearchUsesDocumentFilter: false,
+          );
         }
-        return page;
+      } catch (e) {
+        debugLogError('DEBUG: [LiveGallery] HistoryOnlyMode probe failed chatId=$chatId: $e', type: LogType.backend);
+        _liveGalleryHistoryOnlyPagesRemaining.remove(sessionKey);
       }
-
-      if (isFirstPage) {
-        return page;
-      }
-
-      if (anchor == null || anchor <= 0) {
-        return OxChatMediaPage(
-          items: const [],
-          total: 0,
-          hasMoreHistory: false,
-          liveSearchUsesDocumentFilter: usedDocumentFilter,
-        );
-      }
-
-      final jumped = await _jumpPastSearchIndexGap(chatId: chatId, anchor: anchor);
-      if (jumped == null) {
-        return OxChatMediaPage(
-          items: const [],
-          total: 0,
-          hasMoreHistory: false,
-          liveSearchUsesDocumentFilter: usedDocumentFilter,
-        );
-      }
-      anchor = jumped;
     }
 
-    return OxChatMediaPage(
-      items: const [],
-      total: 0,
-      hasMoreHistory: false,
-      liveSearchUsesDocumentFilter: usedDocumentFilter,
-    );
-  }
+    const maxPasses = 2000;
+    for (var pass = 0; pass < maxPasses; pass++) {
+      final rawVideo = await _sendSearchChatMessagesFiltered(
+        chatId: chatId,
+        tdLimit: tdLimit,
+        filter: const td.SearchMessagesFilterVideo(),
+        effectiveThreadId: effectiveThreadId,
+        omitMessageThreadId: omitMessageThreadId,
+        continueFromMessageId: anchor > 0 ? anchor : null,
+        filterLabel: pass == 0 ? 'SearchMessagesFilterVideo' : 'SearchMessagesFilterVideo jumpPass=$pass',
+      );
+      final videoMsgs = _tdMessagesFromSearchResult(rawVideo);
 
-  OxChatMediaPage _oxChatMediaPageFromSearchRaw({
-    required td.TdObject raw,
-    required int chatId,
-    required int tdLimit,
-    required bool usedDocumentFilter,
-  }) {
-    final msgs = _tdMessagesFromSearchResult(raw);
-    final rawCount = msgs.length;
-    final preview = msgs.take(20).map(_debugTdMessageContentTag).join(', ');
-    final foundExtra = raw is td.FoundMessages ? ' nextOffset=${raw.nextOffset}' : '';
-    debugLogInfo(
-      'DEBUG: live chat search raw TDLib message count=$rawCount$foundExtra preview=[$preview]',
-      type: LogType.backend,
-    );
+      var docMsgs = const <td.Message>[];
+      if (videoMsgs.length < tdLimit) {
+        final rawDoc = await _sendSearchChatMessagesFiltered(
+          chatId: chatId,
+          tdLimit: tdLimit,
+          filter: const td.SearchMessagesFilterDocument(),
+          effectiveThreadId: effectiveThreadId,
+          omitMessageThreadId: omitMessageThreadId,
+          continueFromMessageId: anchor > 0 ? anchor : null,
+          filterLabel: pass == 0
+              ? 'SearchMessagesFilterDocument(supplement)'
+              : 'SearchMessagesFilterDocument(supplement jumpPass=$pass)',
+        );
+        docMsgs = _tdMessagesFromSearchResult(rawDoc);
+      }
 
-    final rows = _rowsFromLiveVideoMessages(msgs, chatId);
-    debugLogInfo(
-      'DEBUG: live chat search after exclusions (video notes / GIFs) keptRows=${rows.length} (raw was $rawCount)',
-      type: LogType.backend,
-    );
-    if (rawCount > 0 && rows.isEmpty) {
-      debugLogError(
-        'DEBUG: live chat search dropped all $rawCount TDLib messages in processVideoMessages '
-        '(video notes / animations / non-video documents)',
+      final videoRows = _rowsFromLiveVideoMessages(videoMsgs, chatId);
+      final docRows = _rowsFromDocumentSearchForMergedGallery(docMsgs, chatId);
+      final mergedRows = _sortOxChatMediaRowsByMessageDateDesc(
+        _dedupeOxChatMediaRowsByMessageId(<OxChatMediaRow>[...videoRows, ...docRows]),
+      );
+
+      final String sourceLabel;
+      if (videoRows.isNotEmpty && docRows.isNotEmpty) {
+        sourceLabel = 'merge(FilterVideo+FilterDocument)';
+      } else if (videoRows.isNotEmpty) {
+        sourceLabel = 'FilterVideo';
+      } else if (docRows.isNotEmpty) {
+        sourceLabel = 'FilterDocument';
+      } else {
+        sourceLabel = 'none';
+      }
+
+      if (mergedRows.isNotEmpty) {
+        _liveGalleryHistoryOnlyPagesRemaining.remove(sessionKey);
+        final nextAnchor = _nextSearchAnchorFromVideoDocBatches(videoMsgs, docMsgs);
+        final hasMore = nextAnchor != null && nextAnchor > 0;
+        debugLogInfo(
+          'DEBUG: [LiveGallery] batch source=$sourceLabel videoRaw=${videoMsgs.length} docRaw=${docMsgs.length} '
+          'displayable=${mergedRows.length} nextAnchor=$nextAnchor hasMore=$hasMore chatId=$chatId',
+          type: LogType.backend,
+        );
+        return OxChatMediaPage(
+          items: mergedRows,
+          total: mergedRows.length + (hasMore ? 1 : 0),
+          hasMoreHistory: hasMore,
+          nextHistoryFromMessageId: nextAnchor,
+          liveSearchUsesDocumentFilter: docMsgs.isNotEmpty,
+        );
+      }
+
+      debugLogInfo(
+        'DEBUG: [LiveGallery] zero displayable after merge source=$sourceLabel videoRaw=${videoMsgs.length} '
+        'docRaw=${docMsgs.length} chatId=$chatId',
         type: LogType.backend,
       );
+
+      if (videoMsgs.isNotEmpty || docMsgs.isNotEmpty) {
+        final oldestCombined = _nextSearchAnchorFromVideoDocBatches(videoMsgs, docMsgs);
+        if (oldestCombined == null) {
+          return const OxChatMediaPage(items: [], total: 0, hasMoreHistory: false);
+        }
+        if (anchor > 0 && oldestCombined >= anchor) {
+          return const OxChatMediaPage(items: [], total: 0, hasMoreHistory: false);
+        }
+        anchor = oldestCombined;
+        continue;
+      }
+
+      try {
+        final probeResult = await _rawHistoryProbeForLiveGallery(
+          chatId: chatId,
+          fromMessageId: anchor,
+          effectiveThreadId: effectiveThreadId,
+          isForum: isForum,
+          limit: _kLiveGalleryHistoryProbeLimit,
+        );
+        final probeFiltered = probeResult.filtered;
+        final probeMerged = probeResult.mergedRows;
+        debugLogInfo(
+          'DEBUG: [LiveGallery] HistoryProbe (search index empty) topicFiltered=${probeFiltered.length} '
+          'displayable=${probeMerged.length} chatId=$chatId',
+          type: LogType.backend,
+        );
+
+        if (probeMerged.isNotEmpty) {
+          _liveGalleryHistoryOnlyPagesRemaining[sessionKey] = _kLiveGalleryHistoryOnlyFollowUpPages;
+          final nextAnchor = probeFiltered.last.id;
+          final hasMore = nextAnchor > 0;
+          debugLogInfo(
+            'DEBUG: [LiveGallery] SelfHeal: index empty but HistoryProbe found ${probeMerged.length} videos — '
+            'HistoryOnlyMode followUps=$_kLiveGalleryHistoryOnlyFollowUpPages nextAnchor=$nextAnchor chatId=$chatId',
+            type: LogType.backend,
+          );
+          return OxChatMediaPage(
+            items: probeMerged,
+            total: probeMerged.length + (hasMore ? 1 : 0),
+            hasMoreHistory: hasMore,
+            nextHistoryFromMessageId: nextAnchor,
+            liveSearchUsesDocumentFilter: false,
+          );
+        }
+
+        if (probeFiltered.isNotEmpty) {
+          final step = probeFiltered.last.id;
+          if (anchor > 0 && step >= anchor) {
+            return const OxChatMediaPage(items: [], total: 0, hasMoreHistory: false);
+          }
+          debugLogInfo(
+            'DEBUG: [LiveGallery] HistoryProbe found no videos; advancing anchor from $anchor to $step (no 100-jump yet) '
+            'chatId=$chatId',
+            type: LogType.backend,
+          );
+          anchor = step;
+          continue;
+        }
+
+        final jumped = await _jumpSearchPastMediaDesert(
+          chatId: chatId,
+          anchor: anchor,
+          effectiveThreadId: effectiveThreadId,
+          isForum: isForum,
+        );
+        if (jumped == null) {
+          return const OxChatMediaPage(items: [], total: 0, hasMoreHistory: false);
+        }
+        anchor = jumped;
+      } catch (e) {
+        debugLogError('DEBUG: [LiveGallery] HistoryProbe failed chatId=$chatId: $e', type: LogType.backend);
+        final jumped = await _jumpSearchPastMediaDesert(
+          chatId: chatId,
+          anchor: anchor,
+          effectiveThreadId: effectiveThreadId,
+          isForum: isForum,
+        );
+        if (jumped == null) {
+          return const OxChatMediaPage(items: [], total: 0, hasMoreHistory: false);
+        }
+        anchor = jumped;
+      }
     }
 
-    final anchor = _liveSearchPaginationAnchorFromBatch(msgs);
-    final hasMoreRaw = msgs.length >= tdLimit && anchor != null && anchor > 0;
-    debugLogInfo(
-      'DEBUG: live chat search pagination anchor message_id=$anchor (oldest raw in batch → next from_message_id) '
-      'rawBatch=${msgs.length} hasMoreRaw=$hasMoreRaw tdLimit=$tdLimit',
-      type: LogType.backend,
-    );
-
-    if (raw is td.FoundMessages) {
-      return OxChatMediaPage(
-        items: rows,
-        total: rows.length + (hasMoreRaw ? 1 : 0),
-        hasMoreHistory: hasMoreRaw,
-        nextHistoryFromMessageId: anchor,
-        liveSearchUsesDocumentFilter: usedDocumentFilter,
-      );
-    }
-    if (raw is td.Messages) {
-      return OxChatMediaPage(
-        items: rows,
-        total: rows.length + (hasMoreRaw ? 1 : 0),
-        hasMoreHistory: hasMoreRaw,
-        nextHistoryFromMessageId: anchor,
-        liveSearchUsesDocumentFilter: usedDocumentFilter,
-      );
-    }
-    return OxChatMediaPage(
-      items: rows,
-      total: rows.length,
-      hasMoreHistory: false,
-      liveSearchUsesDocumentFilter: usedDocumentFilter,
-    );
+    return const OxChatMediaPage(items: [], total: 0, hasMoreHistory: false);
   }
 
-  /// My Telegram **live** video grid: [searchChatMessages] ([SearchMessagesFilterVideo], optionally
-  /// [SearchMessagesFilterDocument]). [GetChat] (via [_resolveLiveVideoSearchThreadParams]) supplies `last_message.id`
-  /// for the first page anchor; inactive chats (last message older than 30 days) get a [GetChatHistory] `limit: 1` wake-up.
-  /// Forum **All**: `messageThreadId: 0`; topic tab: that topic’s id.
-  /// Pagination: page 2+ `from_message_id` = oldest **raw** message id from the previous batch, `offset: 0`.
+  /// Retries [GetChat] up to 3 times. Whenever [last_message] is null or id is less than or equal to 0, runs mandatory
+  /// [getChatHistory] (`from_message_id: 0`, `limit: 1`) and [_viewMessagesForSearchActivation] before retrying,
+  /// so the peer is hydrated and the search index can activate. [searchChatMessages] must run only after this
+  /// (for the first page) plus [OpenChat].
+  Future<td.Chat?> _hydratePeerForLiveGallerySearch(int chatId) async {
+    td.Chat? chat;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final o = await _tdlib.send(td.GetChat(chatId: chatId));
+        if (o is td.Chat) chat = o;
+      } catch (e) {
+        debugLogError(
+          'DEBUG: [PeerHydration] GetChat failed attempt=${attempt + 1} chatId=$chatId: $e',
+          type: LogType.backend,
+        );
+      }
+
+      final lastId = chat?.lastMessage?.id ?? 0;
+      if (lastId > 0) {
+        await _viewMessagesForSearchActivation(tdlib: _tdlib, chatId: chatId, chat: chat);
+        debugLogInfo(
+          'DEBUG: [PeerHydration] success via GetChat last_message id=$lastId attempt=${attempt + 1} chatId=$chatId',
+          type: LogType.backend,
+        );
+        return chat;
+      }
+
+      debugLogInfo(
+        'DEBUG: [PeerHydration] zero-metadata — mandatory GetChatHistory(limit=1, from_message_id=0) + activation '
+        'attempt=${attempt + 1} chatId=$chatId',
+        type: LogType.backend,
+      );
+      await _viewMessagesForSearchActivation(tdlib: _tdlib, chatId: chatId, chat: null);
+      await Future<void>.delayed(Duration(milliseconds: 120 + attempt * 80));
+    }
+
+    try {
+      final o = await _tdlib.send(td.GetChat(chatId: chatId));
+      if (o is td.Chat) {
+        final c = o;
+        chat = c;
+        final lastId = c.lastMessage?.id ?? 0;
+        if (lastId > 0) {
+          await _viewMessagesForSearchActivation(tdlib: _tdlib, chatId: chatId, chat: c);
+        }
+      }
+    } catch (e) {
+      debugLogError('DEBUG: [PeerHydration] final GetChat failed chatId=$chatId: $e', type: LogType.backend);
+    }
+    debugLogInfo('DEBUG: [PeerHydration] completed after 3 attempts chatId=$chatId', type: LogType.backend);
+    return chat;
+  }
+
+  /// My Telegram **live** video grid: [searchChatMessages] [SearchMessagesFilterVideo] plus, when the video batch has
+  /// fewer than `limit` messages, [SearchMessagesFilterDocument] at the same anchor (`limit` 30, `offset` 0). Documents are filtered locally to
+  /// video MIME / allowed extensions. First page uses `from_message_id: 0`; page 2+ uses the merged batch oldest id.
+  /// [JumpSearch] runs only when **both** searches return zero TDLib messages.
+  /// Forum **All**: `message_thread_id: 0`; topic tab: that topic’s id.
   Future<OxChatMediaPage> fetchLiveChatVideos({
     required String tdlibChatId,
     int messageThreadId = 0,
     int? continueFromMessageId,
-    bool continueWithDocumentFilter = false,
   }) async {
-    const tdLimit = 20;
+    const tdLimit = 30;
     final isFirstPage = continueFromMessageId == null || continueFromMessageId <= 0;
     debugLogInfo(
       'DEBUG: fetchLiveChatVideos tdlibChatId=$tdlibChatId thread=$messageThreadId '
-      'continueMsg=$continueFromMessageId docCont=$continueWithDocumentFilter isFirstPage=$isFirstPage',
+      'continueMsg=$continueFromMessageId isFirstPage=$isFirstPage',
       type: LogType.backend,
     );
 
@@ -1911,6 +2061,9 @@ class DataRepository {
         chatId: chatId,
         requestedMessageThreadId: messageThreadId,
       );
+      if (isFirstPage) {
+        _liveGalleryHistoryOnlyPagesRemaining.remove(_liveGallerySessionKey(chatId, threadParams.effectiveThreadId));
+      }
       final chatSnap = threadParams.chat;
       if (chatSnap != null) {
         _debugLogGetChatMessageIdHints(chatSnap);
@@ -1921,31 +2074,16 @@ class DataRepository {
         type: LogType.backend,
       );
 
-      final lastMsg = chatSnap?.lastMessage;
-      final int? lastMessageId = (lastMsg != null && lastMsg.id > 0) ? lastMsg.id : null;
-      if (lastMsg == null || lastMsg.id <= 0) {
-        debugLogError(
-          'GetChat last_message.id is ${lastMsg == null ? 'null' : lastMsg.id} — chat may not be fully loaded in TDLib yet '
-          'chatId=$chatId',
-          type: LogType.backend,
-        );
+      final int searchAnchor;
+      if (isFirstPage) {
+        searchAnchor = 0;
       } else {
+        searchAnchor = continueFromMessageId;
         debugLogInfo(
-          'GetChat last_message.id=$lastMessageId (first searchChatMessages anchor) chatId=$chatId',
+          'DEBUG: live search pagination from_message_id=$searchAnchor (oldest raw id from prior batch) chatId=$chatId',
           type: LogType.backend,
         );
       }
-
-      // When [isFirstPage] is false, [continueFromMessageId] is non-null and > 0 (see [isFirstPage] definition).
-      final int? searchFromMessageId = isFirstPage ? lastMessageId : continueFromMessageId;
-      if (!isFirstPage) {
-        debugLogInfo(
-          'DEBUG: live search pagination from_message_id=$searchFromMessageId (oldest raw id from prior batch) chatId=$chatId',
-          type: LogType.backend,
-        );
-      }
-
-      var primerMessages = const <td.Message>[];
 
       try {
         await _tdlib.send(td.OpenChat(chatId: chatId));
@@ -1958,8 +2096,18 @@ class DataRepository {
       }
 
       if (isFirstPage) {
-        await _viewMessagesForSearchActivation(tdlib: _tdlib, chatId: chatId, chat: chatSnap);
-        if (lastMessageId != null && _isChatLastMessageOlderThanDays(chatSnap, 30)) {
+        final hydratedChat = await _hydratePeerForLiveGallerySearch(chatId);
+        final chatAfterHydration = hydratedChat ?? chatSnap;
+        final lastMsg = chatAfterHydration?.lastMessage;
+        final int? lastMessageId = (lastMsg != null && lastMsg.id > 0) ? lastMsg.id : null;
+        if (lastMessageId != null) {
+          debugLogInfo(
+            'DEBUG: post-hydration GetChat last_message.id=$lastMessageId (first search uses from_message_id=0) '
+            'chatId=$chatId',
+            type: LogType.backend,
+          );
+        }
+        if (lastMessageId != null && _isChatLastMessageOlderThanDays(chatAfterHydration, 30)) {
           debugLogInfo(
             'DEBUG: inactive chat (last message older than 30 days); wake-up GetChatHistory limit=1 '
             'from_message_id=$lastMessageId chatId=$chatId',
@@ -1979,186 +2127,22 @@ class DataRepository {
             debugLogError('DEBUG: GetChatHistory wake-up failed chatId=$chatId: $e', type: LogType.backend);
           }
         }
-        try {
-          final primerFrom = lastMessageId ?? 0;
-          final hist = await _tdlib.send(
-            td.GetChatHistory(
-              chatId: chatId,
-              fromMessageId: primerFrom,
-              offset: 0,
-              limit: 50,
-              onlyLocal: false,
-            ),
-          );
-          if (hist is td.Messages) {
-            primerMessages = hist.messages;
-          }
-          debugLogInfo(
-            'DEBUG: live search primer GetChatHistory from_message_id=$primerFrom limit=50 only_local=false '
-            'raw count=${primerMessages.length}',
-            type: LogType.backend,
-          );
-        } catch (e) {
-          debugLogError('DEBUG: GetChatHistory primer failed chatId=$chatId: $e', type: LogType.backend);
-        }
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
 
-      if (continueWithDocumentFilter) {
-        debugLogInfo('DEBUG: live search using SearchMessagesFilterDocument (continuation)', type: LogType.backend);
-        final page = await _runLiveSearchWithGapRecovery(
-          chatId: chatId,
-          isFirstPage: isFirstPage,
-          searchFromMessageId: searchFromMessageId,
-          filter: const td.SearchMessagesFilterDocument(),
-          filterLabel: 'SearchMessagesFilterDocument',
-          usedDocumentFilter: true,
-          effectiveThreadId: threadParams.effectiveThreadId,
-          omitMessageThreadId: threadParams.omitMessageThreadId,
-          tdLimit: tdLimit,
-        );
-        debugLogInfo(
-          'DEBUG: fetchLiveChatVideos (document) page items=${page.items.length} hasMore=${page.hasMoreHistory} '
-          'nextAnchor=${page.nextHistoryFromMessageId}',
-          type: LogType.backend,
-        );
-        return page;
-      }
-
-      if (!isFirstPage) {
-        debugLogInfo('DEBUG: live search using SearchMessagesFilterVideo (pagination)', type: LogType.backend);
-        final page = await _runLiveSearchWithGapRecovery(
-          chatId: chatId,
-          isFirstPage: false,
-          searchFromMessageId: searchFromMessageId,
-          filter: const td.SearchMessagesFilterVideo(),
-          filterLabel: 'SearchMessagesFilterVideo',
-          usedDocumentFilter: false,
-          effectiveThreadId: threadParams.effectiveThreadId,
-          omitMessageThreadId: threadParams.omitMessageThreadId,
-          tdLimit: tdLimit,
-        );
-        debugLogInfo(
-          'DEBUG: fetchLiveChatVideos page items=${page.items.length} hasMore=${page.hasMoreHistory} '
-          'nextAnchor=${page.nextHistoryFromMessageId}',
-          type: LogType.backend,
-        );
-        return page;
-      }
-
-      debugLogInfo('DEBUG: live search using SearchMessagesFilterVideo (page 1)', type: LogType.backend);
-      final videoRaw = await _sendSearchChatMessagesFiltered(
+      final page = await _runLiveVideoSearchWithJumpSearch(
         chatId: chatId,
-        tdLimit: tdLimit,
-        filter: const td.SearchMessagesFilterVideo(),
+        searchAnchor: searchAnchor,
         effectiveThreadId: threadParams.effectiveThreadId,
         omitMessageThreadId: threadParams.omitMessageThreadId,
-        continueFromMessageId: searchFromMessageId,
-        filterLabel: 'SearchMessagesFilterVideo',
-      );
-      final videoMsgs = _tdMessagesFromSearchResult(videoRaw);
-
-      if (videoMsgs.length < tdLimit && isFirstPage) {
-        debugLogInfo(
-          'DEBUG: SearchMessagesFilterVideo raw count=${videoMsgs.length} (< $tdLimit); '
-          'supplementing with SearchMessagesFilterDocument + local video MIME filter, then merge',
-          type: LogType.backend,
-        );
-        final docRaw = await _sendSearchChatMessagesFiltered(
-          chatId: chatId,
-          tdLimit: tdLimit,
-          filter: const td.SearchMessagesFilterDocument(),
-          effectiveThreadId: threadParams.effectiveThreadId,
-          omitMessageThreadId: threadParams.omitMessageThreadId,
-          continueFromMessageId: searchFromMessageId,
-          filterLabel: 'SearchMessagesFilterDocument(page1_supplement)',
-        );
-        final docMsgs = _tdMessagesFromSearchResult(docRaw);
-        final videoRows = _rowsFromLiveVideoMessages(videoMsgs, chatId);
-        final docRows = _rowsFromLiveVideoMessages(docMsgs, chatId);
-        final merged = _sortOxChatMediaRowsByMessageDateDesc(
-          _dedupeOxChatMediaRowsByMessageId(<OxChatMediaRow>[...videoRows, ...docRows]),
-        );
-        final videoHasMore = videoMsgs.length >= tdLimit;
-        final docHasMore = docMsgs.length >= tdLimit;
-        final hasMore = videoHasMore || docHasMore;
-        final bool useDoc;
-        final int? nextAnchor;
-        if (videoHasMore) {
-          nextAnchor = _liveSearchPaginationAnchorFromBatch(videoMsgs);
-          useDoc = false;
-        } else if (docHasMore) {
-          nextAnchor = _liveSearchPaginationAnchorFromBatch(docMsgs);
-          useDoc = true;
-        } else {
-          nextAnchor = null;
-          useDoc = false;
-        }
-        debugLogInfo(
-          'DEBUG: merged page1 rows=${merged.length} hasMore=$hasMore nextAnchor=$nextAnchor docFilter=$useDoc',
-          type: LogType.backend,
-        );
-        if (merged.isNotEmpty) {
-          return OxChatMediaPage(
-            items: merged,
-            total: merged.length + (hasMore && nextAnchor != null ? 1 : 0),
-            hasMoreHistory: hasMore && nextAnchor != null,
-            nextHistoryFromMessageId: nextAnchor,
-            liveSearchUsesDocumentFilter: useDoc,
-          );
-        }
-        final fromPrimer = _oxChatMediaPageFromPrimerIfSearchEmpty(
-          primerMessages: primerMessages,
-          chatId: chatId,
-          tdLimit: 50,
-          isForum: threadParams.isForum,
-          topicId: threadParams.effectiveThreadId,
-          liveSearchUsesDocumentFilter: useDoc,
-        );
-        if (fromPrimer != null) {
-          debugLogInfo(
-            'DEBUG: merged page1 used GetChatHistory primer fallback rows=${fromPrimer.items.length}',
-            type: LogType.backend,
-          );
-          return fromPrimer;
-        }
-        return OxChatMediaPage(
-          items: merged,
-          total: merged.length + (hasMore && nextAnchor != null ? 1 : 0),
-          hasMoreHistory: hasMore && nextAnchor != null,
-          nextHistoryFromMessageId: nextAnchor,
-          liveSearchUsesDocumentFilter: useDoc,
-        );
-      }
-
-      final page = _oxChatMediaPageFromSearchRaw(
-        raw: videoRaw,
-        chatId: chatId,
         tdLimit: tdLimit,
-        usedDocumentFilter: false,
+        isForum: threadParams.isForum,
       );
       debugLogInfo(
         'DEBUG: fetchLiveChatVideos page items=${page.items.length} hasMore=${page.hasMoreHistory} '
         'nextAnchor=${page.nextHistoryFromMessageId}',
         type: LogType.backend,
       );
-      if (page.items.isEmpty && isFirstPage) {
-        final fromPrimer = _oxChatMediaPageFromPrimerIfSearchEmpty(
-          primerMessages: primerMessages,
-          chatId: chatId,
-          tdLimit: 50,
-          isForum: threadParams.isForum,
-          topicId: threadParams.effectiveThreadId,
-          liveSearchUsesDocumentFilter: false,
-        );
-        if (fromPrimer != null) {
-          debugLogInfo(
-            'DEBUG: video-only page used GetChatHistory primer fallback rows=${fromPrimer.items.length}',
-            type: LogType.backend,
-          );
-          return fromPrimer;
-        }
-      }
       return page;
     } on td.TdError catch (e) {
       debugLogError(

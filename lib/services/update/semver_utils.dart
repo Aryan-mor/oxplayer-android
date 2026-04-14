@@ -14,8 +14,8 @@ class SemVer {
   }
 }
 
-/// Strips a leading `v` / `V` and Flutter/Gradle `+build` metadata so `1.31.3+67`
-/// and `v1.31.3` compare equal for update prompts.
+/// Strips a leading `v` / `V` and Flutter/Gradle `+build` metadata so `1.1.42+42`
+/// and `v1.1.42` compare equal for update prompts.
 String normalizeComparableVersionCore(String raw) {
   var s = raw.trim();
   if (s.isEmpty) return s;

@@ -45,14 +45,12 @@ class _TelegramChatMediaSessionCache {
     required Map<String, String?> thumbnails,
     required bool hasMoreHistory,
     required int? nextHistoryFromMessageId,
-    required bool liveUsesDocumentFilter,
   }) {
     _byChatId[_key(tdlibChatId, messageThreadId, libraryIndexed)] = _TelegramChatMediaCacheEntry(
       videos: List<TelegramVideoMetadata>.from(videos),
       thumbnails: Map<String, String?>.from(thumbnails),
       hasMoreHistory: hasMoreHistory,
       nextHistoryFromMessageId: nextHistoryFromMessageId,
-      liveUsesDocumentFilter: liveUsesDocumentFilter,
     );
   }
 }
@@ -63,16 +61,12 @@ class _TelegramChatMediaCacheEntry {
     required this.thumbnails,
     required this.hasMoreHistory,
     required this.nextHistoryFromMessageId,
-    this.liveUsesDocumentFilter = false,
   });
 
   final List<TelegramVideoMetadata> videos;
   final Map<String, String?> thumbnails;
   final bool hasMoreHistory;
   final int? nextHistoryFromMessageId;
-
-  /// Matches [OxChatMediaPage.liveSearchUsesDocumentFilter] for TDLib pagination.
-  final bool liveUsesDocumentFilter;
 }
 
 /// Lists video messages from TDLib chat history using the same [FocusableMediaCard] / [MediaCard] as home hubs.
@@ -500,16 +494,14 @@ class _MyTgItemUiState {
 }
 
 class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
-  /// Live gallery: fixed 20 messages per [searchChatMessages] batch (My Telegram directive).
-  static const int _pageSize = 20;
+  /// Live gallery: [searchChatMessages] batch size (jump-search may merge multiple attempts per load).
+  static const int _pageSize = 30;
 
   final List<TelegramVideoMetadata> _items = [];
   final Map<String, String?> _thumbnailCache = {};
   bool _hasMoreHistory = false;
   int? _nextHistoryFromMessageId;
 
-  /// When true, [fetchLiveChatVideos] must keep using [SearchMessagesFilterDocument] for pagination anchors.
-  bool _liveUsesDocumentFilter = false;
   bool _loadingMore = false;
   bool _initialLoading = true;
   String? _error;
@@ -533,7 +525,6 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       _thumbnailCache.addAll(Map<String, String?>.from(cached.thumbnails));
       _hasMoreHistory = cached.hasMoreHistory;
       _nextHistoryFromMessageId = cached.nextHistoryFromMessageId;
-      _liveUsesDocumentFilter = cached.liveUsesDocumentFilter;
       _initialLoading = false;
       return;
     }
@@ -565,7 +556,6 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       tdlibChatId: widget.tdlibChatId,
       messageThreadId: widget.messageThreadId,
       libraryIndexed: widget.libraryIndexed,
-      liveUsesDocumentFilter: _liveUsesDocumentFilter,
       videos: _items,
       thumbnails: _thumbnailCache,
       hasMoreHistory: _hasMoreHistory,
@@ -605,7 +595,6 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         _tgItemUi.clear();
         _hasMoreHistory = false;
         _nextHistoryFromMessageId = null;
-        _liveUsesDocumentFilter = false;
         _loadingMore = false;
         _error = null;
         _initialLoading = true;
@@ -616,7 +605,6 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       _tgItemUi.clear();
       _hasMoreHistory = false;
       _nextHistoryFromMessageId = null;
-      _liveUsesDocumentFilter = false;
       _loadingMore = false;
     }
 
@@ -662,7 +650,6 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
           _items.addAll(uniqueRows.map((row) => TelegramVideoMetadata(row, '')));
           _hasMoreHistory = page.hasMoreHistory;
           _nextHistoryFromMessageId = page.nextHistoryFromMessageId;
-          _liveUsesDocumentFilter = page.liveSearchUsesDocumentFilter;
         });
         unawaited(_resolveThumbnailsForRows(uniqueRows));
       }
@@ -723,7 +710,6 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         tdlibChatId: widget.tdlibChatId,
         messageThreadId: widget.messageThreadId,
         continueFromMessageId: _nextHistoryFromMessageId,
-        continueWithDocumentFilter: _liveUsesDocumentFilter,
       );
       if (!mounted || gen != _loadGeneration) return;
 
@@ -734,7 +720,6 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
           _items.addAll(newRows.map((row) => TelegramVideoMetadata(row, '')));
           _hasMoreHistory = page.hasMoreHistory;
           _nextHistoryFromMessageId = page.nextHistoryFromMessageId;
-          _liveUsesDocumentFilter = page.liveSearchUsesDocumentFilter;
         });
         unawaited(_resolveThumbnailsForRows(newRows));
       }

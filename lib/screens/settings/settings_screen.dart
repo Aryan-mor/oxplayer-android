@@ -20,6 +20,7 @@ import '../../providers/theme_provider.dart';
 import '../../services/keyboard_shortcuts_service.dart';
 import '../../services/settings_service.dart' as settings;
 import '../../services/update_service.dart';
+import '../../utils/app_logger.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/platform_detector.dart';
 import '../../widgets/desktop_app_bar.dart';
@@ -128,6 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
       _simulateTvMode = _settingsService.getSimulateTvMode();
       _isLoading = false;
     });
+    applyDebugLoggingPreference(_settingsService.getEnableDebugLogging());
   }
 
   @override
@@ -326,6 +328,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
           onChanged: (value) async {
             setState(() => _enableDebugLogging = value);
             await _settingsService.setEnableDebugLogging(value);
+            applyDebugLoggingPreference(value);
           },
         ),
         ListTile(
@@ -492,7 +495,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
       final previewInfo = UpdateInfo(
         deliveryKind: UpdateDeliveryKind.inAppAndroid,
         releaseTag: 'v1.99.0',
-        currentVersion: '1.31.3',
+        currentVersion: '1.1.0',
         latestVersion: '1.99.0',
         releaseUrl: 'https://github.com/Aryan-mor/oxplayer-android/releases/latest',
         releaseName: 'Preview Update',

@@ -16,6 +16,8 @@ env:
   OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME || secrets.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
   OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_URL || secrets.OXPLAYER_TELEGRAM_WEBAPP_URL }}
   SUBDL_API_KEY: ${{ secrets.SUBDL_API_KEY || vars.SUBDL_API_KEY }}
+  # Product version for CI builds: 1.1.<patch> where patch is the workflow run number (GitHub-assigned).
+  OXPLAYER_VERSION_NAME: 1.1.${{ github.run_number }}
 
 jobs:
   build-android:
@@ -137,10 +139,10 @@ jobs:
           fi
 
       - name: Build APKs
-        run: flutter build apk --release --split-per-abi --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build apk --release --split-per-abi --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Build AAB
-        run: flutter build appbundle --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build appbundle --release --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Clean up keystore
         if: always()
@@ -262,7 +264,7 @@ jobs:
           echo "FLUTTER_BUILD_ENV_FILE=$RUNNER_TEMP/flutter-build-env.json" >> "$GITHUB_ENV"
 
       - name: Build iOS (no codesign)
-        run: flutter build ios --release --build-number=${{ github.run_number }} --no-codesign --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build ios --release --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --no-codesign --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Create IPA
         run: |
@@ -370,7 +372,7 @@ jobs:
           echo "FLUTTER_BUILD_ENV_FILE=$RUNNER_TEMP/flutter-build-env.json" >> "$GITHUB_ENV"
 
       - name: Build macOS
-        run: flutter build macos --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build macos --release --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true --dart-define-from-file="$FLUTTER_BUILD_ENV_FILE" ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Import Code Signing Certificate
         env:
@@ -523,7 +525,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Windows x64
-        run: flutter build windows --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build windows --release --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Upload x64 build
         uses: actions/upload-artifact@v4
@@ -562,7 +564,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Windows arm64
-        run: flutter build windows --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build windows --release --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
 
       - name: Upload arm64 build
         uses: actions/upload-artifact@v4
@@ -597,12 +599,11 @@ jobs:
           name: windows-arm64-build
           path: build-arm64
 
-      - name: Read version from pubspec
+      - name: Set version for installer (matches CI --build-name)
         id: version
         shell: pwsh
         run: |
-          $v = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(\S+)').Matches[0].Groups[1].Value -replace '\+.*'
-          echo "version=$v" >> $env:GITHUB_OUTPUT
+          echo "version=${{ env.OXPLAYER_VERSION_NAME }}" >> $env:GITHUB_OUTPUT
 
       - name: Build installer and portables
         run: .\windows\build-installer.ps1 -X64BuildDir "build-x64" -Arm64BuildDir "build-arm64" -Version "${{ steps.version.outputs.version }}"
@@ -717,7 +718,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Linux x64
-        run: flutter build linux --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build linux --release --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
         env:
           PKG_CONFIG_PATH: ${{ github.workspace }}/libmpv-prefix/lib/pkgconfig:${{ github.workspace }}/libmpv-prefix/lib/x86_64-linux-gnu/pkgconfig
 
@@ -834,7 +835,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Linux arm64
-        run: flutter build linux --release --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
+        run: flutter build linux --release --build-name=${{ env.OXPLAYER_VERSION_NAME }} --build-number=${{ github.run_number }} --dart-define=ENABLE_UPDATE_CHECK=true ${{ env.SENTRY_DART_DEFINE }} ${{ env.GIT_COMMIT_DART_DEFINE }}
         env:
           PKG_CONFIG_PATH: ${{ github.workspace }}/libmpv-prefix/lib/pkgconfig:${{ github.workspace }}/libmpv-prefix/lib/aarch64-linux-gnu/pkgconfig
 
@@ -912,9 +913,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          sparse-checkout: pubspec.yaml
-          sparse-checkout-cone-mode: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -940,12 +938,12 @@ jobs:
       - name: Show collected release assets
         run: ls -la release-assets
 
-      - name: Read version from pubspec.yaml
+      - name: Compute release version (must match CI --build-name)
         id: version
         run: |
-          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | sed 's/+.*//')
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
-          RELEASE_TAG="v${VERSION}-build.${BUILD_NUMBER}"
+          VERSION="1.1.${BUILD_NUMBER}"
+          RELEASE_TAG="v${VERSION}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
           echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
@@ -954,7 +952,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.release_tag }}
-          name: OXPlayer ${{ steps.version.outputs.version }} (build ${{ steps.version.outputs.build_number }})
+          name: OXPlayer ${{ steps.version.outputs.version }}
           files: |
             release-assets/oxplayer-android-arm64-v8a.tar.gz
             release-assets/oxplayer-android-armeabi-v7a.tar.gz

@@ -80,6 +80,7 @@ class AuthDebugService extends ChangeNotifier {
   final ListQueue<AuthDebugEntry> _entries = ListQueue<AuthDebugEntry>();
   final Map<String, String> _lastValuesByKey = <String, String>{};
   bool _notifyScheduled = false;
+  bool _debugLoggingEnabled = false;
   final Map<AuthDebugStatusKey, AuthDebugStatusItem> _statuses = {
     AuthDebugStatusKey.telegramSessionDetected: const AuthDebugStatusItem(
       key: AuthDebugStatusKey.telegramSessionDetected,
@@ -118,7 +119,21 @@ class AuthDebugService extends ChangeNotifier {
     ),
   };
 
-  bool get isEnabled => true;
+  bool get isEnabled => _debugLoggingEnabled;
+
+  /// Sync with Settings → Debug Logging. When disabled, clears buffered entries and hides the debug UI.
+  void applyDebugLoggingSetting(bool enabled) {
+    if (_debugLoggingEnabled == enabled) return;
+    _debugLoggingEnabled = enabled;
+    if (!enabled) {
+      _entries.clear();
+      _lastValuesByKey.clear();
+      for (final key in AuthDebugStatusKey.values) {
+        _statuses[key] = _statuses[key]!.copyWith(completed: false);
+      }
+    }
+    _scheduleNotify();
+  }
 
   List<AuthDebugEntry> get entries => _entries.toList().reversed.toList(growable: false);
 
