@@ -1035,6 +1035,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final authNotifier = context.read<AuthNotifier>();
       final navigator = Navigator.of(context);
 
+      try {
+        final repository = await DataRepository.create();
+        await repository.resetLocalSessionForQrLogin();
+      } catch (e, st) {
+        appLogger.e('TDLib local session reset failed during logout', error: e, stackTrace: st);
+      }
+
       // Clear all user data and provider states
       await userProfileProvider.logout();
       await authNotifier.clearSession();

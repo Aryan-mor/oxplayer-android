@@ -347,12 +347,11 @@ class UserProfileProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
-    if (_storageService == null) return;
-
     _setLoading(true);
 
     try {
-      await _storageService!.clearUserData();
+      final storage = _storageService ?? await StorageService.getInstance();
+      await storage.clearUserData();
 
       // Clear user-specific provider state and reset initialization so
       // the next sign-in performs a full bootstrap.

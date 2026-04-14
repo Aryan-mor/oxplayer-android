@@ -1038,6 +1038,19 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   }
 
   Future<void> _playOxFileOption(PlexMetadata metadata, OxFileOptionItem option) async {
+    final downloadMeta = buildOxDownloadMetadata(parentMetadata: metadata, file: option.file);
+    final gk = downloadMeta.globalKey;
+    final downloadProvider = context.read<DownloadProvider>();
+    if (downloadProvider.isDownloaded(gk)) {
+      final path = await downloadProvider.getVideoFilePath(gk);
+      if (path != null && path.isNotEmpty) {
+        if (!mounted) return;
+        playMediaDebugInfo('OX playback from local file globalKey=$gk');
+        unawaited(navigateToInternalVideoPlayerForUrl(context, metadata: downloadMeta, videoUrl: path));
+        return;
+      }
+    }
+
     MediaRepository? mediaRepository;
     try {
       final repository = await DataRepository.create();
@@ -1058,6 +1071,42 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         showErrorSnackBar(context, t.externalPlayer.launchFailed);
       }
     }
+  }
+
+  Future<void> _pauseOxFileDownload(PlexMetadata metadata, OxFileOptionItem option) async {
+    final gk = buildOxDownloadMetadata(parentMetadata: metadata, file: option.file).globalKey;
+    await context.read<DownloadProvider>().pauseDownload(gk);
+  }
+
+  Future<void> _resumeOxFileDownload(PlexMetadata metadata, OxFileOptionItem option) async {
+    final client = _getClientForMetadata(context);
+    if (client == null) return;
+    final gk = buildOxDownloadMetadata(parentMetadata: metadata, file: option.file).globalKey;
+    await context.read<DownloadProvider>().resumeDownload(gk, client);
+  }
+
+  Future<void> _cancelOxFileDownload(PlexMetadata metadata, OxFileOptionItem option) async {
+    final gk = buildOxDownloadMetadata(parentMetadata: metadata, file: option.file).globalKey;
+    await context.read<DownloadProvider>().cancelDownload(gk);
+  }
+
+  Future<void> _deleteOxFileDownload(PlexMetadata metadata, OxFileOptionItem option) async {
+    final downloadMeta = buildOxDownloadMetadata(parentMetadata: metadata, file: option.file);
+    final gk = downloadMeta.globalKey;
+    final confirmed = await showDeleteConfirmation(
+      context,
+      title: t.downloads.deleteDownload,
+      message: t.downloads.deleteConfirm(title: downloadMeta.displayTitle),
+    );
+    if (!confirmed || !mounted) return;
+    await context.read<DownloadProvider>().deleteDownload(gk);
+    if (mounted) {
+      showSuccessSnackBar(context, t.downloads.downloadDeleted);
+    }
+  }
+
+  Future<void> _retryOxFileDownload(PlexMetadata metadata, OxFileOptionItem option) async {
+    await _queueOxFileDownload(metadata, option);
   }
 
   Future<void> _queueOxFileDownload(PlexMetadata metadata, OxFileOptionItem option) async {
@@ -2289,7 +2338,24 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           summary: option.summary,
           imageUrl: playbackMetadata.thumb,
           downloadGlobalKey: downloadMetadata.globalKey,
-          onDownloadTap: () => _queueOxFileDownload(playbackMetadata, option),
+          onQueueDownload: () {
+            unawaited(_queueOxFileDownload(playbackMetadata, option));
+          },
+          onPauseDownload: () {
+            unawaited(_pauseOxFileDownload(playbackMetadata, option));
+          },
+          onResumeDownload: () {
+            unawaited(_resumeOxFileDownload(playbackMetadata, option));
+          },
+          onCancelActiveDownload: () {
+            unawaited(_cancelOxFileDownload(playbackMetadata, option));
+          },
+          onDeleteCompletedDownload: () {
+            unawaited(_deleteOxFileDownload(playbackMetadata, option));
+          },
+          onRetryDownload: () {
+            unawaited(_retryOxFileDownload(playbackMetadata, option));
+          },
           focusNode: index == 0
               ? _firstEpisodeFocusNode
               : index == fileOptions.length - 1 && fileOptions.length > 1
@@ -2684,7 +2750,24 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                   imageUrl: episode.thumb,
                   localPosterPath: localPosterPath,
                   downloadGlobalKey: downloadMeta.globalKey,
-                  onDownloadTap: () => _queueOxFileDownload(episode, option),
+                  onQueueDownload: () {
+                    unawaited(_queueOxFileDownload(episode, option));
+                  },
+                  onPauseDownload: () {
+                    unawaited(_pauseOxFileDownload(episode, option));
+                  },
+                  onResumeDownload: () {
+                    unawaited(_resumeOxFileDownload(episode, option));
+                  },
+                  onCancelActiveDownload: () {
+                    unawaited(_cancelOxFileDownload(episode, option));
+                  },
+                  onDeleteCompletedDownload: () {
+                    unawaited(_deleteOxFileDownload(episode, option));
+                  },
+                  onRetryDownload: () {
+                    unawaited(_retryOxFileDownload(episode, option));
+                  },
                   focusNode: isGlobalLast ? _lastEpisodeFocusNode : null,
                   onTap: () async {
                     await _playOxFileOption(episode, option);

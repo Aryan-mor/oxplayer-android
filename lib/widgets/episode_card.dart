@@ -9,18 +9,22 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 import '../focus/focus_theme.dart';
 import '../focus/focusable_wrapper.dart';
+import '../i18n/strings.g.dart';
 import '../models/download_models.dart';
 import '../providers/download_provider.dart';
 import '../providers/settings_provider.dart';
 import '../utils/content_utils.dart';
 import '../widgets/collapsible_text.dart';
 import '../widgets/plex_optimized_image.dart';
+import '../widgets/plex_style_download_ring_icon.dart';
 import '../models/plex_metadata.dart';
 import '../utils/platform_detector.dart';
 import '../utils/formatters.dart';
 import '../widgets/media_context_menu.dart';
 import '../widgets/placeholder_container.dart';
 import '../theme/mono_tokens.dart';
+import '../utils/dialogs.dart';
+import '../utils/snackbar_helper.dart';
 import '../../services/plex_client.dart';
 
 /// Episode card widget with D-pad long-press support
@@ -278,39 +282,18 @@ class _EpisodeCardState extends State<EpisodeCard> {
                                 child: CircularProgressIndicator(strokeWidth: 1.5, color: tokens(context).textMuted),
                               );
                             } else if (progress?.status == DownloadStatus.queued) {
-                              // Queued state - waiting to download
                               downloadStatusIcon = AppIcon(
-                                Symbols.schedule_rounded,
+                                Symbols.pause_rounded,
                                 fill: 1,
                                 size: 12,
                                 color: getMutedColor(Colors.orange),
                               );
                             } else if (progress?.status == DownloadStatus.downloading) {
-                              // Downloading state - active download with radial progress
-                              downloadStatusIcon = SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    // Background circle
-                                    CircularProgressIndicator(
-                                      value: 1.0,
-                                      strokeWidth: 1.5,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        getMutedColor(Theme.of(context).colorScheme.primary).withValues(alpha: 0.3),
-                                      ),
-                                    ),
-                                    // Progress circle
-                                    CircularProgressIndicator(
-                                      value: progress?.progressPercent,
-                                      strokeWidth: 1.5,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        getMutedColor(Theme.of(context).colorScheme.primary),
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                              downloadStatusIcon = AppIcon(
+                                Symbols.pause_rounded,
+                                fill: 1,
+                                size: 12,
+                                color: getMutedColor(Theme.of(context).colorScheme.primary),
                               );
                             } else if (progress?.status == DownloadStatus.paused) {
                               // Paused state - download paused
@@ -387,59 +370,141 @@ class _EpisodeCardState extends State<EpisodeCard> {
                                     final progress = downloadProvider.getProgress(globalKey);
                                     final isQueueing = downloadProvider.isQueueing(globalKey);
 
+                                    final showCancelRow = isQueueing ||
+                                        progress?.status == DownloadStatus.queued ||
+                                        progress?.status == DownloadStatus.downloading ||
+                                        progress?.status == DownloadStatus.paused;
+
+                                    const ringDiameter = 34.0;
+                                    const ringIconSize = 16.0;
+                                    final primaryScheme = Theme.of(context).colorScheme.primary;
+
                                     Widget icon = const AppIcon(Symbols.download_rounded, fill: 1, size: 18);
                                     VoidCallback? onPressed = widget.onDownloadTap;
                                     var tooltip = 'Download';
 
                                     if (isQueueing) {
-                                      icon = SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: tokens(context).textMuted,
-                                        ),
-                                      );
-                                    } else if (progress?.status == DownloadStatus.queued) {
-                                      icon = AppIcon(
-                                        Symbols.schedule_rounded,
-                                        fill: 1,
-                                        size: 18,
-                                        color: tokens(context).textMuted,
-                                      );
-                                      tooltip = 'Pause download';
-                                      onPressed = () {
-                                        unawaited(downloadProvider.pauseDownload(globalKey));
-                                      };
-                                    } else if (progress?.status == DownloadStatus.downloading) {
-                                      icon = SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          value: progress?.progressPercent,
-                                          strokeWidth: 2,
-                                          color: Theme.of(context).colorScheme.primary,
-                                        ),
-                                      );
-                                      tooltip = 'Pause download';
-                                      onPressed = () {
-                                        unawaited(downloadProvider.pauseDownload(globalKey));
-                                      };
-                                    } else if (progress?.status == DownloadStatus.completed) {
-                                      icon = const AppIcon(
-                                        Symbols.file_download_done_rounded,
-                                        fill: 1,
-                                        size: 18,
-                                        color: Colors.green,
+                                      icon = PlexStyleDownloadRingIcon(
+                                        indeterminate: true,
+                                        determinateProgress: null,
+                                        diameter: ringDiameter,
+                                        strokeWidth: 2.25,
+                                        progressColor: tokens(context).textMuted,
+                                        centerIcon:
+                                            AppIcon(Symbols.pause_rounded, fill: 1, size: ringIconSize, color: primaryScheme),
                                       );
                                       onPressed = null;
+                                      tooltip = 'Preparing download';
+                                    } else if (progress == null) {
+                                      // initial download
+                                    } else if (progress.status == DownloadStatus.queued ||
+                                        progress.status == DownloadStatus.downloading) {
+                                      final queued = progress.status == DownloadStatus.queued;
+                                      icon = PlexStyleDownloadRingIcon(
+                                        indeterminate: queued,
+                                        determinateProgress: queued ? null : progress.progressPercent,
+                                        diameter: ringDiameter,
+                                        strokeWidth: 2.25,
+                                        progressColor: primaryScheme,
+                                        centerIcon:
+                                            AppIcon(Symbols.pause_rounded, fill: 1, size: ringIconSize, color: primaryScheme),
+                                      );
+                                      tooltip = 'Pause download';
+                                      onPressed = () {
+                                        unawaited(downloadProvider.pauseDownload(globalKey));
+                                      };
+                                    } else if (progress.status == DownloadStatus.paused) {
+                                      icon = PlexStyleDownloadRingIcon(
+                                        indeterminate: false,
+                                        determinateProgress: progress.progressPercent,
+                                        diameter: ringDiameter,
+                                        strokeWidth: 2.25,
+                                        progressColor: primaryScheme,
+                                        centerIcon: AppIcon(
+                                          Symbols.play_arrow_rounded,
+                                          fill: 1,
+                                          size: ringIconSize,
+                                          color: primaryScheme,
+                                        ),
+                                      );
+                                      tooltip = 'Resume download';
+                                      onPressed = widget.client == null
+                                          ? null
+                                          : () {
+                                              unawaited(downloadProvider.resumeDownload(globalKey, widget.client!));
+                                            };
+                                    } else if (progress.status == DownloadStatus.completed) {
+                                      icon = AppIcon(
+                                        Symbols.delete_outline_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: Theme.of(context).colorScheme.error,
+                                      );
+                                      tooltip = t.downloads.deleteDownload;
+                                      onPressed = () async {
+                                        final confirmed = await showDeleteConfirmation(
+                                          context,
+                                          title: t.downloads.deleteDownload,
+                                          message: t.downloads.deleteConfirm(title: widget.episode.displayTitle),
+                                        );
+                                        if (!confirmed || !context.mounted) return;
+                                        await downloadProvider.deleteDownload(globalKey);
+                                        if (context.mounted) {
+                                          showSuccessSnackBar(context, t.downloads.downloadDeleted);
+                                        }
+                                      };
+                                    } else if (progress.status == DownloadStatus.failed) {
+                                      icon = AppIcon(
+                                        Symbols.download_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: Theme.of(context).colorScheme.error,
+                                      );
+                                      tooltip = 'Retry download';
+                                      onPressed = widget.onDownloadTap;
+                                    } else if (progress.status == DownloadStatus.cancelled) {
+                                      icon = const AppIcon(Symbols.download_rounded, fill: 1, size: 18);
+                                      onPressed = widget.onDownloadTap;
+                                      tooltip = 'Download';
                                     }
 
-                                    return IconButton(
+                                    final primaryButton = IconButton(
                                       onPressed: onPressed,
                                       icon: icon,
                                       tooltip: tooltip,
                                       visualDensity: VisualDensity.compact,
+                                    );
+
+                                    final cancelButton = IconButton(
+                                      onPressed: () {
+                                        unawaited(downloadProvider.cancelDownload(globalKey));
+                                      },
+                                      icon: AppIcon(
+                                        Symbols.delete_outline_rounded,
+                                        fill: 1,
+                                        size: 18,
+                                        color: tokens(context).textMuted,
+                                      ),
+                                      tooltip: 'Cancel download',
+                                      visualDensity: VisualDensity.compact,
+                                    );
+
+                                    final controls = showCancelRow
+                                        ? Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              primaryButton,
+                                              cancelButton,
+                                            ],
+                                          )
+                                        : primaryButton;
+
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        controls,
+                                      ],
                                     );
                                   },
                                 ),
