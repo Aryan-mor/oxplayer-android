@@ -9,8 +9,7 @@ import 'package:provider/provider.dart';
 
 import '../focus/input_mode_tracker.dart';
 import '../i18n/strings.g.dart';
-import '../infrastructure/data_repository.dart';
-import '../infrastructure/media_repository.dart';
+import '../infrastructure/media_repository.dart' show kOxVirtualServerId;
 import '../models/plex_metadata.dart';
 import '../models/plex_playlist.dart';
 import '../providers/download_provider.dart';
@@ -20,7 +19,7 @@ import '../services/download_storage_service.dart';
 import '../services/settings_service.dart';
 import '../theme/mono_tokens.dart';
 import '../utils/formatters.dart';
-import '../utils/media_navigation_helper.dart';
+import '../utils/media_navigation_helper.dart' show MediaNavigationResult, navigateToMediaItem, openOxPreviewMediaDetail;
 import '../utils/provider_extensions.dart';
 import '../utils/snackbar_helper.dart';
 import 'media_context_menu.dart';
@@ -189,68 +188,11 @@ class MediaCardState extends State<MediaCard> {
   }
 
   Future<void> _openOxPreviewDetail(BuildContext context, PlexMetadata previewMetadata) async {
-    Future<void> openDetail(PlexMetadata metadata) async {
-      await Navigator.push<void>(
-        context,
-        MaterialPageRoute<void>(builder: (_) => MediaDetailScreen(metadata: metadata)),
-      );
-    }
-
-    try {
-      final repository = await DataRepository.create();
-      final mediaRepository = MediaRepository(dataRepository: repository);
-      final detail = await mediaRepository.fetchLibraryMediaDetail(previewMetadata.ratingKey);
-      if (!context.mounted) return;
-
-      final mappedMetadata = _mapOxDetailToPlexMetadata(detail, fallback: previewMetadata);
-      await openDetail(mappedMetadata);
-    } catch (_) {
-      if (!context.mounted) return;
-      // Discover cards use `ox-preview:`; detail screen only loads OX rows when key is `ox-library:`.
-      // If prefetch fails (timeout, 404, parse), still open detail so it can retry and/or show fallback UI.
-      final stub = previewMetadata.copyWith(
-        key: 'ox-library:${previewMetadata.ratingKey}',
-        serverId: previewMetadata.serverId ?? kOxVirtualServerId,
-      );
-      try {
-        await openDetail(stub);
-      } catch (_) {
-        showGlobalAppSnackBar('Failed to open detail page. Please try again.');
-      }
-    }
-  }
-
-  PlexMetadata _mapOxDetailToPlexMetadata(OxLibraryMediaDetail detail, {required PlexMetadata fallback}) {
-    final media = detail.media;
-    final normalizedType = switch (media.type.toUpperCase()) {
-      'MOVIE' => 'movie',
-      'SERIES' => 'show',
-      'GENERAL_VIDEO' => 'movie',
-      _ => fallback.type ?? 'movie',
-    };
-    final posterUrl = _resolvePosterUrl(media.posterPath) ?? fallback.thumb;
-
-    return fallback.copyWith(
-      ratingKey: media.id,
-      key: 'ox-library:${media.id}',
-      type: normalizedType,
-      title: media.title,
-      summary: media.summary,
-      rating: media.voteAverage,
-      year: media.releaseYear,
-      thumb: posterUrl,
-      art: posterUrl ?? fallback.art,
+    await openOxPreviewMediaDetail(
+      context,
+      previewMetadata: previewMetadata,
+      isOffline: widget.isOffline,
     );
-  }
-
-  String? _resolvePosterUrl(String? posterPath) {
-    final value = posterPath?.trim();
-    if (value == null || value.isEmpty) return null;
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      return value;
-    }
-    final normalized = value.startsWith('/') ? value : '/$value';
-    return 'https://image.tmdb.org/t/p/w500$normalized';
   }
 
   /// Get the local poster path for offline mode

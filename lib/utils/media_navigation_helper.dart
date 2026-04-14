@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../infrastructure/data_repository.dart';
+import '../infrastructure/media_repository.dart';
 import '../models/plex_metadata.dart';
 import '../models/plex_playlist.dart';
 import '../screens/collection_detail_screen.dart';
@@ -6,7 +8,82 @@ import '../screens/main_screen.dart';
 import '../screens/media_detail_screen.dart';
 import '../screens/playlist/playlist_detail_screen.dart';
 import '../utils/global_key_utils.dart';
+import '../utils/snackbar_helper.dart';
 import 'video_player_navigation.dart';
+
+/// Discover / OX hub items use `ox-preview:`; [MediaDetailScreen] only loads OX rows when [PlexMetadata.key] is `ox-library:`.
+/// Call this instead of pushing [MediaDetailScreen] with raw preview metadata (matches MediaCard tap behavior).
+Future<bool?> openOxPreviewMediaDetail(
+  BuildContext context, {
+  required PlexMetadata previewMetadata,
+  required bool isOffline,
+}) async {
+  Future<bool?> openDetail(PlexMetadata metadata) async {
+    return Navigator.push<bool>(
+      context,
+      MaterialPageRoute<bool>(
+        builder: (_) => MediaDetailScreen(metadata: metadata, isOffline: isOffline),
+      ),
+    );
+  }
+
+  try {
+    final repository = await DataRepository.create();
+    final mediaRepository = MediaRepository(dataRepository: repository);
+    final detail = await mediaRepository.fetchLibraryMediaDetail(previewMetadata.ratingKey);
+    if (!context.mounted) return null;
+
+    final mappedMetadata = mapOxLibraryDetailToPlexMetadata(detail, fallback: previewMetadata);
+    return openDetail(mappedMetadata);
+  } catch (_) {
+    if (!context.mounted) return null;
+    // If prefetch fails (timeout, 404, parse), still open detail so it can retry and/or show fallback UI.
+    final stub = previewMetadata.copyWith(
+      key: 'ox-library:${previewMetadata.ratingKey}',
+      serverId: previewMetadata.serverId ?? kOxVirtualServerId,
+    );
+    try {
+      return openDetail(stub);
+    } catch (_) {
+      showGlobalAppSnackBar('Failed to open detail page. Please try again.');
+      return null;
+    }
+  }
+}
+
+/// Maps OX library API detail to [PlexMetadata] with `ox-library:` key (shared with [MediaCard]).
+PlexMetadata mapOxLibraryDetailToPlexMetadata(OxLibraryMediaDetail detail, {required PlexMetadata fallback}) {
+  final media = detail.media;
+  final normalizedType = switch (media.type.toUpperCase()) {
+    'MOVIE' => 'movie',
+    'SERIES' => 'show',
+    'GENERAL_VIDEO' => 'movie',
+    _ => fallback.type ?? 'movie',
+  };
+  final posterUrl = _resolveOxPosterUrl(media.posterPath) ?? fallback.thumb;
+
+  return fallback.copyWith(
+    ratingKey: media.id,
+    key: 'ox-library:${media.id}',
+    type: normalizedType,
+    title: media.title,
+    summary: media.summary,
+    rating: media.voteAverage,
+    year: media.releaseYear,
+    thumb: posterUrl,
+    art: posterUrl ?? fallback.art,
+  );
+}
+
+String? _resolveOxPosterUrl(String? posterPath) {
+  final value = posterPath?.trim();
+  if (value == null || value.isEmpty) return null;
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+  final normalized = value.startsWith('/') ? value : '/$value';
+  return 'https://image.tmdb.org/t/p/w500$normalized';
+}
 
 /// Result of media navigation indicating what action was taken
 enum MediaNavigationResult {
@@ -69,6 +146,19 @@ Future<MediaNavigationResult> navigateToMediaItem(
       return MediaNavigationResult.librarySelected;
     }
     return MediaNavigationResult.unsupported;
+  }
+
+  // OX Discover preview cards: hub OK uses this helper — same as MediaCard tap (prefetch → `ox-library:` detail).
+  if (metadata.key?.startsWith('ox-preview:') == true) {
+    final result = await openOxPreviewMediaDetail(
+      context,
+      previewMetadata: metadata,
+      isOffline: isOffline,
+    );
+    if (result == true) {
+      onRefresh?.call(metadata.ratingKey);
+    }
+    return MediaNavigationResult.navigated;
   }
 
   switch (metadata.mediaType) {
