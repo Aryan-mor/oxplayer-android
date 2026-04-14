@@ -129,6 +129,7 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindingObserver {
+  static const Duration _resumeThreshold = Duration(minutes: 2);
   static const int _liveEdgeThresholdSeconds = 5;
 
   // Track the currently active video to guard against duplicate navigation
@@ -1238,6 +1239,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
             ? Duration(milliseconds: widget.metadata.viewOffset!)
             : null;
 
+        resumePosition = _normalizeResumePosition(
+          resumePosition,
+          widget.metadata.duration != null ? Duration(milliseconds: widget.metadata.duration!) : null,
+        );
+
         // Enable FFmpeg auto-reconnect for VOD streams (covers network drops up to 10 min)
         if (!widget.isOffline && !widget.isLive) {
           await player!.setProperty(
@@ -1323,8 +1329,10 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
           _bifService = null;
         });
 
-        // Download and cache BIF thumbnail file
-        if (_currentMediaInfo?.partId != null && !widget.isOffline) {
+        // BIF thumbnails are only useful for pointer-hover timelines.
+        // Skip them on Android TV to keep long videos lighter and avoid extra
+        // thumbnail memory pressure on set-top-box devices.
+        if (_currentMediaInfo?.partId != null && !widget.isOffline && !PlatformDetector.isTV()) {
           final partId = _currentMediaInfo!.partId!;
           final client = _getClientForMetadata(context);
           final service = BifThumbnailService();
@@ -1412,6 +1420,29 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         showErrorSnackBar(context, t.messages.errorLoading(error: e.toString()));
       }
     }
+  }
+
+  Duration? _normalizeResumePosition(Duration? resumePosition, Duration? duration) {
+    if (resumePosition == null || resumePosition <= Duration.zero) {
+      return null;
+    }
+
+    // Ignore tiny resume points so very short watches always restart from zero.
+    if (resumePosition < _resumeThreshold) {
+      return null;
+    }
+
+    if (duration == null || duration <= Duration.zero) {
+      return resumePosition;
+    }
+
+    // If we are within the last two minutes, treat it as finished and restart.
+    final remaining = duration - resumePosition;
+    if (remaining <= _resumeThreshold) {
+      return null;
+    }
+
+    return resumePosition;
   }
 
   /// Start playback for offline/downloaded content

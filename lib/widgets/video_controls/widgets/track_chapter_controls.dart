@@ -507,7 +507,10 @@ class TrackChapterControls extends StatelessWidget {
   }
 
   bool _canOpenTrackSheet(Tracks? tracks) {
-    return _hasMultipleAudioTracks(tracks) || _hasSubtitles(tracks) || ratingKey.isNotEmpty;
+    return _hasMultipleAudioTracks(tracks) ||
+        _hasSubtitles(tracks) ||
+        ratingKey.isNotEmpty ||
+        metadata.displayTitle.trim().isNotEmpty;
   }
 
   IconData _getBoxFitIcon(int mode) {

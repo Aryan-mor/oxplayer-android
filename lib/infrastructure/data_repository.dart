@@ -737,6 +737,7 @@ List<td.Message> _filterTdMessagesForForumTopic(
 
 class DataRepository {
   static const MethodChannel _mediaToolsChannel = MethodChannel('de.aryanmo.oxplayer/media_tools');
+  static const Duration _kSilentTelegramRestoreTimeout = Duration(seconds: 10);
 
   DataRepository._({required AppConfig config, required StorageService storage, required TdlibFacade tdlib})
     : _config = config,
@@ -842,7 +843,7 @@ class DataRepository {
     authDebugInfo('TDLib initialized. Attempting silent authorization restore...');
 
     try {
-      await _tdlib.ensureAuthorized();
+      await _tdlib.ensureAuthorized().timeout(_kSilentTelegramRestoreTimeout);
       authDebugSuccess(
         'Existing Telegram session restored from local TDLib storage.',
         completeStatus: AuthDebugStatusKey.telegramSessionDetected,
@@ -851,6 +852,11 @@ class DataRepository {
       return true;
     } on TdlibInteractiveLoginRequired {
       authDebugInfo('No reusable Telegram session was found.');
+      return false;
+    } on TimeoutException {
+      authDebugError(
+        'Silent Telegram session restore timed out after ${_kSilentTelegramRestoreTimeout.inSeconds}s.',
+      );
       return false;
     } catch (error) {
       authDebugError('Silent Telegram session restore failed: $error');
@@ -919,8 +925,7 @@ class DataRepository {
       authDebugInfo('Validating local Telegram session for app bootstrap...');
       telegramReady = await tryRestoreExistingTelegramSession();
       if (!telegramReady) {
-        authDebugError('Saved Telegram session is not available for bootstrap.');
-        throw const TdlibInteractiveLoginRequired();
+        authDebugInfo('Continuing bootstrap without a restored Telegram session.');
       }
     }
 
