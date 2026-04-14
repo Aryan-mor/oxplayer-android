@@ -495,7 +495,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
       final previewInfo = UpdateInfo(
         deliveryKind: UpdateDeliveryKind.inAppAndroid,
         releaseTag: 'v1.99.0',
-        currentVersion: '1.1.0',
+        currentVersion: '1.4.0',
         latestVersion: '1.99.0',
         releaseUrl: 'https://github.com/Aryan-mor/oxplayer-android/releases/latest',
         releaseName: 'Preview Update',

@@ -16,8 +16,8 @@ env:
   OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME || secrets.OXPLAYER_TELEGRAM_WEBAPP_SHORT_NAME }}
   OXPLAYER_TELEGRAM_WEBAPP_URL: ${{ vars.OXPLAYER_TELEGRAM_WEBAPP_URL || secrets.OXPLAYER_TELEGRAM_WEBAPP_URL }}
   SUBDL_API_KEY: ${{ secrets.SUBDL_API_KEY || vars.SUBDL_API_KEY }}
-  # Product version for CI builds: 1.1.<patch> where patch is the workflow run number (GitHub-assigned).
-  OXPLAYER_VERSION_NAME: 1.1.${{ github.run_number }}
+  # Product version for CI builds: 1.4.<patch> where patch is the workflow run number (GitHub-assigned).
+  OXPLAYER_VERSION_NAME: 1.4.${{ github.run_number }}
 
 jobs:
   build-android:

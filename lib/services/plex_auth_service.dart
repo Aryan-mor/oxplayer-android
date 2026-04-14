@@ -217,7 +217,7 @@ class PlexAuthService {
       'includeSettings': '1',
       'includeSharedSettings': '1',
       'X-Plex-Product': _appName,
-      'X-Plex-Version': '1.1.0',
+      'X-Plex-Version': '1.4.0',
       'X-Plex-Client-Identifier': _clientIdentifier,
       'X-Plex-Platform': 'Flutter',
       'X-Plex-Platform-Version': '3.8.1',
