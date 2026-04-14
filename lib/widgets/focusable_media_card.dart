@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 
 import '../focus/focusable_wrapper.dart';
@@ -61,6 +63,9 @@ class FocusableMediaCard extends StatefulWidget {
   /// When set, replaces default tap navigation on [MediaCard].
   final Future<void> Function(BuildContext context)? onPrimaryAction;
 
+  /// When set, replaces the default Plex context menu on long press (touch) / hold SELECT (TV).
+  final Future<void> Function(BuildContext context)? onLongPressAction;
+
   const FocusableMediaCard({
     super.key,
     required this.item,
@@ -84,6 +89,7 @@ class FocusableMediaCard extends StatefulWidget {
     this.onBack,
     this.onFocusChange,
     this.onPrimaryAction,
+    this.onLongPressAction,
   });
 
   @override
@@ -99,7 +105,13 @@ class _FocusableMediaCardState extends State<FocusableMediaCard> {
     return FocusableWrapper(
       focusNode: widget.focusNode,
       onSelect: () => _mediaCardKey.currentState?.handleTap(),
-      onLongPress: () => _mediaCardKey.currentState?.showContextMenu(),
+      onLongPress: () {
+        if (widget.onLongPressAction != null) {
+          unawaited(widget.onLongPressAction!(context));
+        } else {
+          _mediaCardKey.currentState?.showContextMenu();
+        }
+      },
       onNavigateUp: widget.onNavigateUp,
       onNavigateLeft: widget.onNavigateLeft,
       onNavigateRight: widget.onNavigateRight,
@@ -125,6 +137,7 @@ class _FocusableMediaCardState extends State<FocusableMediaCard> {
         mixedHubContext: widget.mixedHubContext,
         showServerName: widget.showServerName,
         onPrimaryAction: widget.onPrimaryAction,
+        onLongPressAction: widget.onLongPressAction,
       ),
     );
   }

@@ -4,9 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:oxplayer/models/plex_media_version.dart';
-import 'package:oxplayer/models/plex_metadata.dart';
-import 'package:oxplayer/models/plex_role.dart';
 import 'package:oxplayer/providers/settings_provider.dart';
 import 'package:oxplayer/services/settings_service.dart';
 import 'package:oxplayer/theme/mono_tokens.dart';
@@ -20,6 +17,9 @@ import '../../i18n/strings.g.dart';
 import '../../infrastructure/data_repository.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/video_player_navigation.dart';
+import 'my_telegram_video_detail_screen.dart';
+import 'telegram_video_download_ui.dart';
+import 'telegram_video_metadata.dart';
 
 /// In-memory cache for one app session: reopening the same chat shows the last grid without refetching TDLib.
 class _TelegramChatMediaSessionCache {
@@ -69,359 +69,8 @@ class _TelegramChatMediaCacheEntry {
   final int? nextHistoryFromMessageId;
 }
 
-/// Lists video messages from TDLib chat history using the same [FocusableMediaCard] / [MediaCard] as home hubs.
-
-class TelegramVideoMetadata implements PlexMetadata {
-  TelegramVideoMetadata(this.row, this.thumbnailPath);
-
-  final OxChatMediaRow row;
-  final String thumbnailPath;
-
-  static final RegExp _newline = RegExp(r'\r?\n');
-
-  @override
-  String get ratingKey => 'telegram_${row.fileId}_${row.messageId}';
-
-  @override
-  String? get key => null;
-
-  @override
-  String? get guid => null;
-
-  @override
-  String? get studio => 'Telegram';
-
-  @override
-  String? get type => 'video';
-
-  String get _fileLabel {
-    final n = row.fileName?.trim();
-    if (n != null && n.isNotEmpty) return n;
-    return 'Video ${row.messageId}';
-  }
-
-  @override
-  String? get title => displayTitle;
-
-  @override
-  String get displayTitle {
-    final cap = row.caption?.trim();
-    if (cap != null && cap.isNotEmpty) {
-      final first = cap.split(_newline).first.trim();
-      if (first.isNotEmpty) return first;
-    }
-    return _fileLabel;
-  }
-
-  @override
-  String? get titleSort => displayTitle;
-
-  @override
-  String? get contentRating => null;
-
-  @override
-  String? get summary {
-    final cap = row.caption?.trim();
-    if (cap == null || cap.isEmpty) return null;
-    final lines = cap.split(_newline);
-    if (lines.length > 1) {
-      final rest = lines.skip(1).join('\n').trim();
-      return rest.isEmpty ? null : rest;
-    }
-    return null;
-  }
-
-  @override
-  String? get displaySubtitle {
-    final cap = row.caption?.trim();
-    if (cap == null || cap.isEmpty) return null;
-    final fn = row.fileName?.trim();
-    if (fn == null || fn.isEmpty) return null;
-    if (fn == displayTitle) return null;
-    final hasMoreBody = cap.split(_newline).length > 1 || cap.length > 72;
-    return hasMoreBody ? '$fn · …' : fn;
-  }
-
-  @override
-  double? get rating => null;
-
-  @override
-  double? get audienceRating => null;
-
-  @override
-  double? get userRating => null;
-
-  @override
-  int? get year => null;
-
-  @override
-  String? get originallyAvailableAt => row.messageDate?.split('T')[0];
-
-  @override
-  String? get thumb => thumbnailPath.isNotEmpty ? thumbnailPath : null;
-
-  @override
-  String? get art => null;
-
-  @override
-  int? get duration => row.durationSeconds != null && row.durationSeconds! > 0 ? row.durationSeconds! * 1000 : null;
-
-  @override
-  int? get addedAt => null;
-
-  @override
-  int? get updatedAt => null;
-
-  @override
-  int? get lastViewedAt => null;
-
-  @override
-  String? get grandparentTitle => null;
-
-  @override
-  String? get grandparentThumb => null;
-
-  @override
-  String? get grandparentArt => null;
-
-  @override
-  String? get grandparentRatingKey => null;
-
-  @override
-  String? get parentTitle => null;
-
-  @override
-  String? get parentThumb => null;
-
-  @override
-  String? get parentRatingKey => null;
-
-  @override
-  int? get parentIndex => null;
-
-  @override
-  int? get index => int.tryParse(row.messageId);
-
-  @override
-  String? get grandparentTheme => null;
-
-  @override
-  int? get viewOffset => null;
-
-  @override
-  int? get viewCount => null;
-
-  @override
-  int? get leafCount => null;
-
-  @override
-  int? get viewedLeafCount => null;
-
-  @override
-  int? get childCount => null;
-
-  @override
-  List<PlexRole>? get role => null;
-
-  @override
-  List<PlexMediaVersion>? get mediaVersions => null;
-
-  @override
-  List<String>? get genre => null;
-
-  @override
-  List<String>? get director => null;
-
-  @override
-  List<String>? get writer => null;
-
-  @override
-  List<String>? get producer => null;
-
-  @override
-  List<String>? get country => null;
-
-  @override
-  List<String>? get collection => null;
-
-  @override
-  List<String>? get label => null;
-
-  @override
-  List<String>? get style => null;
-
-  @override
-  List<String>? get mood => null;
-
-  @override
-  String? get audioLanguage => null;
-
-  @override
-  String? get subtitleLanguage => null;
-
-  @override
-  int? get subtitleMode => null;
-
-  @override
-  int? get playlistItemID => null;
-
-  @override
-  int? get playQueueItemID => null;
-
-  @override
-  int? get librarySectionID => null;
-
-  @override
-  String? get librarySectionTitle => null;
-
-  @override
-  String? get ratingImage => null;
-
-  @override
-  String? get audienceRatingImage => null;
-
-  @override
-  String? get tagline => null;
-
-  @override
-  String? get originalTitle => null;
-
-  @override
-  String? get editionTitle => null;
-
-  @override
-  String? get subtype => null;
-
-  @override
-  int? get extraType => null;
-
-  @override
-  String? get primaryExtraKey => null;
-
-  @override
-  String? get serverId => 'telegram';
-
-  @override
-  String? get serverName => 'Telegram';
-
-  @override
-  String? get clearLogo => null;
-
-  @override
-  String? get backgroundSquare => null;
-
-  @override
-  bool get isLibrarySection => false;
-
-  // Required abstract method implementations
-  @override
-  PlexMetadata copyWith({
-    String? ratingKey,
-    String? key,
-    String? guid,
-    String? studio,
-    String? type,
-    String? title,
-    String? titleSort,
-    String? contentRating,
-    String? summary,
-    double? rating,
-    double? audienceRating,
-    double? userRating,
-    int? year,
-    String? originallyAvailableAt,
-    String? thumb,
-    String? art,
-    int? duration,
-    int? addedAt,
-    int? updatedAt,
-    int? lastViewedAt,
-    String? grandparentTitle,
-    String? grandparentThumb,
-    String? grandparentArt,
-    String? grandparentRatingKey,
-    String? parentTitle,
-    String? parentThumb,
-    String? parentRatingKey,
-    int? parentIndex,
-    int? index,
-    String? grandparentTheme,
-    int? viewOffset,
-    int? viewCount,
-    int? leafCount,
-    int? viewedLeafCount,
-    int? childCount,
-    List<PlexRole>? role,
-    List<PlexMediaVersion>? mediaVersions,
-    List<String>? genre,
-    List<String>? director,
-    List<String>? writer,
-    List<String>? producer,
-    List<String>? country,
-    List<String>? collection,
-    List<String>? label,
-    List<String>? style,
-    List<String>? mood,
-    String? audioLanguage,
-    String? subtitleLanguage,
-    int? subtitleMode,
-    int? playlistItemID,
-    int? playQueueItemID,
-    int? librarySectionID,
-    String? librarySectionTitle,
-    String? ratingImage,
-    String? audienceRatingImage,
-    String? tagline,
-    String? originalTitle,
-    String? editionTitle,
-    String? subtype,
-    int? extraType,
-    String? primaryExtraKey,
-    String? serverId,
-    String? serverName,
-    String? clearLogo,
-    String? backgroundSquare,
-  }) {
-    return TelegramVideoMetadata(row, thumbnailPath);
-  }
-
-  @override
-  String? heroArt({required double containerAspectRatio}) => null;
-
-  @override
-  String? posterThumb({EpisodePosterMode mode = EpisodePosterMode.seriesPoster, bool mixedHubContext = false}) =>
-      thumbnailPath.isNotEmpty ? thumbnailPath : null;
-
-  @override
-  Map<String, dynamic> toJson() => {};
-
-  @override
-  String get globalKey => ratingKey;
-
-  // Additional required properties
-
-  @override
-  bool get hasActiveProgress => false;
-
-  @override
-  bool get isWatched => false;
-
-  @override
-  String? get librarySectionKey => null;
-
-  @override
-  PlexMediaType get mediaType => PlexMediaType.movie;
-
-  bool get shouldHideSpoiler => false;
-
-  @override
-  bool usesWideAspectRatio(EpisodePosterMode mode, {bool mixedHubContext = false}) => false;
-
-  @override
-  (int?, int?) get subdlSeasonEpisodeNumbers => (null, null);
-}
-
 /// Telegram chat/topic media grid ([ListView] or [CustomScrollView]).
+/// Lists TDLib video messages using the same [FocusableMediaCard] / [MediaCard] as home hubs.
 ///
 /// Uses a [KeyedSubtree] so the [Key] must include [tdlibChatId] and [messageThreadId]; otherwise
 /// Flutter can reuse scroll state when switching forum topics or chats.
@@ -473,26 +122,6 @@ class MyTelegramChatMediaScreen extends StatefulWidget {
   State<MyTelegramChatMediaScreen> createState() => _MyTelegramChatMediaScreenState();
 }
 
-enum _MyTgDlPhase { idle, downloading, paused, completed }
-
-class _MyTgItemUiState {
-  _MyTgItemUiState({
-    this.phase = _MyTgDlPhase.idle,
-    this.progress = 0,
-    this.fileId,
-    this.resumeOffset = 0,
-    this.localPath,
-    this.cancelRequested = false,
-  });
-
-  _MyTgDlPhase phase;
-  double progress;
-  int? fileId;
-  int resumeOffset;
-  String? localPath;
-  bool cancelRequested;
-}
-
 class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
   /// Live gallery: [searchChatMessages] batch size (jump-search may merge multiple attempts per load).
   static const int _pageSize = 30;
@@ -510,7 +139,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
   int _loadGeneration = 0;
 
   /// Per-card UI: download progress, pause/resume, local file for play/delete.
-  final Map<String, _MyTgItemUiState> _tgItemUi = <String, _MyTgItemUiState>{};
+  final Map<String, TelegramVideoItemUiState> _tgItemUi = <String, TelegramVideoItemUiState>{};
 
   @override
   void initState() {
@@ -807,12 +436,35 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       showSnackBar(context, t.myTelegram.telegramChatIdMissing, type: SnackBarType.error);
       return;
     }
-    final ui = _tgItemUi.putIfAbsent(video.ratingKey, _MyTgItemUiState.new);
-    if (ui.phase == _MyTgDlPhase.completed && (ui.localPath?.isNotEmpty ?? false)) {
+    final ui = _tgItemUi.putIfAbsent(video.ratingKey, TelegramVideoItemUiState.new);
+    if (ui.phase == TelegramVideoDlPhase.completed && (ui.localPath?.isNotEmpty ?? false)) {
       await navigateToInternalVideoPlayerForUrl(context, metadata: video, videoUrl: ui.localPath!);
       return;
     }
-    if (ui.phase == _MyTgDlPhase.downloading) {
+    if (ui.phase == TelegramVideoDlPhase.downloading) {
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MyTelegramVideoDetailScreen(
+          chatTitle: widget.chatTitle,
+          video: video,
+          chatId: cid,
+          messageId: mid,
+          itemUi: ui,
+          onItemUiChanged: () {
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onTelegramVideoLongPress(BuildContext context, TelegramVideoMetadata video) async {
+    final cid = video.row.chatId;
+    final mid = int.tryParse(video.row.messageId);
+    if (cid == null || mid == null) {
+      showSnackBar(context, t.myTelegram.telegramChatIdMissing, type: SnackBarType.error);
       return;
     }
     await _showTelegramVideoActionsSheet(context, video, cid, mid);
@@ -918,9 +570,9 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         showSnackBar(context, t.myTelegram.downloadFailed, type: SnackBarType.error);
         return;
       }
-      _tgItemUi.putIfAbsent(video.ratingKey, _MyTgItemUiState.new)
+      _tgItemUi.putIfAbsent(video.ratingKey, TelegramVideoItemUiState.new)
         ..fileId = fileId
-        ..phase = _MyTgDlPhase.downloading
+        ..phase = TelegramVideoDlPhase.downloading
         ..cancelRequested = false
         ..progress = 0;
       setState(() {});
@@ -934,7 +586,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
 
   void _requestStopDownload(String ratingKey) {
     final ui = _tgItemUi[ratingKey];
-    if (ui == null || ui.phase != _MyTgDlPhase.downloading) return;
+    if (ui == null || ui.phase != TelegramVideoDlPhase.downloading) return;
     ui.cancelRequested = true;
     setState(() {});
   }
@@ -964,7 +616,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       if (path != null && path.isNotEmpty) {
         setState(() {
           st
-            ..phase = _MyTgDlPhase.completed
+            ..phase = TelegramVideoDlPhase.completed
             ..localPath = path
             ..cancelRequested = false;
         });
@@ -973,7 +625,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       if (st.cancelRequested) {
         final prog = await repo.getTelegramFileProgress(fileId);
         setState(() {
-          st.phase = _MyTgDlPhase.paused;
+          st.phase = TelegramVideoDlPhase.paused;
           st.cancelRequested = false;
           if (prog != null) {
             st.resumeOffset = prog.$1;
@@ -982,14 +634,14 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         return;
       }
       setState(() {
-        st.phase = _MyTgDlPhase.idle;
+        st.phase = TelegramVideoDlPhase.idle;
       });
       showSnackBar(context, t.myTelegram.downloadFailed, type: SnackBarType.error);
     } catch (e) {
       if (mounted) {
         final st = _tgItemUi[rk];
         if (st != null) {
-          setState(() => st.phase = _MyTgDlPhase.idle);
+          setState(() => st.phase = TelegramVideoDlPhase.idle);
         }
         showSnackBar(context, '${t.myTelegram.downloadFailed}: $e', type: SnackBarType.error);
       }
@@ -1001,7 +653,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     final fid = ui?.fileId;
     if (ui == null || fid == null) return;
     ui
-      ..phase = _MyTgDlPhase.downloading
+      ..phase = TelegramVideoDlPhase.downloading
       ..cancelRequested = false;
     setState(() {});
     unawaited(_runTelegramDownload(video, fid));
@@ -1027,92 +679,16 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     });
   }
 
-  Widget _telegramCardActionOverlay(TelegramVideoMetadata video, _MyTgItemUiState ui) {
-    final mt = t.myTelegram;
-    switch (ui.phase) {
-      case _MyTgDlPhase.downloading:
-        return Material(
-          color: Colors.black.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(6),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    minHeight: 6,
-                    value: (ui.progress > 0 && ui.progress <= 1) ? ui.progress : null,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () => _requestStopDownload(video.ratingKey),
-                    child: Text(mt.videoStopDownload, style: const TextStyle(color: Colors.white)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      case _MyTgDlPhase.paused:
-        return Material(
-          color: Colors.black.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(6),
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: FilledButton.tonal(
-                    onPressed: () => unawaited(_resumeTelegramDownload(video)),
-                    child: Text(mt.videoResumeDownload, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
-                    onPressed: () => _deleteTelegramDownload(video),
-                    child: Text(mt.videoDeleteDownload, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      case _MyTgDlPhase.completed:
-        return Material(
-          color: Colors.black.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(6),
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => unawaited(_playDownloadedFile(context, video)),
-                    child: Text(mt.videoPlay, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: FilledButton.tonal(
-                    onPressed: () => _deleteTelegramDownload(video),
-                    child: Text(mt.videoDeleteDownload, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      case _MyTgDlPhase.idle:
-        return const SizedBox.shrink();
-    }
+  Widget _telegramCardActionOverlay(TelegramVideoMetadata video, TelegramVideoItemUiState ui) {
+    return TelegramVideoDownloadControls(
+      phase: ui.phase,
+      progress: ui.progress,
+      compact: true,
+      onStopDownload: () => _requestStopDownload(video.ratingKey),
+      onResumeDownload: () => unawaited(_resumeTelegramDownload(video)),
+      onDeleteDownload: () => _deleteTelegramDownload(video),
+      onPlayDownloaded: () => unawaited(_playDownloadedFile(context, video)),
+    );
   }
 
   Widget _buildVideoGalleryScroll() {
@@ -1183,6 +759,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       item: video,
       isOffline: true,
       onPrimaryAction: (ctx) => _onTelegramVideoPrimaryTap(ctx, video),
+      onLongPressAction: (ctx) => _onTelegramVideoLongPress(ctx, video),
     );
     if (cap != null) {
       final showCaptionHint = cap.contains(RegExp(r'[\r\n]')) || cap.length > 72;
@@ -1197,9 +774,9 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     }
     final overlayState = ui;
     final showOverlay = overlayState != null &&
-        (overlayState.phase == _MyTgDlPhase.downloading ||
-            overlayState.phase == _MyTgDlPhase.paused ||
-            (overlayState.phase == _MyTgDlPhase.completed &&
+        (overlayState.phase == TelegramVideoDlPhase.downloading ||
+            overlayState.phase == TelegramVideoDlPhase.paused ||
+            (overlayState.phase == TelegramVideoDlPhase.completed &&
                 (overlayState.localPath?.isNotEmpty ?? false)));
     if (!showOverlay) {
       return card;

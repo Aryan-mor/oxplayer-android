@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -44,6 +45,9 @@ class MediaCard extends StatefulWidget {
   /// When set, replaces default tap navigation (e.g. My Telegram: action sheet).
   final Future<void> Function(BuildContext context)? onPrimaryAction;
 
+  /// When set, replaces the default Plex context menu on long press / secondary tap (e.g. My Telegram: bot actions sheet).
+  final Future<void> Function(BuildContext context)? onLongPressAction;
+
   const MediaCard({
     super.key,
     required this.item,
@@ -60,6 +64,7 @@ class MediaCard extends StatefulWidget {
     this.mixedHubContext = false,
     this.showServerName = false,
     this.onPrimaryAction,
+    this.onLongPressAction,
   });
 
   @override
@@ -76,6 +81,14 @@ class MediaCardState extends State<MediaCard> {
 
   void _showContextMenu() {
     _contextMenuKey.currentState?.showContextMenu(context, position: _tapPosition);
+  }
+
+  void _handleLongPress() {
+    if (widget.onLongPressAction != null) {
+      unawaited(widget.onLongPressAction!(context));
+    } else {
+      _showContextMenu();
+    }
   }
 
   /// Public method to trigger tap action (for keyboard/gamepad SELECT)
@@ -277,9 +290,9 @@ class MediaCardState extends State<MediaCard> {
             semanticLabel: semanticLabel,
             onTap: () => _handleTap(context),
             onTapDown: _storeTapPosition,
-            onLongPress: _showContextMenu,
+            onLongPress: _handleLongPress,
             onSecondaryTapDown: _storeTapPosition,
-            onSecondaryTap: _showContextMenu,
+            onSecondaryTap: _handleLongPress,
             density: context.select<SettingsProvider, int>((s) => s.libraryDensity),
             isOffline: widget.isOffline,
             localPosterPath: localPosterPath,
@@ -315,9 +328,9 @@ class MediaCardState extends State<MediaCard> {
         canRequestFocus: false,
         onTap: () => _handleTap(context),
         onTapDown: _storeTapPosition,
-        onLongPress: _showContextMenu,
+        onLongPress: _handleLongPress,
         onSecondaryTapDown: _storeTapPosition,
-        onSecondaryTap: _showContextMenu,
+        onSecondaryTap: _handleLongPress,
         borderRadius: BorderRadius.circular(tokens(context).radiusSm),
         child: Padding(
           padding: const EdgeInsets.all(3),
