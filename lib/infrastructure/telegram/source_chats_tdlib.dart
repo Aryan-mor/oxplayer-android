@@ -3,7 +3,16 @@ import 'dart:io' as io;
 
 import 'package:tdlib/td_api.dart' as td;
 
+import '../../utils/app_logger.dart';
 import 'tdlib_facade.dart';
+
+/// [td.TdError] does not override [Object.toString]; use this for UI and logs.
+String describeTdlibError(Object error) {
+  if (error is td.TdError) {
+    return 'TDLib ${error.code}: ${error.message}';
+  }
+  return error.toString();
+}
 
 /// Picker bucket aligned with API `GET /me/chats` `bucket` query.
 enum SourceChatPickerBucket { chats, groups, supergroups, channels, bots }
@@ -169,21 +178,40 @@ Future<String?> tdlibCacheChatPhotoIfNeeded({
 
 /// Loads all [td.ForumTopic] rows for a forum supergroup (paginated [GetForumTopics]).
 Future<List<td.ForumTopic>> tdlibLoadAllForumTopics(TdlibFacade facade, int chatId) async {
+  try {
+    await facade.send(td.OpenChat(chatId: chatId));
+  } catch (_) {
+    // Best-effort; [GetForumTopics] may still succeed.
+  }
+
   final out = <td.ForumTopic>[];
   var offsetDate = 0;
   var offsetMessageId = 0;
   var offsetThreadId = 0;
   while (true) {
-    final raw = await facade.send(
-      td.GetForumTopics(
-        chatId: chatId,
-        query: '',
-        offsetDate: offsetDate,
-        offsetMessageId: offsetMessageId,
-        offsetMessageThreadId: offsetThreadId,
-        limit: 100,
-      ),
-    );
+    td.TdObject raw;
+    try {
+      raw = await facade.send(
+        td.GetForumTopics(
+          chatId: chatId,
+          query: '',
+          offsetDate: offsetDate,
+          offsetMessageId: offsetMessageId,
+          offsetMessageThreadId: offsetThreadId,
+          limit: 100,
+        ),
+      );
+    } on td.TdError catch (e) {
+      final desc = describeTdlibError(e);
+      appLogger.e('GetForumTopics failed chatId=$chatId', error: desc, stackTrace: StackTrace.current);
+      final msg = e.message.toLowerCase();
+      // Indexed/API said "forum" but TDLib says this peer is not forum-capable — degrade to "All videos" only.
+      if (msg.contains('not a forum') || msg.contains('is not a forum') || msg.contains('not supported')) {
+        appLogger.w('GetForumTopics: treating as non-forum chatId=$chatId — $desc');
+        return const <td.ForumTopic>[];
+      }
+      throw Exception(desc);
+    }
     if (raw is! td.ForumTopics) break;
     out.addAll(raw.topics);
     if (raw.topics.isEmpty) break;

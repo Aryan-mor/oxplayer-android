@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../infrastructure/data_repository.dart';
 import '../../infrastructure/telegram/source_chats_tdlib.dart';
 import '../../i18n/strings.g.dart';
+import '../../utils/app_logger.dart';
 import 'my_telegram_chat_media_screen.dart';
 
 /// Forum supergroup: horizontal topic tabs — indexed chats use API media per topic; others use TDLib video search for that thread.
@@ -76,11 +77,13 @@ class _MyTelegramForumTopicsScreenState extends State<MyTelegramForumTopicsScree
         _loading = false;
         _error = null;
       });
-    } catch (e) {
+    } catch (e, st) {
       if (!mounted) return;
+      final detail = describeTdlibError(e);
+      appLogger.e('MyTelegram forum topics load failed chatId=$id', error: detail, stackTrace: st);
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = detail;
       });
     }
   }
