@@ -12,6 +12,7 @@ import '../../infrastructure/data_repository.dart';
 import '../../services/auth_debug_service.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/video_player_navigation.dart';
+import '../../widgets/file_preview_card.dart';
 import '../../widgets/media_thumbnail_info_overlay.dart';
 import 'telegram_video_download_ui.dart';
 import 'telegram_video_metadata.dart';
@@ -90,33 +91,6 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
       }
     } finally {
       await repo.releaseOxMediaPlaybackSession(reason: 'my_telegram_detail_stream_closed');
-    }
-  }
-
-  Future<void> _startDownload() async {
-    try {
-      final repo = await DataRepository.create();
-      final fileId = await repo.getTelegramPlayableFileIdForMessage(
-        chatId: widget.chatId,
-        messageId: widget.messageId,
-      );
-      if (!mounted) return;
-      if (fileId == null) {
-        showSnackBar(context, t.myTelegram.downloadFailed, type: SnackBarType.error);
-        return;
-      }
-      widget.itemUi
-        ..fileId = fileId
-        ..phase = TelegramVideoDlPhase.downloading
-        ..cancelRequested = false
-        ..progress = 0;
-      setState(() {});
-      _notifyParent();
-      unawaited(_runDownload(fileId));
-    } catch (e) {
-      if (mounted) {
-        showSnackBar(context, '${t.myTelegram.downloadFailed}: $e', type: SnackBarType.error);
-      }
     }
   }
 
@@ -261,25 +235,6 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
       );
     }
 
-    ButtonStyle primaryPlayStyle() {
-      if (!isKeyboardMode) {
-        return FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16));
-      }
-      return ButtonStyle(
-        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 16)),
-        minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
-        overlayColor: noOverlay,
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.focused)) return focusBg;
-          return colorScheme.primary;
-        }),
-        foregroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.focused)) return focusFg;
-          return colorScheme.onPrimary;
-        }),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Text(v.displayTitle, maxLines: 2, overflow: TextOverflow.ellipsis),
@@ -329,54 +284,20 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
                 Text(v.summary!, style: Theme.of(context).textTheme.bodyMedium),
               ],
               const SizedBox(height: 20),
+              FilePreviewCard(
+                title: v.displayTitle,
+                infoLine: fileTechSummary,
+                description: v.summary,
+                localPosterPath: thumb != null && thumb.isNotEmpty && File(thumb).existsSync() ? thumb : null,
+                onStream: () => unawaited(_stream()),
+              ),
               Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 48,
-                      child: FilledButton(
-                        onPressed: () => unawaited(_stream()),
-                        style: primaryPlayStyle(),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const AppIcon(Symbols.play_arrow_rounded, fill: 1, size: 22),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                mt.videoActionStream,
-                                style: const TextStyle(fontSize: 16),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
                   IconButton.filledTonal(
                     onPressed: () => unawaited(_forwardToMainBot()),
                     icon: const AppIcon(Symbols.cloud_upload_rounded, fill: 1),
                     tooltip: mt.videoActionIndex,
-                    iconSize: 22,
-                    style: actionIconButtonStyle(),
-                  ),
-                  const SizedBox(width: 12),
-                  IconButton.filledTonal(
-                    onPressed: ui.phase == TelegramVideoDlPhase.downloading ? null : () => unawaited(_startDownload()),
-                    icon: ui.phase == TelegramVideoDlPhase.downloading
-                        ? SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: colorScheme.onSecondaryContainer,
-                            ),
-                          )
-                        : const AppIcon(Symbols.download_rounded, fill: 1),
-                    tooltip: mt.videoActionDownload,
                     iconSize: 22,
                     style: actionIconButtonStyle(),
                   ),

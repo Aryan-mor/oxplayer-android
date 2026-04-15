@@ -57,7 +57,7 @@ import '../widgets/media_card.dart';
 import '../widgets/media_context_menu.dart';
 import '../widgets/media_thumbnail_info_overlay.dart';
 import '../widgets/overlay_sheet.dart';
-import '../widgets/ox_file_option_card.dart';
+import '../widgets/file_preview_card.dart';
 import '../widgets/placeholder_container.dart';
 import '../widgets/plex_optimized_image.dart';
 import '../widgets/rating_bottom_sheet.dart';
@@ -2332,29 +2332,29 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         final option = fileOptions[index];
         final playbackMetadata = _selectedOxOptionParent ?? metadata;
         final downloadMetadata = buildOxDownloadMetadata(parentMetadata: playbackMetadata, file: option.file);
-        return OxFileOptionCard(
+        return FilePreviewCard(
           title: option.title,
           badgeLabel: option.badgeLabel,
           infoLine: option.infoLine,
-          summary: option.summary,
+          description: option.summary,
           imageUrl: playbackMetadata.thumb,
           downloadGlobalKey: downloadMetadata.globalKey,
-          onQueueDownload: () {
+          onDownload: () {
             unawaited(_queueOxFileDownload(playbackMetadata, option));
           },
-          onPauseDownload: () {
+          onPause: () {
             unawaited(_pauseOxFileDownload(playbackMetadata, option));
           },
-          onResumeDownload: () {
+          onResume: () {
             unawaited(_resumeOxFileDownload(playbackMetadata, option));
           },
-          onCancelActiveDownload: () {
+          onCancelDownload: () {
             unawaited(_cancelOxFileDownload(playbackMetadata, option));
           },
-          onDeleteCompletedDownload: () {
+          onDelete: () {
             unawaited(_deleteOxFileDownload(playbackMetadata, option));
           },
-          onRetryDownload: () {
+          onRetry: () {
             unawaited(_retryOxFileDownload(playbackMetadata, option));
           },
           focusNode: index == 0
@@ -2370,7 +2370,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                   }
                 }
               : null,
-          onTap: () async {
+          onStream: () async {
             await _playOxFileOption(playbackMetadata, option);
           },
         );
@@ -2681,22 +2681,17 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       return null;
     }
 
-    final episodeHeader = EpisodeCard(
-      episode: episode,
+    final episodeHeader = FilePreviewCard(
+      title: episode.title ?? episode.displayTitle,
+      badgeLabel: episode.index != null ? 'E${episode.index}' : null,
+      description: episode.summary,
+      imageUrl: episode.thumb,
+      localPosterPath: localPosterPath,
       client: client,
-      isOffline: widget.isOffline,
-      autofocus: false,
-      showPrimaryPlayAction: false,
       focusNode: episodeRowFocusNode(),
       onNavigateUp: episodeIndex == 0 ? _navigateUpFromFirstEpisodeRow : null,
+      showActions: false,
       onTap: onEpisodeHeaderTap,
-      localPosterPath: localPosterPath,
-      onRefresh: widget.isOffline
-          ? null
-          : (_) async {
-              await _loadFullMetadata();
-            },
-      onListRefresh: widget.isOffline ? null : _loadFullMetadata,
     );
 
     if (!expanded) {
@@ -2719,22 +2714,17 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              EpisodeCard(
-                episode: episode,
+              FilePreviewCard(
+                title: episode.title ?? episode.displayTitle,
+                badgeLabel: episode.index != null ? 'E${episode.index}' : null,
+                description: episode.summary,
+                imageUrl: episode.thumb,
+                localPosterPath: localPosterPath,
                 client: client,
-                isOffline: widget.isOffline,
-                autofocus: false,
-                showPrimaryPlayAction: false,
                 focusNode: episodeIndex == 0 ? _firstEpisodeFocusNode : null,
                 onNavigateUp: episodeIndex == 0 ? _navigateUpFromFirstEpisodeRow : null,
+                showActions: false,
                 onTap: onEpisodeHeaderTap,
-                localPosterPath: localPosterPath,
-                onRefresh: widget.isOffline
-                    ? null
-                    : (_) async {
-                        await _loadFullMetadata();
-                      },
-                onListRefresh: widget.isOffline ? null : _loadFullMetadata,
               ),
               const SizedBox(height: 8),
               ...options.asMap().entries.map((entry) {
@@ -2743,34 +2733,34 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                 final isGlobalLast =
                     episodeIndex == _episodes.length - 1 && optIndex == options.length - 1 && _episodes.length > 1;
                 final downloadMeta = buildOxDownloadMetadata(parentMetadata: episode, file: option.file);
-                return OxFileOptionCard(
+                return FilePreviewCard(
                   title: option.title,
                   badgeLabel: option.badgeLabel,
                   infoLine: option.infoLine,
-                  summary: option.summary,
+                  description: option.summary,
                   imageUrl: episode.thumb,
                   localPosterPath: localPosterPath,
                   downloadGlobalKey: downloadMeta.globalKey,
-                  onQueueDownload: () {
+                  onDownload: () {
                     unawaited(_queueOxFileDownload(episode, option));
                   },
-                  onPauseDownload: () {
+                  onPause: () {
                     unawaited(_pauseOxFileDownload(episode, option));
                   },
-                  onResumeDownload: () {
+                  onResume: () {
                     unawaited(_resumeOxFileDownload(episode, option));
                   },
-                  onCancelActiveDownload: () {
+                  onCancelDownload: () {
                     unawaited(_cancelOxFileDownload(episode, option));
                   },
-                  onDeleteCompletedDownload: () {
+                  onDelete: () {
                     unawaited(_deleteOxFileDownload(episode, option));
                   },
-                  onRetryDownload: () {
+                  onRetry: () {
                     unawaited(_retryOxFileDownload(episode, option));
                   },
                   focusNode: isGlobalLast ? _lastEpisodeFocusNode : null,
-                  onTap: () async {
+                  onStream: () async {
                     await _playOxFileOption(episode, option);
                   },
                 );
@@ -2813,23 +2803,21 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           );
         }
 
-        return EpisodeCard(
-          episode: episode,
+        return FilePreviewCard(
+          title: episode.title ?? episode.displayTitle,
+          badgeLabel: episode.index != null ? 'E${episode.index}' : null,
+          description: episode.summary,
+          imageUrl: episode.thumb,
+          localPosterPath: localPosterPath,
           client: client,
-          isOffline: widget.isOffline,
-          autofocus: false,
           focusNode: index == 0
               ? _firstEpisodeFocusNode
               : index == _episodes.length - 1 && _episodes.length > 1
               ? _lastEpisodeFocusNode
               : null,
           onNavigateUp: index == 0 ? _navigateUpFromFirstEpisodeRow : null,
-          localPosterPath: localPosterPath,
-          downloadGlobalKey: singleOxOption != null
-              ? buildOxDownloadMetadata(parentMetadata: episode, file: singleOxOption.file).globalKey
-              : null,
-          onDownloadTap: singleOxOption != null ? () => _queueOxFileDownload(episode, singleOxOption) : null,
-          onTap: () async {
+          downloadGlobalKey: widget.isOffline ? null : episode.globalKey,
+          onStream: () async {
             if (isOxEpisode) {
               if (singleOxOption != null) {
                 await _playOxFileOption(episode, singleOxOption);
@@ -2853,29 +2841,72 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               },
             );
           },
-          onRefresh: widget.isOffline
+          onDownload: widget.isOffline
               ? null
-              : isOxEpisode
-              ? (_) async {
-                  await _loadFullMetadata();
-                }
-              : (ratingKey) async {
-                  final refreshed = await client?.getMetadataWithImages(ratingKey);
-                  if (refreshed != null) {
-                    setStateIfMounted(() {
-                      final i = _episodes.indexWhere((e) => e.ratingKey == ratingKey);
-                      if (i != -1) {
-                        _episodes[i] = refreshed;
-                        _syncEpisodeToCache(i, refreshed);
-                      }
-                    });
+              : () async {
+                  if (singleOxOption != null) {
+                    await _queueOxFileDownload(episode, singleOxOption);
+                    return;
+                  }
+                  if (client == null) return;
+                  final versionConfig = await _resolveDownloadVersion(context, episode, client);
+                  if (versionConfig == null || !context.mounted) return;
+                  try {
+                    await context.read<DownloadProvider>().queueDownload(episode, client, versionConfig: versionConfig);
+                    if (context.mounted) showSuccessSnackBar(context, t.downloads.downloadQueued);
+                  } on CellularDownloadBlockedException {
+                    if (context.mounted) showErrorSnackBar(context, t.settings.cellularDownloadBlocked);
                   }
                 },
-          onListRefresh: widget.isOffline
+          onPause: widget.isOffline
               ? null
-              : isOxEpisode
-              ? _loadFullMetadata
-              : _refreshCurrentEpisodes,
+              : () async {
+                  await context.read<DownloadProvider>().pauseDownload(episode.globalKey);
+                  if (context.mounted) showAppSnackBar(context, 'Download paused');
+                },
+          onResume: widget.isOffline || client == null
+              ? null
+              : () async {
+                  await context.read<DownloadProvider>().resumeDownload(episode.globalKey, client);
+                  if (context.mounted) showAppSnackBar(context, 'Download resumed');
+                },
+          onCancelDownload: widget.isOffline
+              ? null
+              : () async {
+                  await context.read<DownloadProvider>().cancelDownload(episode.globalKey);
+                },
+          onDelete: widget.isOffline
+              ? null
+              : () async {
+                  final confirmed = await showDeleteConfirmation(
+                    context,
+                    title: t.downloads.deleteDownload,
+                    message: t.downloads.deleteConfirm(title: episode.displayTitle),
+                  );
+                  if (!confirmed || !context.mounted) return;
+                  await context.read<DownloadProvider>().deleteDownload(episode.globalKey);
+                  if (context.mounted) showSuccessSnackBar(context, t.downloads.downloadDeleted);
+                },
+          onRetry: widget.isOffline || client == null
+              ? null
+              : () async {
+                  if (singleOxOption != null) {
+                    await context.read<DownloadProvider>().deleteDownload(
+                      buildOxDownloadMetadata(parentMetadata: episode, file: singleOxOption.file).globalKey,
+                    );
+                    await _queueOxFileDownload(episode, singleOxOption);
+                    return;
+                  }
+                  final versionConfig = await _resolveDownloadVersion(context, episode, client);
+                  if (versionConfig == null || !context.mounted) return;
+                  await context.read<DownloadProvider>().deleteDownload(episode.globalKey);
+                  try {
+                    await context.read<DownloadProvider>().queueDownload(episode, client, versionConfig: versionConfig);
+                    if (context.mounted) showSuccessSnackBar(context, t.downloads.downloadQueued);
+                  } on CellularDownloadBlockedException {
+                    if (context.mounted) showErrorSnackBar(context, t.settings.cellularDownloadBlocked);
+                  }
+                },
         );
       },
     );
