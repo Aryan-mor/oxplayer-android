@@ -94,6 +94,33 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
     }
   }
 
+  Future<void> _startDownload() async {
+    try {
+      final repo = await DataRepository.create();
+      final fileId = await repo.getTelegramPlayableFileIdForMessage(
+        chatId: widget.chatId,
+        messageId: widget.messageId,
+      );
+      if (!mounted) return;
+      if (fileId == null) {
+        showSnackBar(context, t.myTelegram.downloadFailed, type: SnackBarType.error);
+        return;
+      }
+      widget.itemUi
+        ..fileId = fileId
+        ..phase = TelegramVideoDlPhase.downloading
+        ..cancelRequested = false
+        ..progress = 0;
+      setState(() {});
+      _notifyParent();
+      unawaited(_runDownload(fileId));
+    } catch (e) {
+      if (mounted) {
+        showSnackBar(context, '${t.myTelegram.downloadFailed}: $e', type: SnackBarType.error);
+      }
+    }
+  }
+
   void _requestStopDownload() {
     final ui = widget.itemUi;
     if (ui.phase != TelegramVideoDlPhase.downloading) return;
@@ -289,32 +316,18 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
                 infoLine: fileTechSummary,
                 description: v.summary,
                 localPosterPath: thumb != null && thumb.isNotEmpty && File(thumb).existsSync() ? thumb : null,
-                onStream: () => unawaited(_stream()),
+                onStream: ui.phase == TelegramVideoDlPhase.completed
+                    ? () => unawaited(_playDownloadedFile())
+                    : () => unawaited(_stream()),
+                onIndex: () => unawaited(_forwardToMainBot()),
+                telegramDownloadPhase: ui.phase,
+                telegramDownloadProgress: ui.progress,
+                onDownload: () => unawaited(_startDownload()),
+                onPause: _requestStopDownload,
+                onResume: () => unawaited(_resumeDownload()),
+                onCancelDownload: _requestStopDownload,
+                onDelete: _deleteDownload,
               ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  IconButton.filledTonal(
-                    onPressed: () => unawaited(_forwardToMainBot()),
-                    icon: const AppIcon(Symbols.cloud_upload_rounded, fill: 1),
-                    tooltip: mt.videoActionIndex,
-                    iconSize: 22,
-                    style: actionIconButtonStyle(),
-                  ),
-                ],
-              ),
-              if (ui.phase != TelegramVideoDlPhase.idle) ...[
-                const SizedBox(height: 16),
-                TelegramVideoDownloadControls(
-                  phase: ui.phase,
-                  progress: ui.progress,
-                  compact: false,
-                  onStopDownload: _requestStopDownload,
-                  onResumeDownload: () => unawaited(_resumeDownload()),
-                  onDeleteDownload: _deleteDownload,
-                  onPlayDownloaded: () => unawaited(_playDownloadedFile()),
-                ),
-              ],
             ],
           ),
         ),

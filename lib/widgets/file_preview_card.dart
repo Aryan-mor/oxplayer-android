@@ -9,6 +9,7 @@ import '../focus/focus_theme.dart';
 import '../focus/focusable_wrapper.dart';
 import '../models/download_models.dart';
 import '../providers/download_provider.dart';
+import '../screens/telegram/telegram_video_download_ui.dart';
 import '../theme/mono_tokens.dart';
 import '../utils/platform_detector.dart';
 import 'app_icon.dart';
@@ -53,6 +54,13 @@ class FilePreviewCard extends StatefulWidget {
     this.onRetry,
     // Optional cast (reserved, always disabled)
     this.onCast,
+    // Optional index action (Telegram-only: forward to main bot for indexing)
+    this.onIndex,
+    // Telegram-specific download state (alternative to downloadGlobalKey/DownloadProvider).
+    // When provided, the card renders download buttons driven by TelegramVideoDlPhase
+    // instead of DownloadProvider. Use for Telegram files only.
+    this.telegramDownloadPhase,
+    this.telegramDownloadProgress,
     // Whether to show the action buttons row (stream, download, cast).
     // Set to false for header/scope cards that only need a tap-to-expand behaviour.
     this.showActions = true,
@@ -91,6 +99,19 @@ class FilePreviewCard extends StatefulWidget {
   /// Reserved for future use; cast button is always disabled regardless of this value.
   final VoidCallback? onCast;
 
+  /// Optional index action. When provided, shows a cloud-upload icon button in
+  /// the action row. Intended for Telegram files (forward to main bot for indexing).
+  final VoidCallback? onIndex;
+
+  /// Telegram-specific download phase. When provided (non-null), the card uses
+  /// this instead of [DownloadProvider] to drive the download/pause/delete buttons.
+  /// Pair with [telegramDownloadProgress] (0.0–1.0) for the progress ring.
+  final TelegramVideoDlPhase? telegramDownloadPhase;
+
+  /// Download progress for Telegram downloads (0.0–1.0). Only used when
+  /// [telegramDownloadPhase] is [TelegramVideoDlPhase.downloading].
+  final double? telegramDownloadProgress;
+
   /// When false, the action buttons row (stream, download, cast) is hidden.
   /// Use for header/scope cards that only need a tap-to-expand behaviour.
   final bool showActions;
@@ -109,6 +130,7 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
   FocusNode? _streamFocusNode;
   FocusNode? _downloadFocusNode;
   FocusNode? _deleteFocusNode;
+  FocusNode? _indexFocusNode;
 
   bool get _hasDownloadKey => widget.downloadGlobalKey != null;
 
@@ -121,6 +143,9 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
   void _createFocusNodes() {
     if (widget.showActions) {
       _streamFocusNode = FocusNode(debugLabel: 'file_preview_stream');
+      if (widget.onIndex != null) {
+        _indexFocusNode = FocusNode(debugLabel: 'file_preview_index');
+      }
     }
     if (_hasDownloadKey && widget.showActions) {
       _downloadFocusNode = FocusNode(debugLabel: 'file_preview_download');
@@ -135,6 +160,8 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
     _downloadFocusNode = null;
     _deleteFocusNode?.dispose();
     _deleteFocusNode = null;
+    _indexFocusNode?.dispose();
+    _indexFocusNode = null;
   }
 
   @override
@@ -142,7 +169,9 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
     super.didUpdateWidget(oldWidget);
     final keyChanged = oldWidget.downloadGlobalKey != widget.downloadGlobalKey;
     final actionsChanged = oldWidget.showActions != widget.showActions;
-    if (keyChanged || actionsChanged) {
+    final indexChanged = (oldWidget.onIndex == null) != (widget.onIndex == null);
+    final telegramChanged = oldWidget.telegramDownloadPhase != widget.telegramDownloadPhase;
+    if (keyChanged || actionsChanged || indexChanged || telegramChanged) {
       _disposeFocusNodes();
       _createFocusNodes();
     }
@@ -327,10 +356,16 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
   }
 
   Widget _buildActionButtons(BuildContext context, {required bool isTV}) {
+    // Telegram path: use TelegramVideoDlPhase instead of DownloadProvider
+    if (widget.telegramDownloadPhase != null) {
+      return _buildTelegramActionButtons(context, isTV: isTV);
+    }
+
     if (widget.downloadGlobalKey == null) {
       return Row(
         children: [
-          _buildStreamButton(context, isTV: isTV, nextFocusNode: null),
+          _buildStreamButton(context, isTV: isTV, nextFocusNode: _indexFocusNode),
+          if (widget.onIndex != null) _buildIndexButton(context, isTV: isTV),
           if (!isTV) _buildCastButton(context),
         ],
       );
@@ -352,15 +387,108 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
 
         return Row(
           children: [
-            _buildStreamButton(context, isTV: isTV, nextFocusNode: showDownload ? _downloadFocusNode : null),
+            _buildStreamButton(context, isTV: isTV, nextFocusNode: showDownload ? _downloadFocusNode : _indexFocusNode),
             if (showDownload)
               _buildDownloadButton(context, progress, isQueueing, showDeleteCancel),
             if (showDeleteCancel)
               _buildDeleteCancelButton(context, progress, isQueueing),
+            if (widget.onIndex != null) _buildIndexButton(context, isTV: isTV),
             if (!isTV) _buildCastButton(context),
           ],
         );
       },
+    );
+  }
+
+  /// Action buttons for Telegram files (driven by [TelegramVideoDlPhase]).
+  Widget _buildTelegramActionButtons(BuildContext context, {required bool isTV}) {
+    final phase = widget.telegramDownloadPhase!;
+    final dlProgress = widget.telegramDownloadProgress ?? 0.0;
+    final colorScheme = Theme.of(context).colorScheme;
+    const ringDiameter = 40.0;
+    const ringIconSize = 20.0;
+
+    // Download/pause button
+    Widget? dlButton;
+    VoidCallback? dlCallback;
+
+    switch (phase) {
+      case TelegramVideoDlPhase.idle:
+        dlButton = AppIcon(Symbols.download_rounded, fill: 1, size: 22, color: colorScheme.primary);
+        dlCallback = widget.onDownload;
+      case TelegramVideoDlPhase.downloading:
+        dlButton = PlexStyleDownloadRingIcon(
+          indeterminate: dlProgress <= 0,
+          determinateProgress: dlProgress > 0 ? dlProgress : null,
+          diameter: ringDiameter,
+          strokeWidth: 2.5,
+          progressColor: colorScheme.primary,
+          centerIcon: AppIcon(Symbols.pause_rounded, fill: 1, size: ringIconSize, color: colorScheme.primary),
+        );
+        dlCallback = widget.onPause;
+      case TelegramVideoDlPhase.paused:
+        dlButton = PlexStyleDownloadRingIcon(
+          indeterminate: false,
+          determinateProgress: dlProgress > 0 ? dlProgress : 0.01,
+          diameter: ringDiameter,
+          strokeWidth: 2.5,
+          progressColor: colorScheme.primary,
+          centerIcon: AppIcon(Symbols.play_arrow_rounded, fill: 1, size: ringIconSize, color: colorScheme.primary),
+        );
+        dlCallback = widget.onResume;
+      case TelegramVideoDlPhase.completed:
+        dlButton = null; // hide download button when completed
+        dlCallback = null;
+    }
+
+    // Delete button: show when downloading, paused, or completed
+    Widget? deleteButton;
+    VoidCallback? deleteCallback;
+    if (phase == TelegramVideoDlPhase.completed) {
+      deleteButton = AppIcon(Symbols.delete_outline_rounded, fill: 1, size: 22, color: colorScheme.error);
+      deleteCallback = widget.onDelete;
+    } else if (phase == TelegramVideoDlPhase.downloading || phase == TelegramVideoDlPhase.paused) {
+      deleteButton = AppIcon(Symbols.delete_outline_rounded, fill: 1, size: 20, color: tokens(context).textMuted);
+      deleteCallback = widget.onCancelDownload;
+    }
+
+    final showDl = dlButton != null;
+    final showDelete = deleteButton != null;
+
+    return Row(
+      children: [
+        _buildStreamButton(context, isTV: isTV, nextFocusNode: showDl ? _downloadFocusNode : _indexFocusNode),
+        if (showDl)
+          FocusableWrapper(
+            focusNode: _downloadFocusNode,
+            disableScale: true,
+            descendantsAreFocusable: false,
+            onNavigateLeft: () => (_streamFocusNode ?? widget.focusNode)?.requestFocus(),
+            onNavigateDown: showDelete ? () => _deleteFocusNode?.requestFocus() : null,
+            onSelect: () { if (dlCallback != null) dlCallback(); },
+            child: IconButton(
+              onPressed: dlCallback,
+              icon: dlButton!,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        if (showDelete)
+          FocusableWrapper(
+            focusNode: _deleteFocusNode,
+            disableScale: true,
+            descendantsAreFocusable: false,
+            onNavigateUp: () => _downloadFocusNode?.requestFocus(),
+            onNavigateLeft: () => widget.focusNode?.requestFocus(),
+            onSelect: () { if (deleteCallback != null) deleteCallback(); },
+            child: IconButton(
+              onPressed: deleteCallback,
+              icon: deleteButton!,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        if (widget.onIndex != null) _buildIndexButton(context, isTV: isTV),
+        if (!isTV) _buildCastButton(context),
+      ],
     );
   }
 
@@ -380,6 +508,26 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
       onNavigateLeft: () => widget.focusNode?.requestFocus(),
       onNavigateRight: nextFocusNode != null ? () => nextFocusNode.requestFocus() : null,
       onSelect: widget.onStream,
+      child: button,
+    );
+  }
+
+  Widget _buildIndexButton(BuildContext context, {required bool isTV}) {
+    final button = IconButton(
+      onPressed: widget.onIndex,
+      icon: const AppIcon(Symbols.cloud_upload_rounded, fill: 1, size: 22),
+      tooltip: 'Index',
+      visualDensity: VisualDensity.compact,
+    );
+
+    if (!isTV || _indexFocusNode == null) return button;
+
+    return FocusableWrapper(
+      focusNode: _indexFocusNode,
+      disableScale: true,
+      descendantsAreFocusable: false,
+      onNavigateLeft: () => (_streamFocusNode ?? widget.focusNode)?.requestFocus(),
+      onSelect: widget.onIndex,
       child: button,
     );
   }
