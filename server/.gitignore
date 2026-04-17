@@ -1,0 +1,34 @@
+# Firebase credentials - NEVER commit these files
+firebase-serviceAccountKey.json
+*-serviceAccountKey.json
+serviceAccount*.json
+
+# Environment files with secrets
+.env
+.env.local
+.env.production
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+/data/logs/
+
+# OS
+.DS_Store
+Thumbs.db

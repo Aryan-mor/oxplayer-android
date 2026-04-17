@@ -14,6 +14,7 @@ import '../../focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
 import '../main_screen.dart';
 import '../../mixins/refreshable.dart';
+import '../../services/auth_debug_service.dart';
 import '../../services/download_storage_service.dart';
 import '../../services/saf_storage_service.dart';
 import '../../providers/settings_provider.dart';
@@ -47,6 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
   // Focus tracking keys
   static const _kAppearance = 'appearance';
   static const _kPlayback = 'playback';
+  static const _kCastToggle = 'cast_toggle';
   static const _kDownloadLocation = 'download_location';
   static const _kDownloadOnWifiOnly = 'download_on_wifi_only';
   static const _kVideoPlayerControls = 'video_player_controls';
@@ -70,6 +72,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
   bool _downloadOnWifiOnly = false;
   bool _videoPlayerNavigationEnabled = false;
   bool _simulateTvMode = false;
+  bool _castToggleEnabled = false;
   String? _customRelayUrl;
 
   // Update checking state
@@ -128,6 +131,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
       _videoPlayerNavigationEnabled = _settingsService.getVideoPlayerNavigationEnabled();
       _customRelayUrl = _settingsService.getCustomRelayUrl();
       _simulateTvMode = _settingsService.getSimulateTvMode();
+      _castToggleEnabled = _settingsService.getCastToggleEnabled();
       _isLoading = false;
     });
     applyDebugLoggingPreference(_settingsService.getEnableDebugLogging());
@@ -153,6 +157,9 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
 
                 // --- Playback (navigation tile) ---
                 _buildPlaybackTile(),
+
+                // --- Casting (inline) ---
+                _buildCastingSection(),
 
                 // --- Downloads (inline) ---
                 _buildDownloadsSection(),
@@ -218,6 +225,33 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab {
       onTap: () {
         Navigator.push(context, MaterialPageRoute(builder: (context) => const PlaybackSettingsScreen()));
       },
+    );
+  }
+
+  Widget _buildCastingSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SettingsSectionHeader('Casting'),
+        SwitchListTile(
+          focusNode: _focusTracker.get(_kCastToggle),
+          secondary: const AppIcon(Symbols.cast_rounded, fill: 1),
+          title: const Text('Ready to Cast'),
+          subtitle: const Text('Allow this TV to receive cast requests from your phone'),
+          value: _castToggleEnabled,
+          onChanged: (value) async {
+            appLogger.i('[Cast] Cast toggle changed: enabled=$value');
+            castDebugInfo('Cast toggle changed: enabled=$value');
+            setState(() => _castToggleEnabled = value);
+            await _settingsService.setCastToggleEnabled(value);
+            if (value) {
+              appLogger.d('[Cast] Cast receiver enabled - TV is ready to receive cast requests');
+            } else {
+              appLogger.d('[Cast] Cast receiver disabled - TV will not receive cast requests');
+            }
+          },
+        ),
+      ],
     );
   }
 

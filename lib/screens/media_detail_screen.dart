@@ -2332,6 +2332,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         final option = fileOptions[index];
         final playbackMetadata = _selectedOxOptionParent ?? metadata;
         final downloadMetadata = buildOxDownloadMetadata(parentMetadata: playbackMetadata, file: option.file);
+        
         return FilePreviewCard(
           title: option.title,
           badgeLabel: option.badgeLabel,
@@ -2339,6 +2340,17 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           description: option.summary,
           imageUrl: playbackMetadata.thumb,
           downloadGlobalKey: downloadMetadata.globalKey,
+          // Cast metadata for Telegram-sourced library media
+          castChatId: (option.file.sourceChatId ?? option.file.locatorChatId)?.toString(),
+          castMessageId: option.file.locatorMessageId,
+          castFileId: option.file.telegramFileId ?? option.file.locatorRemoteFileId,
+          castFileName: option.title,
+          castMimeType: 'video/mp4', // Default mimeType
+          castTotalBytes: option.file.size,
+          castThumbnailUrl: playbackMetadata.thumb,
+          castLocatorType: option.file.locatorType,
+          castFileUniqueId: option.file.fileUniqueId,
+          onCast: null, // Cast is handled internally by FilePreviewCard
           onDownload: () {
             unawaited(_queueOxFileDownload(playbackMetadata, option));
           },

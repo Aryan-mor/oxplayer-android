@@ -13,6 +13,7 @@ enum LogType {
   telegramThumbnail,
   locator,
   playMedia,
+  cast,
 }
 
 extension LogTypePresentation on LogType {
@@ -24,6 +25,7 @@ extension LogTypePresentation on LogType {
     LogType.telegramThumbnail => 'Telegram Thumbnail',
     LogType.locator => 'Locator',
     LogType.playMedia => 'Play Media',
+    LogType.cast => 'Cast',
   };
 }
 
@@ -305,4 +307,20 @@ void locatorDebugSuccess(String message) {
 
 void locatorDebugError(String message) {
   debugLogError(message, type: LogType.locator);
+}
+
+void castDebugInfo(String message) {
+  debugLogInfo(message, type: LogType.cast);
+}
+
+void castDebugSuccess(String message) {
+  debugLogSuccess(message, type: LogType.cast);
+}
+
+void castDebugError(String message) {
+  debugLogError(message, type: LogType.cast);
+}
+
+void castDebugWarning(String message) {
+  debugLogError(message, type: LogType.cast); // Use error level for warnings since there's no warning level
 }

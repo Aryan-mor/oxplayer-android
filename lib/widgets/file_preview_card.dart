@@ -10,8 +10,13 @@ import '../focus/focusable_wrapper.dart';
 import '../models/download_models.dart';
 import '../providers/download_provider.dart';
 import '../screens/telegram/telegram_video_download_ui.dart';
+import '../services/auth_debug_service.dart';
+import '../services/cast_service.dart';
+import '../services/storage_service.dart';
 import '../theme/mono_tokens.dart';
+import '../utils/app_logger.dart';
 import '../utils/platform_detector.dart';
+import '../utils/snackbar_helper.dart';
 import 'app_icon.dart';
 import 'placeholder_container.dart';
 import 'plex_optimized_image.dart';
@@ -67,6 +72,16 @@ class FilePreviewCard extends StatefulWidget {
     // Optional tap callback for the card body (separate from stream action).
     // When provided, tapping the card body calls this instead of onStream.
     this.onTap,
+    // Cast metadata (for creating cast jobs)
+    this.castChatId,
+    this.castMessageId,
+    this.castFileId,
+    this.castFileName,
+    this.castMimeType,
+    this.castTotalBytes,
+    this.castThumbnailUrl,
+    this.castLocatorType,
+    this.castFileUniqueId,
   });
 
   final String title;
@@ -121,6 +136,17 @@ class FilePreviewCard extends StatefulWidget {
   /// When null, the card body has no tap action (actions are button-only).
   final VoidCallback? onTap;
 
+  /// Cast metadata for creating cast jobs
+  final String? castChatId;
+  final int? castMessageId;
+  final String? castFileId;
+  final String? castFileName;
+  final String? castMimeType;
+  final int? castTotalBytes;
+  final String? castThumbnailUrl;
+  final String? castLocatorType;
+  final String? castFileUniqueId;
+
   @override
   State<FilePreviewCard> createState() => _FilePreviewCardState();
 }
@@ -133,6 +159,9 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
   FocusNode? _indexFocusNode;
 
   bool get _hasDownloadKey => widget.downloadGlobalKey != null;
+  
+  // Track if this file is currently being cast
+  bool _isCasting = false;
 
   @override
   void initState() {
@@ -676,11 +705,114 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
   }
 
   Widget _buildCastButton(BuildContext context) {
+    final isTV = PlatformDetector.isTV();
+    
+    // Don't show cast button on TV devices
+    if (isTV) {
+      return const SizedBox.shrink();
+    }
+    
+    // Always show cast button, handle missing metadata in the click handler
+    final castService = context.read<CastService?>();
+    final isCastingFromService = castService?.isCasting(widget.castFileId ?? '') ?? false;
+    final isDisabled = _isCasting || isCastingFromService;
+    
     return IconButton(
-      onPressed: null,
-      icon: AppIcon(Symbols.cast_rounded, fill: 1, size: 22, color: tokens(context).textMuted),
-      tooltip: 'Cast (coming soon)',
+      onPressed: isDisabled ? null : () => _handleCast(context),
+      icon: AppIcon(
+        Symbols.cast_rounded,
+        fill: 1,
+        size: 22,
+        color: isDisabled ? tokens(context).textMuted : null,
+      ),
+      tooltip: isDisabled ? 'Casting...' : 'Cast to TV',
       visualDensity: VisualDensity.compact,
     );
+  }
+  
+  Future<void> _handleCast(BuildContext context) async {
+    appLogger.i('[Cast] Cast button pressed: ${widget.title}');
+    castDebugInfo('Cast button pressed: ${widget.title}');
+    
+    final castService = context.read<CastService?>();
+    if (castService == null) {
+      appLogger.e('[Cast] Cast service not available');
+      castDebugError('Cast service not available');
+      showErrorSnackBar(context, 'Cast service not available');
+      return;
+    }
+    
+    // Get access token from storage
+    final storageService = context.read<StorageService?>();
+    if (storageService == null) {
+      appLogger.e('[Cast] Storage service not available');
+      castDebugError('Storage service not available');
+      showErrorSnackBar(context, 'Storage service not available');
+      return;
+    }
+    
+    final accessToken = storageService.getApiAccessToken()?.trim() ?? '';
+    if (accessToken.isEmpty) {
+      appLogger.e('[Cast] No access token available');
+      castDebugError('No access token available');
+      showErrorSnackBar(context, 'Authentication required');
+      return;
+    }
+    
+    // Determine if this is Telegram content or Plex/OX content
+    final isTelegramContent = widget.castChatId != null && widget.castMessageId != null && widget.castFileId != null;
+    
+    // For non-Telegram content, use more appropriate values
+    final chatId = widget.castChatId ?? 'ox-plex-content';
+    final messageId = widget.castMessageId ?? 1; // Use 1 instead of 0 for non-Telegram content
+    final fileId = widget.castFileId ?? widget.downloadGlobalKey ?? 'ox:${widget.title.hashCode.abs()}';
+    final fileName = widget.castFileName ?? widget.title;
+    final mimeType = widget.castMimeType ?? 'video/mp4'; // Default to video/mp4
+    final totalBytes = widget.castTotalBytes ?? 1; // Use 1 instead of 0 to avoid potential validation issues
+    
+    castDebugInfo('Cast source: ${isTelegramContent ? "Telegram" : "Plex/OX"}, fileId: $fileId');
+    
+    setState(() => _isCasting = true);
+    
+    try {
+      appLogger.d('[Cast] Sending cast job to backend...');
+      castDebugInfo('Sending cast job: $fileName');
+      
+      await castService.createCastJob(
+        chatId: chatId,
+        messageId: messageId,
+        fileId: fileId,
+        fileName: fileName,
+        mimeType: mimeType,
+        totalBytes: totalBytes,
+        thumbnailUrl: widget.castThumbnailUrl ?? widget.imageUrl,
+        metadata: {
+          'title': widget.title,
+          if (widget.badgeLabel != null) 'badge': widget.badgeLabel,
+          if (widget.description != null) 'description': widget.description,
+          'source': isTelegramContent ? 'telegram' : 'plex',
+          // Add locator information for better resolution on TV
+          if (widget.castLocatorType != null) 'locatorType': widget.castLocatorType,
+          if (widget.castFileUniqueId != null) 'fileUniqueId': widget.castFileUniqueId,
+        },
+        accessToken: accessToken,
+      );
+      
+      if (mounted) {
+        appLogger.i('[Cast] Cast sent successfully: ${widget.title}');
+        castDebugSuccess('Cast sent successfully: ${widget.title}');
+        showSuccessSnackBar(context, 'Cast sent to TV');
+      }
+    } catch (e) {
+      appLogger.e('[Cast] Cast failed: ${widget.title}', error: e);
+      castDebugError('Cast failed: ${widget.title} - $e');
+      if (mounted) {
+        showErrorSnackBar(context, 'Cast failed: ${e.toString()}');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCasting = false);
+      }
+    }
   }
 }

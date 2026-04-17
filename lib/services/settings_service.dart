@@ -117,6 +117,7 @@ class SettingsService extends BaseSharedPreferencesService {
   static const String _keyMatchDynamicRange = 'match_dynamic_range';
   static const String _keyDisplaySwitchDelay = 'display_switch_delay';
   static const String _keySimulateTvMode = 'debug_simulate_tv_mode';
+  static const String _keyCastToggleEnabled = 'cast_toggle_enabled';
 
   SettingsService._();
 
@@ -1372,6 +1373,16 @@ class SettingsService extends BaseSharedPreferencesService {
 
   int getDisplaySwitchDelay() {
     return prefs.getInt(_keyDisplaySwitchDelay) ?? 0;
+  }
+
+  // Cast Toggle (TV receiver functionality)
+  Future<void> setCastToggleEnabled(bool enabled) async {
+    await prefs.setBool(_keyCastToggleEnabled, enabled);
+  }
+
+  bool getCastToggleEnabled() {
+    // Default to enabled on TV, disabled elsewhere
+    return prefs.getBool(_keyCastToggleEnabled) ?? TvDetectionService.isTVSync();
   }
 
   // Tunneled Playback (Android ExoPlayer only)

@@ -8,10 +8,15 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:provider/provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:dio/dio.dart';
 import 'screens/main_screen.dart';
 import 'infrastructure/data_repository.dart';
+import 'infrastructure/config/app_config.dart';
 import 'providers/auth_notifier.dart';
 import 'services/storage_service.dart';
+import 'services/cast_service.dart';
+import 'services/tv_cast_receiver_service.dart';
+import 'services/auth_debug_service.dart';
 import 'router.dart';
 import 'services/macos_window_service.dart';
 import 'services/fullscreen_state_manager.dart';
@@ -57,6 +62,8 @@ import 'utils/log_redaction_manager.dart';
 import 'utils/navigation_keys.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'widgets/auth_debug_fab.dart';
+import 'screens/telegram/telegram_video_metadata.dart';
+import 'utils/video_player_navigation.dart';
 
 const bool _enableSentry = bool.fromEnvironment('ENABLE_SENTRY', defaultValue: false);
 const String gitCommit = String.fromEnvironment('GIT_COMMIT');
@@ -319,6 +326,9 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
   late final DownloadManagerService _downloadManager;
   late final OfflineWatchSyncService _offlineWatchSyncService;
   late final AppLifecycleListener _appLifecycleListener;
+  CastService? _castService;
+  StorageService? _storageService;
+  TvCastReceiverService? _tvCastReceiverService;
 
   /// Last time server health probes ran from a resume event (cooldown for desktop)
   DateTime _lastResumeProbe = DateTime(0);
@@ -330,6 +340,9 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    // Initialize services asynchronously
+    _initializeServices();
 
     // On desktop, periodically check RSS and evict image cache if too high
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
@@ -363,11 +376,219 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
 
     // Start in-app review session tracking
     InAppReviewService.instance.startSession();
+    
+    // TV Cast Receiver is completely disabled by default to prevent "not responding" issues
+    // It will only be enabled when user explicitly opens the cast modal
+    if (TvDetectionService.isTVSync()) {
+      appLogger.i('[Cast] TV: TV Cast Receiver disabled by default to prevent ANR issues');
+      castDebugInfo('TV: TV Cast Receiver disabled by default to prevent ANR issues');
+      castDebugInfo('TV: Cast receiver will be enabled when user opens cast modal');
+    }
+  }
+
+  Future<void> _initializeServices() async {
+    try {
+      // Initialize StorageService
+      _storageService = await StorageService.getInstance();
+      appLogger.i('[Cast] StorageService initialized successfully');
+      
+      // Initialize CastService
+      final config = await AppConfig.load();
+      final dio = Dio(BaseOptions(baseUrl: config.apiBaseUrl));
+      _castService = CastService(dio: dio, baseUrl: config.apiBaseUrl);
+      appLogger.i('[Cast] CastService initialized successfully');
+      castDebugSuccess('CastService initialized successfully');
+      
+      // Initialize TV Cast Receiver Service on TV devices
+      if (TvDetectionService.isTVSync()) {
+        appLogger.i('[Cast] TV device detected - initializing TV Cast Receiver Service');
+        castDebugInfo('TV device detected - initializing TV Cast Receiver Service');
+        
+        // Initialize the service but don't start polling yet
+        final accessToken = _storageService?.getApiAccessToken()?.trim() ?? '';
+        if (accessToken.isNotEmpty) {
+          _tvCastReceiverService = TvCastReceiverService(
+            dio: dio,
+            baseUrl: config.apiBaseUrl,
+            storageService: _storageService!,
+          );
+          
+          // Set up cast job handler
+          _tvCastReceiverService!.onCastJobReceived = _handleCastJobReceived;
+          
+          appLogger.i('[Cast] TV Cast Receiver Service initialized (polling not started)');
+          castDebugSuccess('TV Cast Receiver Service initialized (polling not started)');
+        } else {
+          appLogger.w('[Cast] TV: No access token available, cannot initialize cast receiver');
+          castDebugWarning('TV: No access token available, cannot initialize cast receiver');
+        }
+      } else {
+        appLogger.d('[Cast] Not a TV device - TV Cast Receiver Service not needed');
+      }
+      
+      // Trigger rebuild to show cast button and provide services
+      if (mounted) setState(() {});
+    } catch (e) {
+      appLogger.e('[Cast] Failed to initialize services: $e');
+      castDebugError('Failed to initialize services: $e');
+    }
+  }
+
+  /// Handle received cast job on TV devices
+  void _handleCastJobReceived(CastJobData jobData) async {
+    appLogger.i('[Cast] TV: Received cast job - ${jobData.fileName}');
+    castDebugSuccess('TV: Received cast job - ${jobData.fileName}');
+    
+    // Log the received job details for debugging
+    appLogger.i('[Cast] TV: Cast job details:');
+    castDebugInfo('TV: Cast job details:');
+    castDebugInfo('  - File: ${jobData.fileName}');
+    castDebugInfo('  - FileId: ${jobData.fileId}');
+    castDebugInfo('  - ChatId: ${jobData.chatId}');
+    castDebugInfo('  - MessageId: ${jobData.messageId}');
+    castDebugInfo('  - MimeType: ${jobData.mimeType}');
+    castDebugInfo('  - Size: ${jobData.totalBytes} bytes');
+    castDebugInfo('  - Thumbnail: ${jobData.thumbnailUrl ?? "none"}');
+    castDebugInfo('  - Metadata: ${jobData.metadata}');
+    
+    try {
+      final repo = await DataRepository.create();
+      
+      // Check if this is Telegram content (has numeric chatId and messageId)
+      final chatIdInt = int.tryParse(jobData.chatId);
+      final isTelegramContent = chatIdInt != null && jobData.messageId > 0;
+      
+      if (!isTelegramContent) {
+        throw Exception('Non-Telegram content not yet supported for TV casting');
+      }
+      
+      // Extract locator information from cast job metadata
+      final locatorType = jobData.metadata?['locatorType'] as String?;
+      final fileUniqueId = jobData.metadata?['fileUniqueId'] as String?;
+      
+      // Use resolveOxMediaStreamUrlForPlayback - same method as mobile device
+      // This method can handle cases where the chatId might be a bot ID instead of the actual chat
+      appLogger.i('[Cast] TV: Resolving stream URL using locator - chatId=$chatIdInt messageId=${jobData.messageId} locatorType=$locatorType fileUniqueId=$fileUniqueId');
+      castDebugInfo('TV: Resolving stream URL using locator - chatId=$chatIdInt messageId=${jobData.messageId} locatorType=$locatorType fileUniqueId=$fileUniqueId');
+      
+      final streamUri = await repo.resolveOxMediaStreamUrlForPlayback(
+        mediaId: jobData.fileId,
+        fileUniqueId: fileUniqueId,
+        locatorType: locatorType,
+        locatorChatId: chatIdInt,
+        locatorMessageId: jobData.messageId,
+        locatorRemoteFileId: jobData.fileId,
+      );
+      
+      if (streamUri == null) {
+        throw Exception('Failed to resolve streaming URL - resolveOxMediaStreamUrlForPlayback returned null');
+      }
+      
+      final streamUrl = streamUri.toString();
+      appLogger.i('[Cast] TV: Streaming URL resolved: $streamUrl');
+      castDebugSuccess('TV: Streaming URL resolved');
+      
+      // Create metadata and navigate to player
+      final row = OxChatMediaRow(
+        chatId: chatIdInt,
+        messageId: jobData.messageId.toString(),
+        fileId: jobData.fileId,
+        fileName: jobData.fileName,
+        fileSizeBytes: jobData.totalBytes,
+        durationSeconds: jobData.metadata?['duration'] as int?,
+        caption: jobData.metadata?['title'] as String?,
+        messageDate: jobData.createdAt.toIso8601String(),
+      );
+      
+      final metadata = TelegramVideoMetadata(row, jobData.thumbnailUrl ?? '');
+      
+      appLogger.i('[Cast] TV: Opening video player for ${jobData.fileName}');
+      castDebugSuccess('TV: Opening video player for ${jobData.fileName}');
+      
+      final context = rootNavigatorKey.currentContext;
+      if (context == null) {
+        throw Exception('Root navigator context not available');
+      }
+      
+      // Check if context is still mounted before using it
+      if (!context.mounted) {
+        throw Exception('Context is no longer mounted');
+      }
+      
+      await navigateToInternalVideoPlayerForUrl(
+        context,
+        metadata: metadata,
+        videoUrl: streamUrl,
+      );
+      
+      appLogger.i('[Cast] TV: Video player opened successfully');
+      castDebugSuccess('TV: Video player opened successfully');
+      
+    } catch (e, stackTrace) {
+      appLogger.e('[Cast] TV: Failed to start playback for cast job', error: e, stackTrace: stackTrace);
+      castDebugError('TV: Failed to start playback: $e');
+      
+      // Show error notification to user
+      final context = rootNavigatorKey.currentContext;
+      if (context != null && context.mounted) {
+        showErrorSnackBar(context, 'Cast playback failed: ${e.toString()}');
+      }
+    }
+  }
+
+  /// Initialize TV Cast Receiver when user explicitly requests it (on-demand)
+  void initializeTvCastReceiverWhenReady() {
+    if (!TvDetectionService.isTVSync()) return;
+    if (_tvCastReceiverService != null) return; // Already initialized
+    
+    appLogger.i('[Cast] TV: Initializing TV Cast Receiver on user request');
+    castDebugInfo('TV: Initializing TV Cast Receiver on user request');
+    
+    // Check authentication and initialize immediately
+    final token = _storageService?.getApiAccessToken()?.trim() ?? '';
+    if (token.isNotEmpty) {
+      unawaited(_initializeTvCastReceiver());
+    } else {
+      castDebugError('TV: No authentication token available, cannot enable cast receiver');
+    }
+  }
+
+  /// Internal method to initialize and start the TV Cast Receiver
+  Future<void> _initializeTvCastReceiver() async {
+    try {
+      if (_tvCastReceiverService == null) {
+        final config = await AppConfig.load();
+        final dio = Dio(BaseOptions(baseUrl: config.apiBaseUrl));
+        
+        _tvCastReceiverService = TvCastReceiverService(
+          dio: dio,
+          baseUrl: config.apiBaseUrl,
+          storageService: _storageService!,
+        );
+        
+        // Set up cast job handler
+        _tvCastReceiverService!.onCastJobReceived = _handleCastJobReceived;
+        
+        appLogger.i('[Cast] TV Cast Receiver Service initialized');
+        castDebugSuccess('TV Cast Receiver Service initialized');
+      }
+      
+      // Start polling (returns void, not Future)
+      _tvCastReceiverService!.startPolling();
+      appLogger.i('[Cast] TV Cast Receiver polling started');
+      castDebugSuccess('TV Cast Receiver polling started');
+      
+      if (mounted) setState(() {});
+    } catch (e) {
+      appLogger.e('[Cast] Failed to initialize TV Cast Receiver: $e');
+      castDebugError('Failed to initialize TV Cast Receiver: $e');
+    }
   }
 
   @override
   void dispose() {
     _memoryCheckTimer?.cancel();
+    _tvCastReceiverService?.dispose();
     _appLifecycleListener.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -392,6 +613,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         // App came back to foreground - trigger sync check and start new session
         _offlineWatchSyncService.onAppResumed();
         InAppReviewService.instance.startSession();
+        
         // Re-probe servers — mobile OS may have dropped TCP connections during doze/sleep.
         // On desktop, resumed fires on every window focus (alt-tab), so apply a cooldown
         // to avoid piling up network probes from rapid alt-tabbing.
@@ -479,6 +701,18 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         ChangeNotifierProvider(create: (context) => WatchTogetherProvider()),
         ChangeNotifierProvider(create: (context) => CompanionRemoteProvider()),
         ChangeNotifierProvider(create: (context) => ShaderProvider()),
+        // Storage service provider
+        Provider<StorageService?>(
+          create: (_) => _storageService,
+        ),
+        // Cast service provider
+        Provider<CastService?>(
+          create: (_) => _castService,
+        ),
+        // TV Cast Receiver Service provider - NOT initialized automatically
+        Provider<TvCastReceiverService?>(
+          create: (_) => _tvCastReceiverService,
+        ),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {

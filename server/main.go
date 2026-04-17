@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/edde746/plezy-relay/cast"
 	"github.com/gorilla/websocket"
 )
 
@@ -533,6 +535,27 @@ func main() {
 
 	srv := newServer(*logDir)
 
+	// Initialize cast handler
+	castStore := cast.NewJobStore()
+	deviceStore := cast.NewDeviceStore()
+	castHandler := cast.NewHandler(castStore, deviceStore)
+
+	// Initialize FCM client (optional - gracefully degrades if not configured)
+	fcmCredentialsPath := os.Getenv("FCM_CREDENTIALS_PATH")
+	if fcmCredentialsPath != "" || os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+		fcmClient, err := cast.NewFCMClient(context.Background(), fcmCredentialsPath)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize FCM client: %v", err)
+			log.Println("Cast system will rely on long polling only")
+		} else {
+			castHandler.SetFCMClient(fcmClient)
+			log.Println("FCM push notifications enabled")
+		}
+	} else {
+		log.Println("FCM not configured - cast system will use long polling only")
+		log.Println("To enable FCM push notifications, set GOOGLE_APPLICATION_CREDENTIALS or FCM_CREDENTIALS_PATH environment variable")
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/relay", srv.handleWS)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -541,6 +564,9 @@ func main() {
 	})
 	mux.HandleFunc("/logs", srv.handlePostLogs)
 	mux.HandleFunc("/logs/", srv.handleGetLogs)
+
+	// Register cast routes
+	castHandler.RegisterRoutes(mux)
 
 	log.Printf("Starting relay server on %s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))

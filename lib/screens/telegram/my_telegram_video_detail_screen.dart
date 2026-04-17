@@ -327,6 +327,14 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
                 onResume: () => unawaited(_resumeDownload()),
                 onCancelDownload: _requestStopDownload,
                 onDelete: _deleteDownload,
+                // Cast metadata
+                castChatId: widget.chatId.toString(),
+                castMessageId: widget.messageId,
+                castFileId: v.row.fileId,
+                castFileName: v.row.fileName ?? v.displayTitle,
+                castMimeType: 'video/mp4', // Default mimeType for Telegram videos (OxChatMediaRow doesn't have mimeType field)
+                castTotalBytes: v.row.fileSizeBytes,
+                castThumbnailUrl: thumb != null && thumb.isNotEmpty ? thumb : null,
               ),
             ],
           ),

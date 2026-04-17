@@ -1,0 +1,102 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Cast Job Does Not Initiate Playback
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bug exists
+  - **Manual Testing Approach**: Since this involves UI navigation and video player initialization, use manual testing to verify the bug condition
+  - Test that when a cast job is received with valid fileId, chatId, and messageId, the video player opens and playback starts
+  - Test implementation details from Bug Condition in design: `isBugCondition(input)` where input has valid fileId, chatId, messageId but videoPlayerNotOpened() and playbackNotStarted()
+  - The test assertions should match the Expected Behavior Properties from design: video player SHALL navigate, metadata SHALL be resolved, playback SHALL start automatically
+  - Run test on UNFIXED code by manually casting a video from mobile to TV
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bug exists)
+    - Video player does not open
+    - Debug logs show "Ready to play... - playback implementation pending"
+    - TV acknowledges playback started but no actual playback occurs
+  - Document counterexamples found to understand root cause:
+    - Example 1: Cast "movie.mp4" → TV logs details → Player does not open
+    - Example 2: Cast video with fileId="abc123" → TV acknowledges → No visual feedback
+    - Example 3: Cast with chatId="456", messageId=789 → Logs correct → Playback never begins
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Cast Job Processing Behavior
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for cast job processing that should be preserved:
+    - Cast job polling mechanism with exponential backoff continues to work
+    - Cast job data parsing and logging remain unchanged
+    - Acknowledgment to backend via POST /me/cast/jobs/:id/started continues to be sent
+    - All cast job fields (jobId, chatId, messageId, fileId, fileName, mimeType, totalBytes, thumbnailUrl, metadata) continue to be parsed correctly
+    - The onCastJobReceived callback invocation continues to work
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements:
+    - Test 1: Cast job logging - verify cast job details are logged correctly
+    - Test 2: Cast job parsing - verify CastJobData is parsed correctly with all fields
+    - Test 3: Acknowledgment - verify POST /me/cast/jobs/:id/started is sent
+    - Test 4: Polling continuation - verify polling continues after processing a cast job
+    - Test 5: Error handling - verify polling errors are handled with exponential backoff
+  - Property-based testing generates many test cases for stronger guarantees
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 3. Fix for TV cast playback not starting
+
+  - [x] 3.1 Implement the fix in _handleCastJobReceived
+    - Add required imports: DataRepository, TelegramVideoMetadata, navigateToInternalVideoPlayerForUrl, OxChatMediaRow
+    - Create OxChatMediaRow from CastJobData fields (chatId, messageId, fileId, fileName, mimeType, totalBytes, duration from metadata)
+    - Create TelegramVideoMetadata with the constructed OxChatMediaRow and thumbnailUrl
+    - Resolve streaming URL using DataRepository.getInternalPlaybackUrl with chatId, messageId, fileId
+    - Handle errors if URL resolution fails (log error and return early)
+    - Navigate to video player using navigateToInternalVideoPlayerForUrl with rootNavigatorKey context
+    - Pass TelegramVideoMetadata and resolved streaming URL to the player
+    - Wrap entire implementation in try-catch for graceful error handling
+    - Log errors prominently using appLogger.e and castDebugError
+    - Display error notification to user if playback fails to start
+    - Keep acknowledgment call in TvCastReceiverService._handleCastJob after callback (ensures acknowledgment after player opens)
+    - _Bug_Condition: isBugCondition(input) where input.fileId IS NOT NULL AND input.chatId IS NOT NULL AND input.messageId IS NOT NULL AND videoPlayerNotOpened() AND playbackNotStarted()_
+    - _Expected_Behavior: For any cast job with valid Telegram file information, the fixed _handleCastJobReceived SHALL resolve file metadata, obtain streaming URL, navigate to video player, and start playback automatically (expectedBehavior from design)_
+    - _Preservation: Cast job logging, parsing, acknowledgment, polling, and error handling SHALL continue to work unchanged (Preservation Requirements from design)_
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5_
+
+  - [x] 3.2 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Cast Job Initiates Playback
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1 by manually casting a video from mobile to TV
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+      - Video player opens when cast job is received
+      - Streaming URL is resolved successfully
+      - Playback starts automatically
+      - Video metadata is displayed correctly in player
+    - Test with multiple scenarios:
+      - Basic cast test: simple video file
+      - Cast with metadata: video with title and duration
+      - Cast with thumbnail: video with thumbnail URL
+      - Cast during playback: new video replaces current playback
+      - Cast error handling: invalid fileId shows error message
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
+
+  - [x] 3.3 Verify preservation tests still pass
+    - **Property 2: Preservation** - Cast Job Processing Behavior
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+      - Cast job logging continues to work correctly
+      - Cast job parsing continues to parse all fields correctly
+      - Acknowledgment to backend continues to be sent
+      - Polling continues after processing cast jobs
+      - Error handling with exponential backoff continues to work
+    - Confirm all tests still pass after fix (no regressions)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+  - Verify video player opens and playback starts for all cast job scenarios
+  - Verify all preservation tests continue to pass (no regressions in cast job processing)
+  - Verify error handling works correctly for edge cases (invalid fileId, network errors, missing context)
+  - Verify acknowledgment is sent after player opens (not before)
