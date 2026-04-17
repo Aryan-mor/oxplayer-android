@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import '../models/hotkey_model.dart';
@@ -160,7 +161,7 @@ class SettingsService extends BaseSharedPreferencesService {
   }
 
   bool getEnableDebugLogging() {
-    return prefs.getBool(_keyEnableDebugLogging) ?? false;
+    return prefs.getBool(_keyEnableDebugLogging) ?? kDebugMode;
   }
 
   // Crash Reporting

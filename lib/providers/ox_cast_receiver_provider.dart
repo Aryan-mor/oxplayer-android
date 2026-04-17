@@ -16,6 +16,9 @@ import '../utils/platform_detector.dart';
 ///
 /// Starts only when [AuthNotifier.isLoggedIn] so API calls have a Bearer token.
 class OxCastReceiverProvider extends ChangeNotifier {
+  /// Ref-count: multiple [VideoPlayerScreen] routes (e.g. replace) must balance begin/end.
+  static int _playbackSuppressionRefCount = 0;
+
   OxCastReceiverProvider({required AuthNotifier authNotifier}) : _auth = authNotifier {
     final sync = SettingsService.instanceOrNull;
     if (sync != null) {
@@ -36,6 +39,26 @@ class OxCastReceiverProvider extends ChangeNotifier {
   StreamSubscription<dynamic>? _activeSub;
 
   bool get isListeningEnabled => _listeningEnabled;
+
+  /// While Android TV is playing video, tear down cast WS/long-poll so HTTP stack and CPU
+  /// are not competing with TDLib + MPV (avoids black screen, janky loading, watchdog kills).
+  void beginPlaybackSuppression() {
+    if (!PlatformDetector.isTV()) return;
+    _playbackSuppressionRefCount++;
+    if (_playbackSuppressionRefCount != 1) return;
+    _sessionToken++;
+    unawaited(_tearDownActiveConnection());
+  }
+
+  void endPlaybackSuppression() {
+    if (!PlatformDetector.isTV()) return;
+    if (_playbackSuppressionRefCount <= 0) return;
+    _playbackSuppressionRefCount--;
+    if (_playbackSuppressionRefCount != 0) return;
+    if (_listeningEnabled && _auth.isLoggedIn) {
+      unawaited(_restartCastListener());
+    }
+  }
 
   Future<void> _loadSettingsAndScheduleStart() async {
     _settings = await SettingsService.getInstance();
@@ -92,11 +115,14 @@ class OxCastReceiverProvider extends ChangeNotifier {
   /// Called when the app returns to foreground — reconnect if listening was enabled.
   void onAppResumed() {
     if (!_listeningEnabled || !PlatformDetector.isTV() || !_auth.isLoggedIn) return;
+    if (_playbackSuppressionRefCount > 0) return;
     unawaited(_restartCastListener());
   }
 
   Future<void> _restartCastListener() async {
     if (!_listeningEnabled || !PlatformDetector.isTV() || !_auth.isLoggedIn) return;
+    // [VideoPlayerScreen] calls [beginPlaybackSuppression] on TV — do not restart WS/poll until it ends.
+    if (_playbackSuppressionRefCount > 0) return;
 
     _sessionToken++;
     final token = _sessionToken;

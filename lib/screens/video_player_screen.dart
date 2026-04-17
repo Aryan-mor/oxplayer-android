@@ -29,6 +29,7 @@ import '../utils/plex_cache_parser.dart';
 import '../models/plex_media_info.dart';
 import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
+import '../providers/ox_cast_receiver_provider.dart';
 import '../providers/playback_state_provider.dart';
 import '../models/companion_remote/remote_command.dart';
 import '../providers/companion_remote_provider.dart';
@@ -85,8 +86,9 @@ Future<void> _setWakelock(bool enabled) async {
   }
 }
 
-/// TDLib Telegram range proxy URLs. On Android, ExoPlayer uses Cronet, which often returns
-/// `ERR_CONNECTION_REFUSED` for `http://127.0.0.1/...`. Use [PlayerNative] (MPV) directly instead.
+/// TDLib Telegram range proxy URLs (`http://127.0.0.1/...`). Used for session cleanup on pop.
+/// Playback uses the user's Android backend setting (ExoPlayer default — same as stable releases);
+/// if Cronet ever refuses loopback, disable ExoPlayer in settings to use MPV.
 bool _isLocalHttpLoopbackPlaybackUrl(String? url) {
   if (url == null || url.isEmpty) return false;
   final u = url.trim().toLowerCase();
@@ -171,6 +173,10 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
   // Auto-play next episode
   Timer? _autoPlayTimer;
+
+  /// When MPV never signals playback-restart / time-pos but playback is clearly active (e.g. audio-only
+  /// pipeline), [FirstFrameGuard] would otherwise hide TV controls forever — unlock after a short delay.
+  Timer? _firstFrameUiUnlockTimer;
   int _autoPlayCountdown = 5;
   bool _completionTriggered = false;
 
@@ -221,6 +227,10 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   // Companion remote state (stored early for use in dispose)
   CompanionRemoteProvider? _companionRemoteProvider;
   VoidCallback? _savedOnHome;
+
+  /// Pause TV cast receiver long-poll during playback (see [OxCastReceiverProvider]).
+  OxCastReceiverProvider? _oxCastReceiver;
+  bool _tvOxCastSuppressionActive = false;
 
   /// Get the correct PlexClient for this metadata's server
   PlexClient _getClientForMetadata(BuildContext context) {
@@ -314,6 +324,16 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     } catch (e) {
       appLogger.w('Failed to determine device type', error: e);
       _isPhone = false; // Default to tablet/desktop (all orientations)
+    }
+
+    try {
+      _oxCastReceiver ??= context.read<OxCastReceiverProvider>();
+      if (!_tvOxCastSuppressionActive && PlatformDetector.isTV()) {
+        _tvOxCastSuppressionActive = true;
+        _oxCastReceiver!.beginPlaybackSuppression();
+      }
+    } catch (e) {
+      appLogger.d('TV cast playback suppression skipped', error: e);
     }
 
     // Update video filter when dependencies change (orientation, screen size, etc.)
@@ -425,14 +445,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
       final bufferSizeMB = settingsService.getBufferSize();
       final enableHardwareDecoding = settingsService.getEnableHardwareDecoding();
       final debugLoggingEnabled = settingsService.getEnableDebugLogging();
-      final useExoPlayerSetting = settingsService.getUseExoPlayer();
-      final directPlaybackUrl = widget.playbackData?.videoUrl;
-      final forceMpvForLocalLoopback =
-          Platform.isAndroid && widget.isOffline && _isLocalHttpLoopbackPlaybackUrl(directPlaybackUrl);
-      final useExoPlayer = forceMpvForLocalLoopback ? false : useExoPlayerSetting;
-      if (forceMpvForLocalLoopback) {
-        appLogger.d('Using MPV directly for local loopback playback (skip ExoPlayer/Cronet on 127.0.0.1)');
-      }
+      final useExoPlayer = settingsService.getUseExoPlayer();
 
       // Initialize Windows display mode service.
       if (Platform.isWindows) {
@@ -1339,16 +1352,21 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
             }
           }
 
-          // Shader Service (MPV only)
-          _shaderService = ShaderService(player!);
-          if (_shaderService!.isSupported) {
-            // Ambient Lighting Service
-            _ambientLightingService = AmbientLightingService(player!);
-            _shaderService!.ambientLightingService = _ambientLightingService;
-            _videoFilterManager?.ambientLightingService = _ambientLightingService;
+          // Shader / ambient: skip on Android TV for offline streams — heavy GPU path
+          // while TDLib + loopback + MPV already stress low-end STB hardware.
+          final skipTvOfflineShaders = PlatformDetector.isTV() && widget.isOffline;
+          if (!skipTvOfflineShaders) {
+            // Shader Service (MPV only)
+            _shaderService = ShaderService(player!);
+            if (_shaderService!.isSupported) {
+              // Ambient Lighting Service
+              _ambientLightingService = AmbientLightingService(player!);
+              _shaderService!.ambientLightingService = _ambientLightingService;
+              _videoFilterManager?.ambientLightingService = _ambientLightingService;
 
-            await _applySavedShaderPreset();
-            await _restoreAmbientLighting();
+              await _applySavedShaderPreset();
+              await _restoreAmbientLighting();
+            }
           }
         }
 
@@ -1930,6 +1948,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
   @override
   void dispose() {
+    if (_tvOxCastSuppressionActive) {
+      _tvOxCastSuppressionActive = false;
+      _oxCastReceiver?.endPlaybackSuppression();
+    }
+
     // Unregister app lifecycle observer
     WidgetsBinding.instance.removeObserver(this);
 
@@ -1997,6 +2020,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
     // Cancel auto-play timer
     _autoPlayTimer?.cancel();
+    _firstFrameUiUnlockTimer?.cancel();
 
     // Cancel still watching timer
     _stillWatchingTimer?.cancel();
@@ -2106,6 +2130,18 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
   void _onPlayingStateChanged(bool isPlaying) {
     _setWakelock(isPlaying);
+
+    _firstFrameUiUnlockTimer?.cancel();
+    _firstFrameUiUnlockTimer = null;
+    if (isPlaying && !_hasFirstFrame.value) {
+      _firstFrameUiUnlockTimer = Timer(const Duration(seconds: 3), () {
+        if (!mounted || _hasFirstFrame.value) return;
+        _hasFirstFrame.value = true;
+        appLogger.w(
+          'First-frame UI fallback: playback is active but playback-restart/position never marked first frame',
+        );
+      });
+    }
 
     if (isPlaying) {
       // Force a texture refresh on resume to unstick stale frames

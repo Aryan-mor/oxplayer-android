@@ -224,16 +224,13 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
     final colorScheme = Theme.of(context).colorScheme;
     final isTV = PlatformDetector.isTV();
 
-    // On TV, pressing select on the card body triggers stream (if available),
-    // otherwise the expand/collapse tap. On touch, the card body has no tap
-    // action — only the explicit buttons respond.
-    final cardBodySelect = isTV ? (widget.onStream ?? widget.onTap) : widget.onTap;
+    // TV: card shell is not activatable; only explicit action buttons handle select.
+    // Descendants must be focusable (false blocked the inner button FocusableWrappers).
+    final cardBodySelect = isTV ? null : widget.onTap;
 
-    // On TV, RIGHT from card body moves focus to the stream button (first action).
-    // Only wire this when actions are shown and a stream focus node exists.
-    final cardBodyNavigateRight = (widget.showActions && _streamFocusNode != null)
-        ? () => _streamFocusNode!.requestFocus()
-        : null;
+    // On TV, RIGHT from the shell moves focus to the stream button (first action).
+    final cardBodyNavigateRight =
+        (isTV && widget.showActions && _streamFocusNode != null) ? () => _streamFocusNode!.requestFocus() : null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -241,13 +238,13 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
         focusNode: widget.focusNode,
         autofocus: widget.autofocus,
         disableScale: true,
-        descendantsAreFocusable: false,
+        descendantsAreFocusable: isTV,
         onNavigateUp: widget.onNavigateUp,
         onNavigateDown: widget.onNavigateDown,
         onSelect: cardBodySelect,
         onNavigateRight: cardBodyNavigateRight,
         child: InkWell(
-          onTap: widget.onTap,
+          onTap: isTV ? null : widget.onTap,
           hoverColor: colorScheme.surface.withValues(alpha: 0.05),
           borderRadius: BorderRadius.circular(FocusTheme.defaultBorderRadius),
           child: Container(
