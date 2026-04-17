@@ -9,6 +9,7 @@ import '../screens/collection_detail_screen.dart';
 import '../screens/main_screen.dart';
 import '../screens/media_detail_screen.dart';
 import '../screens/playlist/playlist_detail_screen.dart';
+import '../screens/telegram/telegram_video_metadata.dart';
 import '../utils/global_key_utils.dart';
 import '../utils/snackbar_helper.dart';
 import 'video_player_navigation.dart';
@@ -143,6 +144,49 @@ Future<void> startOxCastPlayback(
     await mediaRepository.releaseInternalPlaybackSession(reason: 'video_player_closed');
   });
   unawaited(playbackFuture);
+}
+
+/// Starts My Telegram internal playback after a TV cast offer ([OxCastOfferKind.telegram]).
+Future<void> startTelegramCastPlayback(
+  BuildContext context, {
+  required int chatId,
+  required int messageId,
+}) async {
+  final repository = await DataRepository.create();
+  try {
+    final row = await repository.fetchOxChatMediaRowForTelegramVideoMessage(
+      chatId: chatId,
+      messageId: messageId,
+    );
+    if (!context.mounted) return;
+    if (row == null) {
+      showGlobalAppSnackBar('Cast: could not load that Telegram video.');
+      return;
+    }
+    final metadata = TelegramVideoMetadata(row, '');
+    final uri = await repository.resolveTelegramChatMessageStreamUrlForPlayback(
+      chatId: chatId,
+      messageId: messageId,
+    );
+    if (!context.mounted) return;
+    if (uri == null) {
+      showGlobalAppSnackBar('Could not start playback.');
+      return;
+    }
+    final playbackFuture = navigateToInternalVideoPlayerForUrl(
+      context,
+      metadata: metadata,
+      videoUrl: uri.toString(),
+    );
+    playbackFuture.whenComplete(() async {
+      await repository.releaseOxMediaPlaybackSession(reason: 'telegram_cast_player_closed');
+    });
+    unawaited(playbackFuture);
+  } catch (_) {
+    if (context.mounted) {
+      showGlobalAppSnackBar('Could not start playback.');
+    }
+  }
 }
 
 /// Result of media navigation indicating what action was taken

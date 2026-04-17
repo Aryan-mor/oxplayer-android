@@ -170,14 +170,52 @@ class OxLibraryMediaItem {
   final bool playbackPending;
 }
 
+/// Cast target kinds from `/me/cast/*` (in-memory on API).
+enum OxCastOfferKind { oxLibrary, telegram }
+
 /// In-memory cast offer from GET `/me/cast/pending` or WebSocket `cast_offer` (same user, API process only).
 class OxCastOffer {
-  const OxCastOffer({
+  const OxCastOffer._({
+    required this.kind,
     required this.jobId,
-    required this.mediaGlobalId,
-    required this.fileId,
     required this.createdAt,
+    this.mediaGlobalId,
+    this.fileId,
+    this.chatId,
+    this.messageId,
   });
+
+  /// OX library file (existing behaviour).
+  factory OxCastOffer.oxLibrary({
+    required String jobId,
+    required String mediaGlobalId,
+    required String fileId,
+    required DateTime createdAt,
+  }) {
+    return OxCastOffer._(
+      kind: OxCastOfferKind.oxLibrary,
+      jobId: jobId,
+      createdAt: createdAt,
+      mediaGlobalId: mediaGlobalId,
+      fileId: fileId,
+    );
+  }
+
+  /// My Telegram chat video (TDLib [chatId] + [messageId]).
+  factory OxCastOffer.telegram({
+    required String jobId,
+    required int chatId,
+    required int messageId,
+    required DateTime createdAt,
+  }) {
+    return OxCastOffer._(
+      kind: OxCastOfferKind.telegram,
+      jobId: jobId,
+      createdAt: createdAt,
+      chatId: chatId,
+      messageId: messageId,
+    );
+  }
 
   /// Parses REST `offer` or WebSocket payload `offer` objects.
   static OxCastOffer? tryParseApiOfferMap(Map<String, dynamic>? raw) {
@@ -189,14 +227,22 @@ class OxCastOffer {
     }
 
     final jobId = read(raw['jobId']);
+    final createdAtRaw = raw['createdAt']?.toString();
+    if (jobId == null) return null;
+    final createdAt = DateTime.tryParse(createdAtRaw ?? '') ?? DateTime.now();
+
+    final kindStr = read(raw['kind']);
+    if (kindStr == 'telegram') {
+      final chatId = int.tryParse(raw['chatId']?.toString() ?? '');
+      final messageId = int.tryParse(raw['messageId']?.toString() ?? '');
+      if (chatId == null || messageId == null) return null;
+      return OxCastOffer.telegram(jobId: jobId, chatId: chatId, messageId: messageId, createdAt: createdAt);
+    }
+
     final mediaGlobalId = read(raw['mediaGlobalId']);
     final fileId = read(raw['fileId']);
-    final createdAtRaw = raw['createdAt']?.toString();
-    if (jobId == null || mediaGlobalId == null || fileId == null) {
-      return null;
-    }
-    final createdAt = DateTime.tryParse(createdAtRaw ?? '') ?? DateTime.now();
-    return OxCastOffer(
+    if (mediaGlobalId == null || fileId == null) return null;
+    return OxCastOffer.oxLibrary(
       jobId: jobId,
       mediaGlobalId: mediaGlobalId,
       fileId: fileId,
@@ -204,10 +250,14 @@ class OxCastOffer {
     );
   }
 
+  final OxCastOfferKind kind;
   final String jobId;
-  final String mediaGlobalId;
-  final String fileId;
   final DateTime createdAt;
+
+  final String? mediaGlobalId;
+  final String? fileId;
+  final int? chatId;
+  final int? messageId;
 }
 
 class OxDiscoverSection {
@@ -1218,7 +1268,7 @@ class DataRepository {
     }
   }
 
-  /// Phone: queue a cast for this account (in-memory on API until TV consumes or cancel).
+  /// Phone: queue an OX library cast for this account (in-memory on API until TV consumes or cancel).
   Future<void> postOxCastOffer({
     required String mediaGlobalId,
     required String fileId,
@@ -1227,8 +1277,25 @@ class DataRepository {
     await dio.post<Map<String, dynamic>>(
       '/me/cast/offer',
       data: <String, dynamic>{
+        'kind': 'ox_library',
         'mediaGlobalId': mediaGlobalId.trim(),
         'fileId': fileId.trim(),
+      },
+    );
+  }
+
+  /// Phone: queue a My Telegram video cast (same TDLib account on TV).
+  Future<void> postOxCastOfferTelegram({
+    required int chatId,
+    required int messageId,
+  }) async {
+    final dio = _authorizedApiClient();
+    await dio.post<Map<String, dynamic>>(
+      '/me/cast/offer',
+      data: <String, dynamic>{
+        'kind': 'telegram',
+        'chatId': chatId.toString(),
+        'messageId': messageId,
       },
     );
   }
@@ -1621,18 +1688,14 @@ class DataRepository {
       return null;
     }
 
-    td.Message? msg;
-    try {
-      final o = await _tdlib.send(td.GetMessage(chatId: chatId, messageId: messageId));
-      if (o is td.Message) msg = o;
-    } catch (e, st) {
-      playMediaDebugError('GetMessage failed for My Telegram stream: $e\n$st');
+    final lookup = await _getTelegramMessageForMyTelegramPlayback(chatId: chatId, messageId: messageId);
+    if (lookup == null) {
+      playMediaDebugError(
+        'My Telegram stream: could not load message (OpenChat/candidates) chatId=$chatId messageId=$messageId',
+      );
       return null;
     }
-    if (msg == null) {
-      playMediaDebugError('GetMessage returned no message for My Telegram stream chatId=$chatId messageId=$messageId');
-      return null;
-    }
+    final msg = lookup.message;
 
     final playable = _messagePlayableFile(msg);
     if (playable == null) {
@@ -1702,6 +1765,22 @@ class DataRepository {
     return streamUrl;
   }
 
+  /// Builds [OxChatMediaRow] for a playable Telegram video message (for TV cast metadata).
+  Future<OxChatMediaRow?> fetchOxChatMediaRowForTelegramVideoMessage({
+    required int chatId,
+    required int messageId,
+  }) async {
+    if (!await _ensureTdlibReadyForMediaPlayback()) return null;
+    final lookup = await _getTelegramMessageForMyTelegramPlayback(chatId: chatId, messageId: messageId);
+    if (lookup == null) {
+      playMediaDebugError(
+        'fetchOxChatMediaRowForTelegramVideoMessage: could not load message chatId=$chatId messageId=$messageId',
+      );
+      return null;
+    }
+    return _oxChatMediaRowFromLiveTdVideoMessage(lookup.message, lookup.resolvedChatId);
+  }
+
   Future<int> releaseOxMediaPlaybackSession({String? reason}) {
     return TelegramRangePlayback.instance.releaseActiveCacheIfAny(reason: reason);
   }
@@ -1768,6 +1847,56 @@ class DataRepository {
     }
 
     return candidate;
+  }
+
+  /// Loads a [td.Message] for My Telegram playback/cast when the local TDLib DB may not
+  /// have the chat open yet (e.g. TV receiving a cast from the phone).
+  Future<({td.Message message, int resolvedChatId})?> _getTelegramMessageForMyTelegramPlayback({
+    required int chatId,
+    required int messageId,
+  }) async {
+    final resolvedPrimary = await _resolveTdlibChatIdForMedia(candidate: chatId);
+    final mergedChatIds = <int>[];
+    final seenChat = <int>{};
+    void addChats(Iterable<int> ids) {
+      for (final id in ids) {
+        if (id != 0 && seenChat.add(id)) mergedChatIds.add(id);
+      }
+    }
+
+    addChats(_candidateTelegramChatIds(resolvedPrimary));
+    addChats(_candidateTelegramChatIds(chatId));
+
+    await _openChatsBestEffortForLocator(mergedChatIds, playMediaDebugInfo);
+    try {
+      await _tdlib.send(td.LoadChats(chatList: const td.ChatListMain(), limit: 200));
+    } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+
+    final messageCandidates = _candidateTelegramMessageIds(messageId).toList(growable: false);
+    for (final chatCandidate in mergedChatIds) {
+      for (final messageCandidate in messageCandidates) {
+        try {
+          final o = await _tdlib.send(td.GetMessage(chatId: chatCandidate, messageId: messageCandidate));
+          if (o is td.Message) {
+            playMediaDebugInfo(
+              'My Telegram GetMessage ok chatCandidate=$chatCandidate messageCandidate=$messageCandidate msgId=${o.id}',
+            );
+            return (message: o, resolvedChatId: chatCandidate);
+          }
+        } on td.TdError catch (e) {
+          playMediaDebugInfo(
+            'My Telegram GetMessage chatCandidate=$chatCandidate messageCandidate=$messageCandidate: code=${e.code} ${e.message}',
+          );
+        } catch (e) {
+          playMediaDebugInfo('My Telegram GetMessage unexpected: $e');
+        }
+      }
+    }
+    playMediaDebugError(
+      'My Telegram GetMessage exhausted candidates originalChatId=$chatId resolvedPrimary=$resolvedPrimary messageId=$messageId',
+    );
+    return null;
   }
 
   /// Resolves `message_thread_id` for [searchChatMessages]:

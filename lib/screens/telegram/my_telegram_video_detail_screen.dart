@@ -10,6 +10,7 @@ import '../../focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
 import '../../infrastructure/data_repository.dart';
 import '../../services/auth_debug_service.dart';
+import '../../utils/platform_detector.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/video_player_navigation.dart';
 import '../../widgets/file_preview_card.dart';
@@ -45,6 +46,20 @@ class MyTelegramVideoDetailScreen extends StatefulWidget {
 class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScreen> {
   void _notifyParent() {
     widget.onItemUiChanged();
+  }
+
+  Future<void> _sendCastToTv() async {
+    try {
+      final repo = await DataRepository.create();
+      await repo.postOxCastOfferTelegram(chatId: widget.chatId, messageId: widget.messageId);
+      if (mounted) {
+        showSnackBar(context, 'Sent to TV', type: SnackBarType.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showSnackBar(context, 'Cast failed: $e', type: SnackBarType.error);
+      }
+    }
   }
 
   Future<void> _forwardToMainBot() async {
@@ -320,6 +335,7 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
                     ? () => unawaited(_playDownloadedFile())
                     : () => unawaited(_stream()),
                 onIndex: () => unawaited(_forwardToMainBot()),
+                onCast: PlatformDetector.isTV() ? null : () => unawaited(_sendCastToTv()),
                 telegramDownloadPhase: ui.phase,
                 telegramDownloadProgress: ui.progress,
                 onDownload: () => unawaited(_startDownload()),

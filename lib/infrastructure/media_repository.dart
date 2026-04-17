@@ -108,6 +108,10 @@ class MediaRepository {
     return dataRepository.postOxCastOffer(mediaGlobalId: mediaGlobalId, fileId: fileId);
   }
 
+  Future<void> postOxCastOfferTelegram({required int chatId, required int messageId}) {
+    return dataRepository.postOxCastOfferTelegram(chatId: chatId, messageId: messageId);
+  }
+
   /// Picks the first streamable file, or falls back to the first available file.
   OxLibraryMediaDetailFile? selectPreferredFile(OxLibraryMediaDetail detail) {
     return selectPreferredFileFromFiles(detail.files);

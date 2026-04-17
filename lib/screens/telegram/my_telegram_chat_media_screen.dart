@@ -16,6 +16,7 @@ import 'package:provider/provider.dart';
 import '../../i18n/strings.g.dart';
 import '../../infrastructure/data_repository.dart';
 import '../../services/auth_debug_service.dart';
+import '../../utils/platform_detector.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/video_player_navigation.dart';
 import 'my_telegram_video_detail_screen.dart';
@@ -495,6 +496,15 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
                   unawaited(_forwardToMainBot(context, chatId, messageId));
                 },
               ),
+              if (!PlatformDetector.isTV())
+                ListTile(
+                  leading: const Icon(Icons.cast_rounded),
+                  title: const Text('Cast to TV'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    unawaited(_castTelegramToTv(context, chatId, messageId));
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.play_circle_outline),
                 title: Text(mt.videoActionStream),
@@ -528,6 +538,20 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     } catch (e) {
       if (context.mounted) {
         showSnackBar(context, '${t.myTelegram.forwardToProviderFailed}: $e', type: SnackBarType.error);
+      }
+    }
+  }
+
+  Future<void> _castTelegramToTv(BuildContext context, int chatId, int messageId) async {
+    try {
+      final repo = await DataRepository.create();
+      await repo.postOxCastOfferTelegram(chatId: chatId, messageId: messageId);
+      if (context.mounted) {
+        showSnackBar(context, 'Sent to TV', type: SnackBarType.success);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showSnackBar(context, 'Cast failed: $e', type: SnackBarType.error);
       }
     }
   }

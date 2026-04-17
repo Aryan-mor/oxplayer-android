@@ -198,9 +198,25 @@ class OxCastReceiverProvider extends ChangeNotifier {
     void tryOnce() {
       if (started) return;
       final ctx = rootNavigatorKey.currentContext;
-      if (ctx != null && ctx.mounted) {
-        started = true;
-        unawaited(startOxCastPlayback(ctx, mediaGlobalId: offer.mediaGlobalId, fileId: offer.fileId));
+      if (ctx == null || !ctx.mounted) return;
+      started = true;
+      switch (offer.kind) {
+        case OxCastOfferKind.oxLibrary:
+          unawaited(
+            startOxCastPlayback(
+              ctx,
+              mediaGlobalId: offer.mediaGlobalId!,
+              fileId: offer.fileId!,
+            ),
+          );
+        case OxCastOfferKind.telegram:
+          unawaited(
+            startTelegramCastPlayback(
+              ctx,
+              chatId: offer.chatId!,
+              messageId: offer.messageId!,
+            ),
+          );
       }
     }
 
