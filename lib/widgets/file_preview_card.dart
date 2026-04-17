@@ -21,10 +21,7 @@ import 'plex_style_download_ring_icon.dart';
 /// with a 16:9 thumbnail on the left, a title/badge/info/description column on
 /// the right, and a compact row of icon-button actions (stream, download/pause,
 /// delete/cancel, cast) whose visibility and state react to the current download
-/// lifecycle via [DownloadProvider].
-///
-/// This widget is a direct evolution of [OxFileOptionCard] with the action
-/// buttons moved inline into the right column (matching [EpisodeCard]'s layout).
+/// lifecycle via [DownloadProvider]. Action buttons sit inline in the right column (compact row).
 class FilePreviewCard extends StatefulWidget {
   const FilePreviewCard({
     super.key,

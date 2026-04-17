@@ -582,30 +582,9 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         appLogger.d('Wakelock enabled for video playback');
       }
 
-      // Get the video URL and start playback
-      await _startPlayback();
-
-      // Set fullscreen mode and orientation based on rotation lock setting
-      if (mounted) {
-        try {
-          // Check rotation lock setting before applying orientation
-          final isRotationLocked = settingsService.getRotationLocked();
-
-          if (isRotationLocked) {
-            // Locked: Apply landscape orientation only
-            OrientationHelper.setLandscapeOrientation();
-          } else {
-            // Unlocked: Allow all orientations immediately
-            SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-            SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-          }
-        } catch (e) {
-          appLogger.w('Failed to set orientation', error: e);
-          // Don't crash if orientation fails - video can still play
-        }
-      }
-
-      // Listen to playback state changes
+      // Subscribe to player streams BEFORE open()/playback. Attaching after
+      // await _startPlayback() can miss early playback-restart / buffering events
+      // (Android TV often delivers them sooner than phones → endless loading UI).
       _playingSubscription = player!.streams.playing.listen(_onPlayingStateChanged);
 
       // Listen to completion
@@ -696,6 +675,29 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
           _onVideoCompleted(true);
         }
       });
+
+      // Get the video URL and start playback
+      await _startPlayback();
+
+      // Set fullscreen mode and orientation based on rotation lock setting
+      if (mounted) {
+        try {
+          // Check rotation lock setting before applying orientation
+          final isRotationLocked = settingsService.getRotationLocked();
+
+          if (isRotationLocked) {
+            // Locked: Apply landscape orientation only
+            OrientationHelper.setLandscapeOrientation();
+          } else {
+            // Unlocked: Allow all orientations immediately
+            SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+            SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+          }
+        } catch (e) {
+          appLogger.w('Failed to set orientation', error: e);
+          // Don't crash if orientation fails - video can still play
+        }
+      }
 
       // Initialize services
       await _initializeServices();
@@ -2688,8 +2690,30 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
       },
       child: OverlaySheetHost(
         child: Builder(
-          builder: (sheetContext) =>
-              _isPlayerInitialized && player != null ? _buildVideoPlayer(sheetContext) : _buildLoadingSpinner(),
+          builder: (sheetContext) => PopScope(
+            // Covers loading and initialized player. Without this, the pre-init
+            // loading scaffold had no PopScope — TV/back could not exit (stuck on black spinner).
+            canPop: false, // Disable swipe-back gesture to prevent interference with timeline scrubbing
+            onPopInvokedWithResult: (didPop, result) {
+              if (!didPop) {
+                // If an overlay sheet is open, delegate back to it instead of
+                // exiting the player. This prevents the double-pop on Android TV
+                // where the system back gesture would otherwise reach both the
+                // sheet and the player's PopScope.
+                final sheetController = OverlaySheetController.maybeOf(sheetContext);
+                if (sheetController != null && sheetController.isOpen) {
+                  sheetController.pop();
+                  return;
+                }
+                if (BackKeyCoordinator.consumeIfHandled()) return;
+                BackKeyCoordinator.markHandled();
+                _handleBackButton();
+              }
+            },
+            child: _isPlayerInitialized && player != null
+                ? _buildVideoPlayer(sheetContext)
+                : _buildLoadingSpinner(),
+          ),
         ),
       ),
     );
@@ -2699,25 +2723,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     // Cache platform detection to avoid multiple calls
     final isMobile = PlatformDetector.isMobile(context);
 
-    return PopScope(
-      canPop: false, // Disable swipe-back gesture to prevent interference with timeline scrubbing
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          // If an overlay sheet is open, delegate back to it instead of
-          // exiting the player. This prevents the double-pop on Android TV
-          // where the system back gesture would otherwise reach both the
-          // sheet and the player's PopScope.
-          final sheetController = OverlaySheetController.maybeOf(context);
-          if (sheetController != null && sheetController.isOpen) {
-            sheetController.pop();
-            return;
-          }
-          if (BackKeyCoordinator.consumeIfHandled()) return;
-          BackKeyCoordinator.markHandled();
-          _handleBackButton();
-        }
-      },
-      child: Scaffold(
+    return Scaffold(
         // Use transparent background on macOS when native video layer is active
         backgroundColor: Colors.transparent,
         body: GestureDetector(
@@ -3194,7 +3200,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
             ],
           ),
         ),
-      ),
     );
   }
 }

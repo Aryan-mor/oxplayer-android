@@ -196,19 +196,3 @@ String formatFinishTime(Duration remaining, {double rate = 1.0, required bool is
 String toBulletedString(List<String> parts) {
   return parts.join(' · ');
 }
-
-/// Takes a date string in the format "YYYY-MM-DD" and returns a localized full date string
-/// If there is any error, `dateString` is returned as is
-String formatFullDate(String dateString) {
-  try {
-    // Parse the date
-    final date = DateTime.parse(dateString);
-
-    // Create a DateFormat with the full date pattern for the current locale
-    final formatter = DateFormat.yMMMMd(LocaleSettings.currentLocale.languageCode);
-
-    return formatter.format(date);
-  } catch (e) {
-    return dateString;
-  }
-}
