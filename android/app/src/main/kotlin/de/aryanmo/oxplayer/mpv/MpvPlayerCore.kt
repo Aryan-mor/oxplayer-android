@@ -194,6 +194,7 @@ class MpvPlayerCore(private val activity: Activity) : SurfaceHolder.Callback {
                         setOption("opengl-es", "yes")
                         setOption("vd-lavc-film-grain", "cpu")
                         setOption("ao", "audiotrack,opensles")
+                        setOption("ytdl", "no")
                     }
 
                     if (disposing) {

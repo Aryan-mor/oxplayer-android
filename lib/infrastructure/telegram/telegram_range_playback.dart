@@ -100,6 +100,14 @@ class TelegramRangePlayback {
       return null;
     }
 
+    try {
+      await _awaitLoopbackAcceptingConnections(port, onDiagnostic: onDiagnostic);
+    } catch (e) {
+      _lastOpenFailureReason = 'loopback_preflight_failed';
+      onDiagnostic?.call('Telegram range playback failed: loopback TCP preflight for fileId=${file.id}: $e');
+      return null;
+    }
+
     final url = Uri.parse('http://127.0.0.1:$port/stream');
     onDiagnostic?.call('Telegram range playback ready at $url for fileId=${file.id}');
     return url;
@@ -146,6 +154,37 @@ class TelegramRangePlayback {
     );
     _server = server;
     onDiagnostic?.call('Started Telegram range loopback server on ${server.address.host}:${server.port}');
+    // Let the isolate process the listening socket before clients connect (avoids rare connection refused).
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Ensures something is accepting TCP on [port] before we hand the URL to MPV/ffmpeg.
+  Future<void> _awaitLoopbackAcceptingConnections(
+    int port, {
+    void Function(String message)? onDiagnostic,
+  }) async {
+    const maxAttempts = 100;
+    const step = Duration(milliseconds: 20);
+    Object? lastError;
+    for (var i = 0; i < maxAttempts; i++) {
+      try {
+        final s = await Socket.connect(
+          InternetAddress.loopbackIPv4,
+          port,
+          timeout: const Duration(milliseconds: 500),
+        );
+        await s.close();
+        if (i > 0) {
+          onDiagnostic?.call('Loopback TCP accept ok on port $port after ${i + 1} attempts');
+        }
+        return;
+      } catch (e) {
+        lastError = e;
+        await Future<void>.delayed(step);
+      }
+    }
+    onDiagnostic?.call('Loopback TCP preflight failed on port $port after $maxAttempts attempts: $lastError');
+    throw StateError('Loopback not accepting on port $port');
   }
 
   Future<void> _handleRequest(HttpRequest request) async {

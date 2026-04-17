@@ -85,6 +85,16 @@ Future<void> _setWakelock(bool enabled) async {
   }
 }
 
+/// TDLib Telegram range proxy URLs. On Android, ExoPlayer uses Cronet, which often returns
+/// `ERR_CONNECTION_REFUSED` for `http://127.0.0.1/...`. Use [PlayerNative] (MPV) directly instead.
+bool _isLocalHttpLoopbackPlaybackUrl(String? url) {
+  if (url == null || url.isEmpty) return false;
+  final u = url.trim().toLowerCase();
+  return u.startsWith('http://127.0.0.1') ||
+      u.startsWith('http://localhost') ||
+      u.startsWith('http://[::1]');
+}
+
 class VideoPlayerScreen extends StatefulWidget {
   final PlexMetadata metadata;
   final AudioTrack? preferredAudioTrack;
@@ -415,7 +425,14 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
       final bufferSizeMB = settingsService.getBufferSize();
       final enableHardwareDecoding = settingsService.getEnableHardwareDecoding();
       final debugLoggingEnabled = settingsService.getEnableDebugLogging();
-      final useExoPlayer = settingsService.getUseExoPlayer();
+      final useExoPlayerSetting = settingsService.getUseExoPlayer();
+      final directPlaybackUrl = widget.playbackData?.videoUrl;
+      final forceMpvForLocalLoopback =
+          Platform.isAndroid && widget.isOffline && _isLocalHttpLoopbackPlaybackUrl(directPlaybackUrl);
+      final useExoPlayer = forceMpvForLocalLoopback ? false : useExoPlayerSetting;
+      if (forceMpvForLocalLoopback) {
+        appLogger.d('Using MPV directly for local loopback playback (skip ExoPlayer/Cronet on 127.0.0.1)');
+      }
 
       // Initialize Windows display mode service.
       if (Platform.isWindows) {
@@ -1088,6 +1105,12 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     if (!mounted) return;
     final repo = await DataRepository.create();
     try {
+      // Stop the previous loopback server and TDLib active file *before* opening the next stream.
+      // Then wait so ExoPlayer/Cronet and the OS socket layer fully release 127.0.0.1 before we bind again.
+      await repo.releaseOxMediaPlaybackSession(reason: 'telegram_playlist_advance');
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (!mounted) return;
+
       final cid = meta.row.chatId;
       final mid = int.tryParse(meta.row.messageId);
       if (cid == null || mid == null) {
@@ -1133,8 +1156,6 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         showGlobalErrorSnackBar('$e');
         await _continueTelegramStreamAfterNavigationFailure(newIndex);
       }
-    } finally {
-      await repo.releaseOxMediaPlaybackSession(reason: 'telegram_playlist_advance');
     }
   }
 
@@ -2042,6 +2063,20 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     }
 
     Sentry.addBreadcrumb(Breadcrumb(message: 'Player dispose', category: 'player'));
+
+    // Telegram loopback: release TDLib/range session when truly leaving the player (back to library).
+    // Skip when [pushReplacement] to another video — same singleton must serve the next item.
+    if (!_isReplacingWithVideo &&
+        widget.isOffline &&
+        (widget.playbackData?.hasValidVideoUrl ?? false) &&
+        _isLocalHttpLoopbackPlaybackUrl(widget.playbackData?.videoUrl)) {
+      unawaited(
+        DataRepository.create().then(
+          (r) => r.releaseOxMediaPlaybackSession(reason: 'telegram_player_route_popped'),
+        ),
+      );
+    }
+
     player?.dispose();
     if (_activeRatingKey == widget.metadata.ratingKey) {
       _activeRatingKey = null;
@@ -2178,15 +2213,17 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
 
     _logPlaybackErrorToDebugModal(error);
 
-    // My Telegram stream-all: skip to the next item instead of closing the player.
-    if (_canSkipToNextTelegramStreamItem()) {
-      if (_isLoadingNext) return;
-      showGlobalErrorSnackBar(_lastLogError ?? error);
-      unawaited(_playNext());
+    showGlobalErrorSnackBar(_lastLogError ?? error);
+
+    // My Telegram stream-all: do **not** auto-advance on errors. Transient failures (local range proxy
+    // not ready, ExoPlayer→MPV handoff, ERR_CONNECTION_REFUSED to 127.0.0.1) are common; auto-skipping
+    // walked the entire playlist. User can retry or use next/previous.
+    if (widget.telegramStreamPlaylist != null &&
+        widget.telegramStreamPlaylist!.length > 1 &&
+        _canSkipToNextTelegramStreamItem()) {
       return;
     }
 
-    showGlobalErrorSnackBar(_lastLogError ?? error);
     _handleBackButton();
   }
 
@@ -2339,6 +2376,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
       final prevMeta = pl[i - 1];
 
       _notifyWatchTogetherMediaChange(metadata: prevMeta);
+
+      setState(() {
+        _isLoadingNext = true;
+        _showPlayNextDialog = false;
+      });
 
       await _navigateToTelegramStreamItem(prevMeta, i - 1);
       return;
@@ -2592,6 +2634,9 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     } finally {
       player = null;
       _isPlayerInitialized = false;
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 

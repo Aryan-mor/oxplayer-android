@@ -737,6 +737,8 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
                             core.setProperty("hwdec", "mediacodec,mediacodec-copy")
                             core.setProperty("vo", "gpu")
                             core.setProperty("ao", "audiotrack")
+                            // OXPlayer does not ship youtube-dl; disable hook so failed opens don't spam ytdl errors.
+                            core.setProperty("ytdl", "no")
 
                             // Forward user's buffer config to MPV fallback
                             if (bufferSize != null && bufferSize > 0) {

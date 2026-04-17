@@ -33,6 +33,7 @@ import '../../models/plex_media_info.dart';
 import '../../models/plex_media_version.dart';
 import '../../models/plex_metadata.dart';
 import '../../screens/video_player_screen.dart';
+import '../../screens/telegram/telegram_video_metadata.dart';
 import '../../focus/key_event_utils.dart';
 import '../../services/keyboard_shortcuts_service.dart';
 import '../../services/settings_service.dart';
@@ -1121,6 +1122,11 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
 
   Future<void> _loadPlaybackExtras({bool forceRefresh = false}) async {
     if (_isLoadingExtras) return;
+    // My Telegram streams use synthetic rating keys; Plex chapter/extra fetches are meaningless and can
+    // populate bogus chapters so media next/previous keys seek "chapters" instead of the playlist.
+    if (widget.metadata is TelegramVideoMetadata) {
+      return;
+    }
     _isLoadingExtras = true;
 
     try {
@@ -1998,11 +2004,22 @@ class _PlexVideoControlsState extends State<PlexVideoControls> with WindowListen
               return KeyEventResult.handled;
             }
 
-            // Handle next/previous track keys (Android TV remotes)
-            // Uses same behavior as seek keys: chapter navigation or time-based seek
+            // Handle next/previous track keys (Android TV remotes).
+            // For My Telegram stream-all, advance the in-app playlist; otherwise chapter seek (or time seek).
             if (event is KeyDownEvent && _isMediaTrackKey(key)) {
               if (widget.canControl) {
-                unawaited(_seekToChapter(forward: key == LogicalKeyboardKey.mediaTrackNext));
+                final telegramPlaylist = widget.metadata is TelegramVideoMetadata;
+                if (telegramPlaylist) {
+                  if (key == LogicalKeyboardKey.mediaTrackNext && widget.onNext != null) {
+                    widget.onNext!();
+                  } else if (key == LogicalKeyboardKey.mediaTrackPrevious && widget.onPrevious != null) {
+                    widget.onPrevious!();
+                  } else {
+                    unawaited(_seekToChapter(forward: key == LogicalKeyboardKey.mediaTrackNext));
+                  }
+                } else {
+                  unawaited(_seekToChapter(forward: key == LogicalKeyboardKey.mediaTrackNext));
+                }
               }
               _showControlsWithFocus(requestFocus: _videoPlayerNavigationEnabled);
               return KeyEventResult.handled;

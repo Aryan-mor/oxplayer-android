@@ -211,6 +211,60 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     return rows.where((r) => seen.add(r.messageId)).toList();
   }
 
+  /// TDLib (and occasionally the indexed API) can return a **short first page** on cold open — e.g. one cell until
+  /// the peer is opened and search catches up. A single deferred pass matches what users already fix via refresh.
+  void _scheduleFillShortFirstPage(int gen, {required bool libraryIndexed}) {
+    unawaited(_fillShortFirstPageWork(gen, libraryIndexed: libraryIndexed));
+  }
+
+  Future<void> _fillShortFirstPageWork(int gen, {required bool libraryIndexed}) async {
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted || gen != _loadGeneration) return;
+    if (_initialLoading) return;
+    if (_items.isEmpty) return;
+    if (_items.length >= _pageSize) return;
+
+    if (libraryIndexed) {
+      if (!_hasMoreHistory || _loadingMore) return;
+      await _loadMore();
+      return;
+    }
+
+    if (_hasMoreHistory) {
+      if (_loadingMore) return;
+      await _loadMore();
+      return;
+    }
+
+    await _retryWarmTdlibFirstPage(gen);
+  }
+
+  /// Second [fetchLiveChatVideos] first page without clearing — avoids flashing empty; only applies if TDLib returns more rows.
+  Future<void> _retryWarmTdlibFirstPage(int gen) async {
+    try {
+      final repo = await DataRepository.create();
+      if (!mounted || gen != _loadGeneration) return;
+      final page = await repo.fetchLiveChatVideos(
+        tdlibChatId: widget.tdlibChatId,
+        messageThreadId: widget.messageThreadId,
+      );
+      if (!mounted || gen != _loadGeneration) return;
+      final uniqueRows = _dedupeRowsByMessageId(page.items);
+      if (uniqueRows.length <= _items.length) return;
+
+      if (mounted) {
+        setState(() {
+          _items.clear();
+          _items.addAll(uniqueRows.map((row) => TelegramVideoMetadata(row, '')));
+          _hasMoreHistory = page.hasMoreHistory;
+          _nextHistoryFromMessageId = page.nextHistoryFromMessageId;
+        });
+        unawaited(_resolveThumbnailsForRows(uniqueRows));
+      }
+      _persistToSessionCache();
+    } catch (_) {}
+  }
+
   /// Indexed API: per forum topic when [libraryIndexed] + [embedInTabView]; otherwise all indexed files for the chat.
   int? get _indexedMessageThreadQuery {
     if (!widget.libraryIndexed) return null;
@@ -265,6 +319,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
           unawaited(_resolveThumbnailsForRows(uniqueRows));
         }
         _persistToSessionCache();
+        _scheduleFillShortFirstPage(gen, libraryIndexed: true);
         return;
       }
 
@@ -286,6 +341,7 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         unawaited(_resolveThumbnailsForRows(uniqueRows));
       }
       _persistToSessionCache();
+      _scheduleFillShortFirstPage(gen, libraryIndexed: false);
     } catch (e) {
       if (!mounted || gen != _loadGeneration) return;
       setState(() {
@@ -599,7 +655,10 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         showSnackBar(context, '${t.myTelegram.streamFailed}: $e', type: SnackBarType.error);
       }
     } finally {
-      await repo.releaseOxMediaPlaybackSession(reason: 'my_telegram_stream_all_closed');
+      // Do not call releaseOxMediaPlaybackSession here. [Navigator.push]'s future completes when the
+      // pushed route is removed — including on [pushReplacement] to the next playlist item — which
+      // would run this finally while the new video's loopback server must stay up (connection refused).
+      // Cleanup: [VideoPlayerScreen.dispose] when actually popping back (not replacing).
       if (mounted) {
         setState(() => _streamAllStarting = false);
       }
@@ -639,9 +698,8 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       if (context.mounted) {
         showSnackBar(context, '${t.myTelegram.streamFailed}: $e', type: SnackBarType.error);
       }
-    } finally {
-      await repo.releaseOxMediaPlaybackSession(reason: 'my_telegram_chat_stream_closed');
     }
+    // Release on pop — see [VideoPlayerScreen.dispose] for loopback Telegram URLs (not here: same push future issue).
   }
 
   Future<void> _startTelegramDownload(TelegramVideoMetadata video, int chatId, int messageId) async {
@@ -1012,76 +1070,107 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
       );
     }
 
-    // Show video grid (month groups like Telegram) with load more
-    return Column(
+    // Show video grid (month groups like Telegram) with load more.
+    // Stack: scroll paints first, then the Stream-all bar — otherwise Clip.none grid items draw on top of the button.
+    const streamAllBarReserve = 72.0;
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.topCenter,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: FilledButton.tonalIcon(
-            onPressed: _initialLoading || _streamAllStarting || _items.isEmpty ? null : _streamAllInOrder,
-            icon: _streamAllStarting
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const AppIcon(Symbols.playlist_play_rounded, fill: 1),
-            label: Text(t.myTelegram.streamAll),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(double.infinity, 48),
-              alignment: Alignment.center,
-            ),
-          ),
-        ),
-        Expanded(
-          child: _buildVideoGalleryScroll(),
-        ),
+          padding: const EdgeInsets.only(top: streamAllBarReserve),
+          child: Column(
+            children: [
+              Expanded(
+                child: _buildVideoGalleryScroll(),
+              ),
 
-        // Load more (older history), or sync hint when TDLib may still be filling history, or end-of-list.
-        if (_hasMoreHistory)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: OutlinedButton.icon(
-              onPressed: _loadingMore ? null : _loadMore,
-              icon: _loadingMore
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const AppIcon(Symbols.expand_more_rounded, fill: 1),
-              label: Text(_loadingMore ? 'Loading...' : telegramStrings.loadMoreMedia),
-              style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-            ),
-          )
-        else if (!widget.libraryIndexed && _items.length < _pageSize)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  telegramStrings.mediaSyncMayLoadMore,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted),
+              // Load more (older history), or sync hint when TDLib may still be filling history, or end-of-list.
+              if (_hasMoreHistory)
+                Material(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  elevation: 3,
+                  shadowColor: Colors.black.withValues(alpha: 0.14),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: OutlinedButton.icon(
+                      onPressed: _loadingMore ? null : _loadMore,
+                      icon: _loadingMore
+                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const AppIcon(Symbols.expand_more_rounded, fill: 1),
+                      label: Text(_loadingMore ? 'Loading...' : telegramStrings.loadMoreMedia),
+                      style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                    ),
+                  ),
+                )
+              else if (!widget.libraryIndexed && _items.length < _pageSize)
+                Material(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  elevation: 3,
+                  shadowColor: Colors.black.withValues(alpha: 0.14),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          telegramStrings.mediaSyncMayLoadMore,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _initialLoading ? null : _loadInitial,
+                          icon: const AppIcon(Symbols.refresh_rounded, fill: 1),
+                          label: Text(telegramStrings.checkForMoreVideos),
+                          style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                  child: Text(
+                    telegramStrings.mediaEndOfList,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted, fontWeight: FontWeight.w500),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _initialLoading ? null : _loadInitial,
-                  icon: const AppIcon(Symbols.refresh_rounded, fill: 1),
-                  label: Text(telegramStrings.checkForMoreVideos),
-                  style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+            ],
+          ),
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: Material(
+            color: Theme.of(context).colorScheme.surface,
+            elevation: 6,
+            shadowColor: Colors.black.withValues(alpha: 0.18),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: FilledButton.tonalIcon(
+                onPressed: _initialLoading || _streamAllStarting || _items.isEmpty ? null : _streamAllInOrder,
+                icon: _streamAllStarting
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const AppIcon(Symbols.playlist_play_rounded, fill: 1),
+                label: Text(t.myTelegram.streamAll),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  alignment: Alignment.center,
                 ),
-              ],
-            ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-            child: Text(
-              telegramStrings.mediaEndOfList,
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted, fontWeight: FontWeight.w500),
+              ),
             ),
           ),
+        ),
       ],
     );
   }
