@@ -1038,6 +1038,24 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     unawaited(playbackFuture);
   }
 
+  Future<void> _sendOxCastOffer(PlexMetadata playbackMetadata, OxFileOptionItem option) async {
+    if (widget.isOffline) return;
+    try {
+      final repo = await DataRepository.create();
+      final mediaGlobalId = (playbackMetadata.grandparentRatingKey ?? widget.metadata.ratingKey).trim();
+      if (mediaGlobalId.isEmpty) {
+        if (mounted) showErrorSnackBar(context, 'Missing library id');
+        return;
+      }
+      await repo.postOxCastOffer(mediaGlobalId: mediaGlobalId, fileId: option.file.id);
+      if (!mounted) return;
+      showSuccessSnackBar(context, 'Sent to TV');
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(context, e.toString());
+    }
+  }
+
   Future<void> _playOxFileOption(PlexMetadata metadata, OxFileOptionItem option) async {
     final downloadMeta = buildOxDownloadMetadata(parentMetadata: metadata, file: option.file);
     final gk = downloadMeta.globalKey;
@@ -2373,6 +2391,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
           onStream: () async {
             await _playOxFileOption(playbackMetadata, option);
           },
+          onCast: widget.isOffline || !_isOxLibraryMetadata(playbackMetadata)
+              ? null
+              : () => unawaited(_sendOxCastOffer(playbackMetadata, option)),
         );
       },
     );
@@ -2763,6 +2784,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                   onStream: () async {
                     await _playOxFileOption(episode, option);
                   },
+                  onCast: widget.isOffline || !_isOxLibraryMetadata(episode)
+                      ? null
+                      : () => unawaited(_sendOxCastOffer(episode, option)),
                 );
               }),
             ],
@@ -2907,6 +2931,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                     if (context.mounted) showErrorSnackBar(context, t.settings.cellularDownloadBlocked);
                   }
                 },
+          onCast: widget.isOffline || !isOxEpisode || singleOxOption == null || !_isOxLibraryMetadata(episode)
+              ? null
+              : () => unawaited(_sendOxCastOffer(episode, singleOxOption)),
         );
       },
     );

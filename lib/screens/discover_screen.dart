@@ -43,6 +43,8 @@ import '../utils/provider_extensions.dart';
 import '../utils/video_player_navigation.dart';
 import '../utils/layout_constants.dart';
 import '../utils/platform_detector.dart';
+import '../providers/ox_cast_receiver_provider.dart';
+import '../widgets/cast_receiver_dialog.dart';
 import '../theme/mono_tokens.dart';
 import '../services/watch_next_service.dart';
 import 'libraries/state_messages.dart';
@@ -1059,6 +1061,15 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileSwitchScreen()));
   }
 
+  void _onTvCastButtonPressed() {
+    final provider = context.read<OxCastReceiverProvider>();
+    if (provider.isListeningEnabled) {
+      unawaited(showTvCastReceiverDisableDialog(context, provider));
+    } else {
+      unawaited(showTvCastReceiverInfoDialog(context, provider));
+    }
+  }
+
   /// Show user menu programmatically (for D-pad select)
   void _showUserMenu(BuildContext context, UserProfileProvider userProvider) {
     final actionBar = _actionBarKey.currentState;
@@ -1137,10 +1148,11 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 ).textTheme.titleLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
-              Consumer2<WatchTogetherProvider, CompanionRemoteProvider>(
-                builder: (context, watchTogether, companionRemote, _) {
+              Consumer3<WatchTogetherProvider, CompanionRemoteProvider, OxCastReceiverProvider>(
+                builder: (context, watchTogether, companionRemote, castRecv, _) {
                   final isDesktop = PlatformDetector.shouldActAsRemoteHost(context);
                   final userProvider = context.watch<UserProfileProvider>();
+                  final castOn = castRecv.isListeningEnabled;
 
                   return FocusableActionBar(
                     key: _actionBarKey,
@@ -1243,6 +1255,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       // Server Tasks
                       if (PlatformDetector.isDesktop(context))
                         const FocusableAction(child: ServerActivitiesButton()),
+                      if (PlatformDetector.isTV())
+                        FocusableAction(
+                          icon: Symbols.cast_rounded,
+                          iconColor: castOn ? const Color(0xFF66BB6A) : Colors.white,
+                          tooltip: castOn ? 'Receive cast (on)' : 'Receive cast',
+                          onPressed: _onTvCastButtonPressed,
+                        ),
                       // User menu
                       FocusableAction(
                         onPressed: () => _showUserMenu(context, userProvider),

@@ -96,7 +96,7 @@ class FilePreviewCard extends StatefulWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onRetry;
 
-  /// Reserved for future use; cast button is always disabled regardless of this value.
+  /// When set on non-TV layouts, enables the cast action (phone sends offer to API for TV pickup).
   final VoidCallback? onCast;
 
   /// Optional index action. When provided, shows a cloud-upload icon button in
@@ -170,8 +170,9 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
     final keyChanged = oldWidget.downloadGlobalKey != widget.downloadGlobalKey;
     final actionsChanged = oldWidget.showActions != widget.showActions;
     final indexChanged = (oldWidget.onIndex == null) != (widget.onIndex == null);
+    final castChanged = (oldWidget.onCast == null) != (widget.onCast == null);
     final telegramChanged = oldWidget.telegramDownloadPhase != widget.telegramDownloadPhase;
-    if (keyChanged || actionsChanged || indexChanged || telegramChanged) {
+    if (keyChanged || actionsChanged || indexChanged || castChanged || telegramChanged) {
       _disposeFocusNodes();
       _createFocusNodes();
     }
@@ -676,10 +677,16 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
   }
 
   Widget _buildCastButton(BuildContext context) {
+    final enabled = widget.onCast != null;
     return IconButton(
-      onPressed: null,
-      icon: AppIcon(Symbols.cast_rounded, fill: 1, size: 22, color: tokens(context).textMuted),
-      tooltip: 'Cast (coming soon)',
+      onPressed: enabled ? widget.onCast : null,
+      icon: AppIcon(
+        Symbols.cast_rounded,
+        fill: 1,
+        size: 22,
+        color: enabled ? Theme.of(context).colorScheme.primary : tokens(context).textMuted,
+      ),
+      tooltip: enabled ? 'Cast to TV' : 'Cast (unavailable)',
       visualDensity: VisualDensity.compact,
     );
   }

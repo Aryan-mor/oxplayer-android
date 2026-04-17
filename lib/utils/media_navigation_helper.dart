@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import '../infrastructure/data_repository.dart';
 import '../infrastructure/media_repository.dart';
@@ -83,6 +85,64 @@ String? _resolveOxPosterUrl(String? posterPath) {
   }
   final normalized = value.startsWith('/') ? value : '/$value';
   return 'https://image.tmdb.org/t/p/w500$normalized';
+}
+
+/// Starts OX internal playback after a TV [OxCastOffer] (same flow as [MediaDetailScreen] OX file play).
+Future<void> startOxCastPlayback(
+  BuildContext context, {
+  required String mediaGlobalId,
+  required String fileId,
+}) async {
+  final repository = await DataRepository.create();
+  final mediaRepository = MediaRepository(dataRepository: repository);
+  final detail = await mediaRepository.fetchLibraryMediaDetail(mediaGlobalId);
+  if (!context.mounted) return;
+
+  OxLibraryMediaDetailFile? file;
+  for (final f in detail.files) {
+    if (f.id == fileId) {
+      file = f;
+      break;
+    }
+  }
+  if (file == null) {
+    showGlobalAppSnackBar('Cast: could not find that file.');
+    return;
+  }
+
+  final fallback = PlexMetadata(
+    ratingKey: mediaGlobalId,
+    key: 'ox-library:$mediaGlobalId',
+    serverId: kOxVirtualServerId,
+    type: 'movie',
+    title: detail.media.title,
+  );
+  final metadata = mapOxLibraryDetailToPlexMetadata(detail, fallback: fallback);
+
+  final playbackResolution = await mediaRepository.resolveStreamUrlForInternalPlaybackWithRecovery(
+    file: file,
+    detailGlobalId: mediaGlobalId,
+  );
+  final streamUrl = playbackResolution.streamUrl;
+
+  if (!context.mounted) return;
+
+  if (streamUrl == null) {
+    await mediaRepository.releaseInternalPlaybackSession(reason: 'cast_stream_unavailable');
+    showGlobalAppSnackBar('Could not start playback.');
+    return;
+  }
+
+  final videoUrl = streamUrl.toString();
+  final playbackFuture = navigateToInternalVideoPlayerForUrl(
+    context,
+    metadata: metadata,
+    videoUrl: videoUrl,
+  );
+  playbackFuture.whenComplete(() async {
+    await mediaRepository.releaseInternalPlaybackSession(reason: 'video_player_closed');
+  });
+  unawaited(playbackFuture);
 }
 
 /// Result of media navigation indicating what action was taken

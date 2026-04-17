@@ -96,6 +96,18 @@ class MediaRepository {
     return dataRepository.fetchOxLibraryMediaDetail(globalId);
   }
 
+  Future<List<OxLibraryMediaItem>> fetchPendingLocatorItems({int limitPerKind = 20}) {
+    return dataRepository.fetchOxPendingLocatorItems(limitPerKind: limitPerKind);
+  }
+
+  Future<void> runPendingLocatorHealPass({int limitPerKind = 15}) {
+    return dataRepository.runPendingLocatorHealPass(limitPerKind: limitPerKind);
+  }
+
+  Future<void> postOxCastOffer({required String mediaGlobalId, required String fileId}) {
+    return dataRepository.postOxCastOffer(mediaGlobalId: mediaGlobalId, fileId: fileId);
+  }
+
   /// Picks the first streamable file, or falls back to the first available file.
   OxLibraryMediaDetailFile? selectPreferredFile(OxLibraryMediaDetail detail) {
     return selectPreferredFileFromFiles(detail.files);

@@ -31,6 +31,7 @@ import 'providers/download_provider.dart';
 import 'providers/offline_mode_provider.dart';
 import 'providers/offline_watch_provider.dart';
 import 'providers/companion_remote_provider.dart';
+import 'providers/ox_cast_receiver_provider.dart';
 import 'providers/shader_provider.dart';
 import 'utils/snackbar_helper.dart';
 import 'watch_together/watch_together.dart';
@@ -392,6 +393,10 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         // App came back to foreground - trigger sync check and start new session
         _offlineWatchSyncService.onAppResumed();
         InAppReviewService.instance.startSession();
+        final castNav = rootNavigatorKey.currentContext;
+        if (castNav != null && castNav.mounted) {
+          castNav.read<OxCastReceiverProvider>().onAppResumed();
+        }
         // Re-probe servers — mobile OS may have dropped TCP connections during doze/sleep.
         // On desktop, resumed fires on every window focus (alt-tab), so apply a cooldown
         // to avoid piling up network probes from rapid alt-tabbing.
@@ -478,6 +483,9 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         ChangeNotifierProvider(create: (context) => PlaybackStateProvider()),
         ChangeNotifierProvider(create: (context) => WatchTogetherProvider()),
         ChangeNotifierProvider(create: (context) => CompanionRemoteProvider()),
+        ChangeNotifierProvider(
+          create: (context) => OxCastReceiverProvider(authNotifier: context.read<AuthNotifier>()),
+        ),
         ChangeNotifierProvider(create: (context) => ShaderProvider()),
       ],
       child: Consumer<ThemeProvider>(

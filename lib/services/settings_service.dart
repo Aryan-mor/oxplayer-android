@@ -117,6 +117,7 @@ class SettingsService extends BaseSharedPreferencesService {
   static const String _keyMatchDynamicRange = 'match_dynamic_range';
   static const String _keyDisplaySwitchDelay = 'display_switch_delay';
   static const String _keySimulateTvMode = 'debug_simulate_tv_mode';
+  static const String _keyTvCastReceiverListening = 'tv_cast_receiver_listening';
 
   SettingsService._();
 
@@ -1188,6 +1189,15 @@ class SettingsService extends BaseSharedPreferencesService {
 
   bool getSimulateTvMode() {
     return prefs.getBool(_keySimulateTvMode) ?? false;
+  }
+
+  /// Android TV: user enabled "receive cast" (background listener persists across restarts).
+  Future<void> setTvCastReceiverListening(bool value) async {
+    await prefs.setBool(_keyTvCastReceiverListening, value);
+  }
+
+  bool getTvCastReceiverListening() {
+    return prefs.getBool(_keyTvCastReceiverListening) ?? false;
   }
 
   // Download on WiFi Only

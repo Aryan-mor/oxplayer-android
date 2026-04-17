@@ -144,6 +144,7 @@ class OxLibraryMediaItem {
     this.locatorRemoteFileId,
     this.thumbnailSourceChatId,
     this.thumbnailSourceMessageId,
+    this.playbackPending = false,
   });
 
   final String kind;
@@ -164,6 +165,49 @@ class OxLibraryMediaItem {
 
   /// For general_video: Telegram message ID of the source message (for thumbnail resolution via TDLib).
   final int? thumbnailSourceMessageId;
+
+  /// True when returned from [fetchOxPendingLocatorItems] — not yet a direct playable locator for the client.
+  final bool playbackPending;
+}
+
+/// In-memory cast offer from GET `/me/cast/pending` or WebSocket `cast_offer` (same user, API process only).
+class OxCastOffer {
+  const OxCastOffer({
+    required this.jobId,
+    required this.mediaGlobalId,
+    required this.fileId,
+    required this.createdAt,
+  });
+
+  /// Parses REST `offer` or WebSocket payload `offer` objects.
+  static OxCastOffer? tryParseApiOfferMap(Map<String, dynamic>? raw) {
+    if (raw == null) return null;
+    String? read(Object? o) {
+      final t = o?.toString().trim();
+      if (t == null || t.isEmpty) return null;
+      return t;
+    }
+
+    final jobId = read(raw['jobId']);
+    final mediaGlobalId = read(raw['mediaGlobalId']);
+    final fileId = read(raw['fileId']);
+    final createdAtRaw = raw['createdAt']?.toString();
+    if (jobId == null || mediaGlobalId == null || fileId == null) {
+      return null;
+    }
+    final createdAt = DateTime.tryParse(createdAtRaw ?? '') ?? DateTime.now();
+    return OxCastOffer(
+      jobId: jobId,
+      mediaGlobalId: mediaGlobalId,
+      fileId: fileId,
+      createdAt: createdAt,
+    );
+  }
+
+  final String jobId;
+  final String mediaGlobalId;
+  final String fileId;
+  final DateTime createdAt;
 }
 
 class OxDiscoverSection {
@@ -1144,7 +1188,150 @@ class DataRepository {
       sections.add(OxDiscoverSection(id: 'videos', title: 'Videos', items: results[2]));
     }
 
+    unawaited(runPendingLocatorHealPass(limitPerKind: limitPerKind > 15 ? 15 : limitPerKind));
+
     return sections;
+  }
+
+  /// Items that exist in the library but do not yet have a direct client locator (see GET `/me/library/media/pending-locators`).
+  Future<List<OxLibraryMediaItem>> fetchOxPendingLocatorItems({int limitPerKind = 20}) async {
+    final movieFuture = _fetchPendingLibraryMedia(kind: 'movie', limit: limitPerKind);
+    final seriesFuture = _fetchPendingLibraryMedia(kind: 'series', limit: limitPerKind);
+    final videoFuture = _fetchPendingLibraryMedia(kind: 'general_video', limit: limitPerKind);
+    final results = await Future.wait([movieFuture, seriesFuture, videoFuture]);
+    return <OxLibraryMediaItem>[
+      ...results[0],
+      ...results[1],
+      ...results[2],
+    ];
+  }
+
+  /// Best-effort TDLib resolution for pending [general_video] rows; triggers [locator-heal] when alternate chat/message is found.
+  Future<void> runPendingLocatorHealPass({int limitPerKind = 15}) async {
+    try {
+      final pending = await _fetchPendingLibraryMedia(kind: 'general_video', limit: limitPerKind);
+      for (final item in pending) {
+        await _tryHealPendingGeneralVideoLocator(item);
+      }
+    } catch (e, st) {
+      locatorDebugInfo('Pending locator heal pass skipped: $e\n$st');
+    }
+  }
+
+  /// Phone: queue a cast for this account (in-memory on API until TV consumes or cancel).
+  Future<void> postOxCastOffer({
+    required String mediaGlobalId,
+    required String fileId,
+  }) async {
+    final dio = _authorizedApiClient();
+    await dio.post<Map<String, dynamic>>(
+      '/me/cast/offer',
+      data: <String, dynamic>{
+        'mediaGlobalId': mediaGlobalId.trim(),
+        'fileId': fileId.trim(),
+      },
+    );
+  }
+
+  /// TV: long-poll until an offer arrives or timeout (empty response then retry in a loop).
+  Future<OxCastOffer?> pollOxCastPending({int timeoutSeconds = 55}) async {
+    final dio = _authorizedApiClient();
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/cast/pending',
+      queryParameters: <String, dynamic>{'timeoutSeconds': timeoutSeconds},
+      options: Options(
+        receiveTimeout: Duration(seconds: timeoutSeconds + 25),
+        sendTimeout: const Duration(seconds: 30),
+      ),
+    );
+    final raw = response.data?['offer'];
+    if (raw is! Map) {
+      return null;
+    }
+    return OxCastOffer.tryParseApiOfferMap(Map<String, dynamic>.from(raw));
+  }
+
+  /// WebSocket URL for [GET `/me/cast/ws`]; scheme is `wss`/`ws` matching [apiBaseUrl].
+  Uri buildOxCastWebSocketUri() {
+    final httpUrl = _formatApiUrl('/me/cast/ws');
+    final u = Uri.parse(httpUrl);
+    final scheme = u.scheme == 'https'
+        ? 'wss'
+        : u.scheme == 'http'
+            ? 'ws'
+            : u.scheme;
+    return u.replace(scheme: scheme);
+  }
+
+  /// Bearer token for WebSocket `Authorization` (same as REST). Throws if not logged in.
+  String requireApiAccessTokenForOxApi() {
+    final accessToken = _storage.getApiAccessToken()?.trim() ?? '';
+    if (accessToken.isEmpty) {
+      throw const OxBootstrapUnauthorized();
+    }
+    return accessToken;
+  }
+
+  Future<void> cancelOxCastOffer() async {
+    final dio = _authorizedApiClient();
+    await dio.post<Map<String, dynamic>>('/me/cast/cancel');
+  }
+
+  Future<void> _tryHealPendingGeneralVideoLocator(OxLibraryMediaItem item) async {
+    if (item.kind != 'general_video') return;
+    final mediaId = item.globalId.trim();
+    if (mediaId.isEmpty) return;
+    if (!await _ensureTdlibReadyForMediaPlayback()) return;
+    await _resolvePlayableTelegramFileFromLocator(
+      mediaId: mediaId,
+      fileUniqueId: item.fileUniqueId,
+      locatorType: item.locatorType,
+      locatorChatId: item.locatorChatId,
+      locatorMessageId: item.locatorMessageId,
+      locatorRemoteFileId: item.locatorRemoteFileId,
+    );
+  }
+
+  Future<List<OxLibraryMediaItem>> _fetchPendingLibraryMedia({required String kind, required int limit}) async {
+    final dio = _authorizedApiClient();
+    final response = await dio.get<Map<String, dynamic>>(
+      '/me/library/media/pending-locators',
+      queryParameters: <String, dynamic>{'kind': kind, 'limit': limit, 'sort': 'created_desc'},
+    );
+
+    final items = response.data?['items'];
+    if (items is! List) {
+      return const <OxLibraryMediaItem>[];
+    }
+
+    return items
+        .whereType<Map>()
+        .map((rawItem) {
+          final item = Map<String, dynamic>.from(rawItem);
+          final mediaId = _readOptionalTrimmed(item['mediaId']);
+          final seriesId = _readOptionalTrimmed(item['seriesId']);
+          final globalId = kind == 'series' && seriesId != null ? 'series:$seriesId' : (mediaId ?? '');
+
+          return OxLibraryMediaItem(
+            kind: _readOptionalTrimmed(item['kind']) ?? kind,
+            globalId: globalId,
+            title: _readOptionalTrimmed(item['title']) ?? 'Untitled',
+            createdAt: DateTime.tryParse(item['createdAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+            fileUniqueId: _readOptionalTrimmed(item['fileUniqueId']),
+            posterPath: _readOptionalTrimmed(item['posterPath']),
+            overview: _readOptionalTrimmed(item['overview']),
+            voteAverage: (item['voteAverage'] as num?)?.toDouble(),
+            locatorType: _readOptionalTrimmed(item['locatorType']),
+            locatorChatId: (item['locatorChatId'] as num?)?.toInt(),
+            locatorMessageId: (item['locatorMessageId'] as num?)?.toInt(),
+            locatorRemoteFileId: _readOptionalTrimmed(item['locatorRemoteFileId']),
+            thumbnailSourceChatId: (item['thumbnailSourceChatId'] as num?)?.toInt(),
+            thumbnailSourceMessageId: (item['thumbnailSourceMessageId'] as num?)?.toInt(),
+            playbackPending: _readOptionalBool(item['playbackPending']) ?? true,
+          );
+        })
+        .where((item) => item.globalId.isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<OxLibraryMediaDetail> fetchOxLibraryMediaDetail(String globalId) async {
@@ -3491,6 +3678,7 @@ class DataRepository {
             locatorRemoteFileId: _readOptionalTrimmed(item['locatorRemoteFileId']),
             thumbnailSourceChatId: (item['thumbnailSourceChatId'] as num?)?.toInt(),
             thumbnailSourceMessageId: (item['thumbnailSourceMessageId'] as num?)?.toInt(),
+            playbackPending: _readOptionalBool(item['playbackPending']) ?? false,
           );
         })
         .where((item) => item.globalId.isNotEmpty)
