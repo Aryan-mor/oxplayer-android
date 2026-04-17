@@ -49,7 +49,6 @@ import '../utils/video_player_navigation.dart';
 import '../utils/watch_state_notifier.dart';
 import '../widgets/app_bar_back_button.dart';
 import '../widgets/collapsible_text.dart';
-import '../widgets/episode_card.dart';
 import '../widgets/focus_builders.dart';
 import '../widgets/focusable_tab_chip.dart';
 import '../widgets/horizontal_scroll_with_arrows.dart';
@@ -2924,6 +2923,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                   final versionConfig = await _resolveDownloadVersion(context, episode, client);
                   if (versionConfig == null || !context.mounted) return;
                   await context.read<DownloadProvider>().deleteDownload(episode.globalKey);
+                  if (!context.mounted) return;
                   try {
                     await context.read<DownloadProvider>().queueDownload(episode, client, versionConfig: versionConfig);
                     if (context.mounted) showSuccessSnackBar(context, t.downloads.downloadQueued);
@@ -2947,23 +2947,6 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     final cached = _episodeCache[season.ratingKey];
     if (cached != null && episodeIndex < cached.length) {
       cached[episodeIndex] = updated;
-    }
-  }
-
-  /// Refresh episodes for the current context (inline season or all flattened)
-  Future<void> _refreshCurrentEpisodes() async {
-    if (_isOxLibraryMetadata(widget.metadata)) {
-      await _loadFullMetadata();
-      return;
-    }
-
-    if (_showEpisodesDirectly) {
-      await _fetchAllEpisodes();
-    } else if (_seasons.isNotEmpty) {
-      // Clear cache for current season and re-fetch
-      final season = _seasons[_selectedSeasonIndex];
-      _episodeCache.remove(season.ratingKey);
-      await _fetchSeasonEpisodes(_selectedSeasonIndex);
     }
   }
 

@@ -4,9 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:oxplayer/theme/mono_tokens.dart';
-import 'package:oxplayer/widgets/app_icon.dart';
 
-import '../../focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
 import '../../infrastructure/data_repository.dart';
 import '../../services/auth_debug_service.dart';
@@ -238,45 +236,10 @@ class _MyTelegramVideoDetailScreenState extends State<MyTelegramVideoDetailScree
 
   @override
   Widget build(BuildContext context) {
-    final mt = t.myTelegram;
     final v = widget.video;
     final fileTechSummary = videoFileTechnicalSummary(v);
     final thumb = v.thumb;
     final ui = widget.itemUi;
-    final isKeyboardMode = InputModeTracker.isKeyboardMode(context);
-    final colorScheme = Theme.of(context).colorScheme;
-    final focusBg = colorScheme.inverseSurface;
-    final focusFg = colorScheme.onInverseSurface;
-    final tonalBg = colorScheme.secondaryContainer;
-    final tonalFg = colorScheme.onSecondaryContainer;
-    final noOverlay = WidgetStateProperty.resolveWith((states) {
-      if (states.contains(WidgetState.focused)) return Colors.transparent;
-      return null;
-    });
-
-    ButtonStyle actionIconButtonStyle({Color? foregroundColor}) {
-      if (!isKeyboardMode) {
-        return IconButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          maximumSize: const Size(48, 48),
-          foregroundColor: foregroundColor,
-        );
-      }
-      return ButtonStyle(
-        minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
-        maximumSize: const WidgetStatePropertyAll(Size(48, 48)),
-        overlayColor: noOverlay,
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.focused)) return focusBg;
-          return tonalBg;
-        }),
-        foregroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.focused)) return focusFg;
-          return foregroundColor ?? tonalFg;
-        }),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Text(v.displayTitle, maxLines: 2, overflow: TextOverflow.ellipsis),

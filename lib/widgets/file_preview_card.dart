@@ -469,7 +469,7 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
             onSelect: () { if (dlCallback != null) dlCallback(); },
             child: IconButton(
               onPressed: dlCallback,
-              icon: dlButton!,
+              icon: dlButton,
               visualDensity: VisualDensity.compact,
             ),
           ),
@@ -483,7 +483,7 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
             onSelect: () { if (deleteCallback != null) deleteCallback(); },
             child: IconButton(
               onPressed: deleteCallback,
-              icon: deleteButton!,
+              icon: deleteButton,
               visualDensity: VisualDensity.compact,
             ),
           ),
