@@ -948,33 +948,8 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
           Material(
             color: Theme.of(context).colorScheme.surface,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: t.common.refresh,
-                    onPressed: _initialLoading ? null : _loadInitial,
-                    icon: _initialLoading
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const AppIcon(Symbols.refresh_rounded, fill: 1),
-                  ),
-                  if (_items.isNotEmpty)
-                    Expanded(
-                      child: Text(
-                        '${_items.length} videos',
-                        textAlign: TextAlign.end,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: tokens(context).textMuted,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              child: _telegramChatMediaTopToolbar(context),
             ),
           ),
           Expanded(child: _buildBody(mt)),
@@ -985,33 +960,81 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.chatTitle} - ${mt.mediaTitle}'),
-        actions: [
-          IconButton(
-            tooltip: t.common.refresh,
-            onPressed: _initialLoading ? null : _loadInitial,
-            icon: _initialLoading
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const AppIcon(Symbols.refresh_rounded, fill: 1),
-          ),
-          if (_items.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Center(
-                child: Text(
-                  '${_items.length} videos',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted, fontWeight: FontWeight.w500),
-                ),
-              ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(52),
+          child: Material(
+            color: Theme.of(context).colorScheme.surface,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 4, right: 8, bottom: 6),
+              child: _telegramChatMediaTopToolbar(context),
             ),
-        ],
+          ),
+        ),
       ),
       body: _buildBody(mt),
+    );
+  }
+
+  /// Refresh (start), Stream all (true center), video count (end) on one row.
+  Widget _telegramChatMediaTopToolbar(BuildContext context) {
+    final countStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: tokens(context).textMuted,
+      fontWeight: FontWeight.w500,
+    );
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: IconButton(
+              tooltip: t.common.refresh,
+              onPressed: _initialLoading ? null : _loadInitial,
+              icon: _initialLoading
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const AppIcon(Symbols.refresh_rounded, fill: 1),
+            ),
+          ),
+          Center(child: _buildStreamAllButton()),
+          Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(end: 4),
+              child: _items.isNotEmpty
+                  ? Text(
+                      '${_items.length} videos',
+                      style: countStyle,
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStreamAllButton() {
+    return FilledButton.tonalIcon(
+      onPressed: _initialLoading || _streamAllStarting || _items.isEmpty ? null : _streamAllInOrder,
+      icon: _streamAllStarting
+          ? const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const AppIcon(Symbols.playlist_play_rounded, fill: 1),
+      label: Text(t.myTelegram.streamAll),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 
@@ -1071,106 +1094,67 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
     }
 
     // Show video grid (month groups like Telegram) with load more.
-    // Stack: scroll paints first, then the Stream-all bar — otherwise Clip.none grid items draw on top of the button.
-    const streamAllBarReserve = 72.0;
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.topCenter,
+    return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.only(top: streamAllBarReserve),
-          child: Column(
-            children: [
-              Expanded(
-                child: _buildVideoGalleryScroll(),
-              ),
-
-              // Load more (older history), or sync hint when TDLib may still be filling history, or end-of-list.
-              if (_hasMoreHistory)
-                Material(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  elevation: 3,
-                  shadowColor: Colors.black.withValues(alpha: 0.14),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: OutlinedButton.icon(
-                      onPressed: _loadingMore ? null : _loadMore,
-                      icon: _loadingMore
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const AppIcon(Symbols.expand_more_rounded, fill: 1),
-                      label: Text(_loadingMore ? 'Loading...' : telegramStrings.loadMoreMedia),
-                      style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-                    ),
-                  ),
-                )
-              else if (!widget.libraryIndexed && _items.length < _pageSize)
-                Material(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  elevation: 3,
-                  shadowColor: Colors.black.withValues(alpha: 0.14),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          telegramStrings.mediaSyncMayLoadMore,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted),
-                        ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: _initialLoading ? null : _loadInitial,
-                          icon: const AppIcon(Symbols.refresh_rounded, fill: 1),
-                          label: Text(telegramStrings.checkForMoreVideos),
-                          style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                  child: Text(
-                    telegramStrings.mediaEndOfList,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted, fontWeight: FontWeight.w500),
-                  ),
-                ),
-            ],
-          ),
+        Expanded(
+          child: _buildVideoGalleryScroll(),
         ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Material(
-            color: Theme.of(context).colorScheme.surface,
-            elevation: 6,
-            shadowColor: Colors.black.withValues(alpha: 0.18),
+
+        // Load more (older history), or sync hint when TDLib may still be filling history, or end-of-list.
+        if (_hasMoreHistory)
+          Material(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            elevation: 3,
+            shadowColor: Colors.black.withValues(alpha: 0.14),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: FilledButton.tonalIcon(
-                onPressed: _initialLoading || _streamAllStarting || _items.isEmpty ? null : _streamAllInOrder,
-                icon: _streamAllStarting
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const AppIcon(Symbols.playlist_play_rounded, fill: 1),
-                label: Text(t.myTelegram.streamAll),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                  alignment: Alignment.center,
-                ),
+              padding: const EdgeInsets.all(16),
+              child: OutlinedButton.icon(
+                onPressed: _loadingMore ? null : _loadMore,
+                icon: _loadingMore
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const AppIcon(Symbols.expand_more_rounded, fill: 1),
+                label: Text(_loadingMore ? 'Loading...' : telegramStrings.loadMoreMedia),
+                style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
               ),
             ),
+          )
+        else if (!widget.libraryIndexed && _items.length < _pageSize)
+          Material(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            elevation: 3,
+            shadowColor: Colors.black.withValues(alpha: 0.14),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    telegramStrings.mediaSyncMayLoadMore,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _initialLoading ? null : _loadInitial,
+                    icon: const AppIcon(Symbols.refresh_rounded, fill: 1),
+                    label: Text(telegramStrings.checkForMoreVideos),
+                    style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            child: Text(
+              telegramStrings.mediaEndOfList,
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: tokens(context).textMuted, fontWeight: FontWeight.w500),
+            ),
           ),
-        ),
       ],
     );
   }
