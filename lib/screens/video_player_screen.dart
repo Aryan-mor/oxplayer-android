@@ -3,76 +3,74 @@ import 'dart:collection' show ListQueue;
 import 'dart:io';
 import 'dart:math';
 
-import 'package:path/path.dart' as p;
-
 import 'package:flutter/material.dart';
-import 'package:oxplayer/widgets/app_icon.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'package:flutter/services.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:os_media_controls/os_media_controls.dart';
+import 'package:oxplayer/widgets/app_icon.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../mpv/mpv.dart';
-import '../mpv/player/platform/player_android.dart';
-
 import '../../services/bif_thumbnail_service.dart';
 import '../../services/plex_client.dart';
-import '../services/plex_api_cache.dart';
+import '../focus/dpad_navigator.dart';
+import '../focus/focusable_button.dart';
+import '../focus/input_mode_tracker.dart';
+import '../focus/key_event_utils.dart';
+import '../i18n/strings.g.dart';
+import '../infrastructure/data_repository.dart';
+import '../models/companion_remote/remote_command.dart';
+import '../models/plex_media_info.dart';
 import '../models/plex_media_version.dart';
 import '../models/plex_metadata.dart';
 import '../models/plex_video_playback_data.dart';
-import '../utils/content_utils.dart';
-import '../utils/plex_cache_parser.dart';
-import '../models/plex_media_info.dart';
+import '../models/shader_preset.dart';
+import '../mpv/mpv.dart';
+import '../mpv/player/platform/player_android.dart';
+import '../providers/companion_remote_provider.dart';
 import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
 import '../providers/ox_cast_receiver_provider.dart';
 import '../providers/playback_state_provider.dart';
-import '../models/companion_remote/remote_command.dart';
-import '../providers/companion_remote_provider.dart';
-import '../services/companion_remote/companion_remote_receiver.dart';
-import '../services/fullscreen_state_manager.dart';
-import '../services/auth_debug_service.dart';
-import '../services/discord_rpc_service.dart';
-import '../services/episode_navigation_service.dart';
-import '../services/media_controls_manager.dart';
-import '../services/playback_initialization_service.dart';
-import '../services/playback_progress_tracker.dart';
-import '../services/offline_watch_sync_service.dart';
-import '../services/display_mode_service.dart';
-import '../services/settings_service.dart';
-import '../services/sleep_timer_service.dart';
-import '../services/track_manager.dart';
-import '../services/ambient_lighting_service.dart';
-import '../services/video_filter_manager.dart';
-import '../services/video_pip_manager.dart';
-import '../services/pip_service.dart';
-import '../models/shader_preset.dart';
-import '../services/shader_service.dart';
 import '../providers/shader_provider.dart';
 import '../providers/user_profile_provider.dart';
+import '../services/ambient_lighting_service.dart';
+import '../services/auth_debug_service.dart';
+import '../services/companion_remote/companion_remote_receiver.dart';
+import '../services/discord_rpc_service.dart';
+import '../services/display_mode_service.dart';
+import '../services/episode_navigation_service.dart';
+import '../services/fullscreen_state_manager.dart';
+import '../services/media_controls_manager.dart';
+import '../services/offline_watch_sync_service.dart';
+import '../services/pip_service.dart';
+import '../services/playback_initialization_service.dart';
+import '../services/playback_progress_tracker.dart';
+import '../services/plex_api_cache.dart';
+import '../services/settings_service.dart';
+import '../services/shader_service.dart';
+import '../services/sleep_timer_service.dart';
+import '../services/track_manager.dart';
+import '../services/video_filter_manager.dart';
+import '../services/video_pip_manager.dart';
 import '../utils/app_logger.dart';
+import '../utils/content_utils.dart';
 import '../utils/dialogs.dart';
-import '../utils/player_utils.dart';
 import '../utils/orientation_helper.dart';
 import '../utils/platform_detector.dart';
+import '../utils/player_utils.dart';
+import '../utils/plex_cache_parser.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/snackbar_helper.dart';
 import '../utils/video_player_navigation.dart';
-import '../infrastructure/data_repository.dart';
-import 'telegram/telegram_video_metadata.dart';
-import '../widgets/overlay_sheet.dart';
-import '../widgets/video_controls/video_controls.dart';
-import '../focus/focusable_button.dart';
-import '../focus/input_mode_tracker.dart';
-import '../focus/dpad_navigator.dart';
-import '../focus/key_event_utils.dart';
-import '../i18n/strings.g.dart';
 import '../watch_together/providers/watch_together_provider.dart';
 import '../watch_together/widgets/watch_together_overlay.dart';
+import '../widgets/overlay_sheet.dart';
+import '../widgets/video_controls/video_controls.dart';
+import 'telegram/telegram_video_metadata.dart';
 
 Future<void> _setWakelock(bool enabled) async {
   try {
@@ -92,9 +90,7 @@ Future<void> _setWakelock(bool enabled) async {
 bool _isLocalHttpLoopbackPlaybackUrl(String? url) {
   if (url == null || url.isEmpty) return false;
   final u = url.trim().toLowerCase();
-  return u.startsWith('http://127.0.0.1') ||
-      u.startsWith('http://localhost') ||
-      u.startsWith('http://[::1]');
+  return u.startsWith('http://127.0.0.1') || u.startsWith('http://localhost') || u.startsWith('http://[::1]');
 }
 
 class VideoPlayerScreen extends StatefulWidget {
@@ -795,10 +791,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
       final sigPeakStr = await player!.getProperty('video-params/sig-peak');
       final sigPeak = double.tryParse(sigPeakStr ?? '');
 
-      final delay = await _displayModeService!.applyDisplayMatching(
-        fps: fps,
-        sigPeak: sigPeak,
-      );
+      final delay = await _displayModeService!.applyDisplayMatching(fps: fps, sigPeak: sigPeak);
 
       if (delay > Duration.zero) {
         await Future.delayed(delay);
@@ -1091,9 +1084,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
   /// True when My Telegram stream-all can advance from the current item (not on last video).
   bool _canSkipToNextTelegramStreamItem() {
     final pl = widget.telegramStreamPlaylist;
-    return pl != null &&
-        pl.length > 1 &&
-        widget.telegramStreamPlaylistIndex < pl.length - 1;
+    return pl != null && pl.length > 1 && widget.telegramStreamPlaylistIndex < pl.length - 1;
   }
 
   /// After [disposePlayerForNavigation], opening playlist index [failedPlaylistIndex] failed — try the next item or exit.
@@ -1251,11 +1242,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
           final subdlState = await subdlSettings.getPersistedSubdlPlaybackState(sid, widget.metadata.ratingKey);
           for (final e in subdlState.entries) {
             externalSubsMerged.add(
-              SubtitleTrack.uri(
-                Uri.file(e.path).toString(),
-                title: e.title,
-                language: e.language?.toLowerCase(),
-              ),
+              SubtitleTrack.uri(Uri.file(e.path).toString(), title: e.title, language: e.language?.toLowerCase()),
             );
           }
           final prefPath = subdlState.preferredPath;
@@ -2097,9 +2084,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
         (widget.playbackData?.hasValidVideoUrl ?? false) &&
         _isLocalHttpLoopbackPlaybackUrl(widget.playbackData?.videoUrl)) {
       unawaited(
-        DataRepository.create().then(
-          (r) => r.releaseOxMediaPlaybackSession(reason: 'telegram_player_route_popped'),
-        ),
+        DataRepository.create().then((r) => r.releaseOxMediaPlaybackSession(reason: 'telegram_player_route_popped')),
       );
     }
 
@@ -2299,7 +2284,8 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     if (!mounted || manager == null || currentPlayer == null) return;
 
     final playbackState = context.read<PlaybackStateProvider>();
-    final canNavigateEpisodes = widget.metadata.isEpisode ||
+    final canNavigateEpisodes =
+        widget.metadata.isEpisode ||
         playbackState.isPlaylistActive ||
         (widget.telegramStreamPlaylist != null && widget.telegramStreamPlaylist!.length > 1);
     final canSeek = currentPlayer.state.seekable;
@@ -2746,9 +2732,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
                 _handleBackButton();
               }
             },
-            child: _isPlayerInitialized && player != null
-                ? _buildVideoPlayer(sheetContext)
-                : _buildLoadingSpinner(),
+            child: _isPlayerInitialized && player != null ? _buildVideoPlayer(sheetContext) : _buildLoadingSpinner(),
           ),
         ),
       ),
@@ -2760,482 +2744,482 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindin
     final isMobile = PlatformDetector.isMobile(context);
 
     return Scaffold(
-        // Use transparent background on macOS when native video layer is active
-        backgroundColor: Colors.transparent,
-        body: GestureDetector(
-          behavior: HitTestBehavior.translucent, // Allow taps to pass through to controls
-          onScaleStart: (details) {
-            // Initialize pinch gesture tracking (mobile only)
-            if (!isMobile) return;
-            if (_videoFilterManager != null) {
-              _videoFilterManager!.isPinching = false;
-            }
-          },
-          onScaleUpdate: (details) {
-            // Track if this is a pinch gesture (2+ fingers) on mobile
-            if (!isMobile) return;
-            if (details.pointerCount >= 2 && _videoFilterManager != null) {
-              _videoFilterManager!.isPinching = true;
-            }
-          },
-          onScaleEnd: (details) {
-            // Only toggle if we detected a pinch gesture on mobile
-            if (!isMobile) return;
-            if (_videoFilterManager != null && _videoFilterManager!.isPinching) {
-              _toggleContainCover();
-              _videoFilterManager!.isPinching = false;
-            }
-          },
-          child: Stack(
-            children: [
-              // macOS PiP placeholder — video is in PiP window, show background with icon
-              // Placed before Video so controls render on top
-              if (Platform.isMacOS)
-                ValueListenableBuilder<bool>(
-                  valueListenable: PipService().isPipActive,
-                  builder: (context, isInPip, child) {
-                    if (!isInPip) return const SizedBox.shrink();
-                    return Positioned.fill(
-                      child: Container(
-                        color: Colors.black,
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Symbols.picture_in_picture_alt_rounded,
-                                size: 48,
-                                color: Colors.white.withValues(alpha: 0.5),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                t.videoControls.pipActive,
-                                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14),
-                              ),
-                            ],
-                          ),
+      // Use transparent background on macOS when native video layer is active
+      backgroundColor: Colors.transparent,
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent, // Allow taps to pass through to controls
+        onScaleStart: (details) {
+          // Initialize pinch gesture tracking (mobile only)
+          if (!isMobile) return;
+          if (_videoFilterManager != null) {
+            _videoFilterManager!.isPinching = false;
+          }
+        },
+        onScaleUpdate: (details) {
+          // Track if this is a pinch gesture (2+ fingers) on mobile
+          if (!isMobile) return;
+          if (details.pointerCount >= 2 && _videoFilterManager != null) {
+            _videoFilterManager!.isPinching = true;
+          }
+        },
+        onScaleEnd: (details) {
+          // Only toggle if we detected a pinch gesture on mobile
+          if (!isMobile) return;
+          if (_videoFilterManager != null && _videoFilterManager!.isPinching) {
+            _toggleContainCover();
+            _videoFilterManager!.isPinching = false;
+          }
+        },
+        child: Stack(
+          children: [
+            // macOS PiP placeholder — video is in PiP window, show background with icon
+            // Placed before Video so controls render on top
+            if (Platform.isMacOS)
+              ValueListenableBuilder<bool>(
+                valueListenable: PipService().isPipActive,
+                builder: (context, isInPip, child) {
+                  if (!isInPip) return const SizedBox.shrink();
+                  return Positioned.fill(
+                    child: Container(
+                      color: Colors.black,
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Symbols.picture_in_picture_alt_rounded,
+                              size: 48,
+                              color: Colors.white.withValues(alpha: 0.5),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              t.videoControls.pipActive,
+                              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14),
+                            ),
+                          ],
                         ),
                       ),
-                    );
-                  },
-                ),
-              // Video player
-              Center(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Update player size when layout changes
-                    final newSize = Size(constraints.maxWidth, constraints.maxHeight);
+                    ),
+                  );
+                },
+              ),
+            // Video player
+            Center(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // Update player size when layout changes
+                  final newSize = Size(constraints.maxWidth, constraints.maxHeight);
 
-                    // Update player size in video filter manager, PiP manager, and native layer
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted && player != null) {
-                        _videoFilterManager?.updatePlayerSize(newSize);
-                        _videoPIPManager?.updatePlayerSize(newSize);
-                        // Update ambient lighting shader if active (output aspect changed)
-                        _updateAmbientLightingOnResize(newSize);
-                        // Update Metal layer frame on iOS/macOS for rotation
-                        player!.updateFrame();
-                      }
-                    });
-
-                    // Compute canControl from Watch Together provider (reactive)
-                    bool canControl = true;
-                    try {
-                      canControl = context.select<WatchTogetherProvider, bool>(
-                        (wt) => wt.isInSession ? wt.canControl() : true,
-                      );
-                    } catch (e) {
-                      // Watch Together not available, default to can control
+                  // Update player size in video filter manager, PiP manager, and native layer
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && player != null) {
+                      _videoFilterManager?.updatePlayerSize(newSize);
+                      _videoPIPManager?.updatePlayerSize(newSize);
+                      // Update ambient lighting shader if active (output aspect changed)
+                      _updateAmbientLightingOnResize(newSize);
+                      // Update Metal layer frame on iOS/macOS for rotation
+                      player!.updateFrame();
                     }
+                  });
 
-                    final onNext = (_nextEpisode != null && _canNavigateEpisodes()) ? _playNext : null;
-                    final onPrevious = (_previousEpisode != null && _canNavigateEpisodes()) ? _playPrevious : null;
+                  // Compute canControl from Watch Together provider (reactive)
+                  bool canControl = true;
+                  try {
+                    canControl = context.select<WatchTogetherProvider, bool>(
+                      (wt) => wt.isInSession ? wt.canControl() : true,
+                    );
+                  } catch (e) {
+                    // Watch Together not available, default to can control
+                  }
 
-                    return Video(
-                      player: player!,
-                      controls: (context) => plexVideoControlsBuilder(
-                        player!,
-                        widget.metadata,
-                        onNext: onNext,
-                        onPrevious: onPrevious,
-                        availableVersions: _availableVersions,
-                        selectedMediaIndex: widget.selectedMediaIndex,
-                        onTogglePIPMode: _togglePIPMode,
-                        boxFitMode: _videoFilterManager?.boxFitMode ?? 0,
-                        onCycleBoxFitMode: _cycleBoxFitMode,
-                        onCycleAudioTrack: _cycleAudioTrack,
-                        onCycleSubtitleTrack: _cycleSubtitleTrack,
-                        onAudioTrackChanged: _onAudioTrackChanged,
-                        onSubtitleTrackChanged: _onSubtitleTrackChanged,
-                        onSecondarySubtitleTrackChanged: _onSecondarySubtitleTrackChanged,
-                        onSeekCompleted: (position) {
-                          // Notify Watch Together of seek for sync
-                          // Note: canControl() check is done in sync manager, not here
-                          // This matches play/pause behavior and avoids timing issues
-                          try {
-                            final watchTogether = this.context.read<WatchTogetherProvider>();
-                            if (watchTogether.isInSession) {
-                              watchTogether.onLocalSeek(position);
-                            }
-                          } catch (e) {
-                            // Watch Together not available, ignore
+                  final onNext = (_nextEpisode != null && _canNavigateEpisodes()) ? _playNext : null;
+                  final onPrevious = (_previousEpisode != null && _canNavigateEpisodes()) ? _playPrevious : null;
+
+                  return Video(
+                    player: player!,
+                    controls: (context) => plexVideoControlsBuilder(
+                      player!,
+                      widget.metadata,
+                      onNext: onNext,
+                      onPrevious: onPrevious,
+                      availableVersions: _availableVersions,
+                      selectedMediaIndex: widget.selectedMediaIndex,
+                      onTogglePIPMode: _togglePIPMode,
+                      boxFitMode: _videoFilterManager?.boxFitMode ?? 0,
+                      onCycleBoxFitMode: _cycleBoxFitMode,
+                      onCycleAudioTrack: _cycleAudioTrack,
+                      onCycleSubtitleTrack: _cycleSubtitleTrack,
+                      onAudioTrackChanged: _onAudioTrackChanged,
+                      onSubtitleTrackChanged: _onSubtitleTrackChanged,
+                      onSecondarySubtitleTrackChanged: _onSecondarySubtitleTrackChanged,
+                      onSeekCompleted: (position) {
+                        // Notify Watch Together of seek for sync
+                        // Note: canControl() check is done in sync manager, not here
+                        // This matches play/pause behavior and avoids timing issues
+                        try {
+                          final watchTogether = this.context.read<WatchTogetherProvider>();
+                          if (watchTogether.isInSession) {
+                            watchTogether.onLocalSeek(position);
                           }
-                        },
-                        onBack: _handleBackButton,
-                        canControl: canControl,
-                        hasFirstFrame: _hasFirstFrame,
-                        playNextFocusNode: _showPlayNextDialog ? _playNextConfirmFocusNode : null,
-                        controlsVisible: _controlsVisible,
-                        shaderService: _shaderService,
-                        // ignore: no-empty-block - setState triggers rebuild to reflect shader change
-                        onShaderChanged: () => setState(() {}),
-                        thumbnailDataBuilder: _bifService?.isAvailable == true ? _getThumbnailData : null,
-                        isAmbientLightingEnabled: _ambientLightingService?.isEnabled ?? false,
-                        onToggleAmbientLighting: _toggleAmbientLighting,
+                        } catch (e) {
+                          // Watch Together not available, ignore
+                        }
+                      },
+                      onBack: _handleBackButton,
+                      canControl: canControl,
+                      hasFirstFrame: _hasFirstFrame,
+                      playNextFocusNode: _showPlayNextDialog ? _playNextConfirmFocusNode : null,
+                      controlsVisible: _controlsVisible,
+                      shaderService: _shaderService,
+                      // ignore: no-empty-block - setState triggers rebuild to reflect shader change
+                      onShaderChanged: () => setState(() {}),
+                      thumbnailDataBuilder: _bifService?.isAvailable == true ? _getThumbnailData : null,
+                      isAmbientLightingEnabled: _ambientLightingService?.isEnabled ?? false,
+                      onToggleAmbientLighting: _toggleAmbientLighting,
+                    ),
+                  );
+                },
+              ),
+            ),
+            // Netflix-style auto-play overlay (hidden in PiP mode)
+            ValueListenableBuilder<bool>(
+              valueListenable: PipService().isPipActive,
+              builder: (context, isInPip, child) {
+                if (isInPip || !_showPlayNextDialog || _nextEpisode == null) {
+                  return const SizedBox.shrink();
+                }
+                return ValueListenableBuilder<bool>(
+                  valueListenable: _controlsVisible,
+                  builder: (context, controlsShown, child) {
+                    return AnimatedPositioned(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      right: 24,
+                      bottom: controlsShown ? 100 : 24,
+                      child: Container(
+                        width: 320,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.9),
+                          borderRadius: const BorderRadius.all(Radius.circular(12)),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Consumer<PlaybackStateProvider>(
+                                        builder: (context, playbackState, child) {
+                                          final isShuffleActive = playbackState.isShuffleActive;
+                                          return Row(
+                                            children: [
+                                              Text(
+                                                'Next Episode',
+                                                style: TextStyle(
+                                                  color: Colors.white.withValues(alpha: 0.7),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                              if (isShuffleActive) ...[
+                                                const SizedBox(width: 4),
+                                                AppIcon(
+                                                  Symbols.shuffle_rounded,
+                                                  fill: 1,
+                                                  size: 12,
+                                                  color: Colors.white.withValues(alpha: 0.7),
+                                                ),
+                                              ],
+                                            ],
+                                          );
+                                        },
+                                      ),
+                                      const SizedBox(height: 4),
+                                      if (_nextEpisode!.parentIndex != null && _nextEpisode!.index != null)
+                                        Text(
+                                          'S${_nextEpisode!.parentIndex} E${_nextEpisode!.index} · ${_nextEpisode!.title}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        )
+                                      else
+                                        Text(
+                                          _nextEpisode!.title!,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: FocusableButton(
+                                    focusNode: _playNextCancelFocusNode,
+                                    onPressed: _cancelAutoPlay,
+                                    autoScroll: false,
+                                    onNavigateRight: () => _playNextConfirmFocusNode.requestFocus(),
+                                    onNavigateUp: () {}, // Trap focus
+                                    onNavigateDown: () {}, // Trap focus
+                                    child: OutlinedButton(
+                                      onPressed: _cancelAutoPlay,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        side: BorderSide(color: Colors.white.withValues(alpha: 0.5)),
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                      child: Text(t.common.cancel),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: FocusableButton(
+                                    focusNode: _playNextConfirmFocusNode,
+                                    onPressed: _playNext,
+                                    autoScroll: false,
+                                    onNavigateLeft: () => _playNextCancelFocusNode.requestFocus(),
+                                    onNavigateUp: () {}, // Trap focus
+                                    onNavigateDown: () {}, // Trap focus
+                                    child: FilledButton(
+                                      onPressed: _playNext,
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: Colors.black,
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          if (_autoPlayCountdown > 0) ...[
+                                            Text('$_autoPlayCountdown'),
+                                            const SizedBox(width: 4),
+                                            const AppIcon(Symbols.play_arrow_rounded, fill: 1, size: 18),
+                                          ] else
+                                            Text(t.videoControls.playNext),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },
-                ),
-              ),
-              // Netflix-style auto-play overlay (hidden in PiP mode)
-              ValueListenableBuilder<bool>(
-                valueListenable: PipService().isPipActive,
-                builder: (context, isInPip, child) {
-                  if (isInPip || !_showPlayNextDialog || _nextEpisode == null) {
-                    return const SizedBox.shrink();
-                  }
-                  return ValueListenableBuilder<bool>(
-                    valueListenable: _controlsVisible,
-                    builder: (context, controlsShown, child) {
-                      return AnimatedPositioned(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeInOut,
-                        right: 24,
-                        bottom: controlsShown ? 100 : 24,
-                        child: Container(
-                          width: 320,
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.9),
-                            borderRadius: const BorderRadius.all(Radius.circular(12)),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Consumer<PlaybackStateProvider>(
-                                          builder: (context, playbackState, child) {
-                                            final isShuffleActive = playbackState.isShuffleActive;
-                                            return Row(
-                                              children: [
-                                                Text(
-                                                  'Next Episode',
-                                                  style: TextStyle(
-                                                    color: Colors.white.withValues(alpha: 0.7),
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                ),
-                                                if (isShuffleActive) ...[
-                                                  const SizedBox(width: 4),
-                                                  AppIcon(
-                                                    Symbols.shuffle_rounded,
-                                                    fill: 1,
-                                                    size: 12,
-                                                    color: Colors.white.withValues(alpha: 0.7),
-                                                  ),
-                                                ],
-                                              ],
-                                            );
-                                          },
-                                        ),
-                                        const SizedBox(height: 4),
-                                        if (_nextEpisode!.parentIndex != null && _nextEpisode!.index != null)
-                                          Text(
-                                            'S${_nextEpisode!.parentIndex} E${_nextEpisode!.index} · ${_nextEpisode!.title}',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          )
-                                        else
-                                          Text(
-                                            _nextEpisode!.title!,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: FocusableButton(
-                                      focusNode: _playNextCancelFocusNode,
-                                      onPressed: _cancelAutoPlay,
-                                      autoScroll: false,
-                                      onNavigateRight: () => _playNextConfirmFocusNode.requestFocus(),
-                                      onNavigateUp: () {}, // Trap focus
-                                      onNavigateDown: () {}, // Trap focus
-                                      child: OutlinedButton(
-                                        onPressed: _cancelAutoPlay,
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: Colors.white,
-                                          side: BorderSide(color: Colors.white.withValues(alpha: 0.5)),
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                        ),
-                                        child: Text(t.common.cancel),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: FocusableButton(
-                                      focusNode: _playNextConfirmFocusNode,
-                                      onPressed: _playNext,
-                                      autoScroll: false,
-                                      onNavigateLeft: () => _playNextCancelFocusNode.requestFocus(),
-                                      onNavigateUp: () {}, // Trap focus
-                                      onNavigateDown: () {}, // Trap focus
-                                      child: FilledButton(
-                                        onPressed: _playNext,
-                                        style: FilledButton.styleFrom(
-                                          backgroundColor: Colors.white,
-                                          foregroundColor: Colors.black,
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                        ),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            if (_autoPlayCountdown > 0) ...[
-                                              Text('$_autoPlayCountdown'),
-                                              const SizedBox(width: 4),
-                                              const AppIcon(Symbols.play_arrow_rounded, fill: 1, size: 18),
-                                            ] else
-                                              Text(t.videoControls.playNext),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                );
+              },
+            ),
+            // "Still watching?" overlay (hidden in PiP mode)
+            ValueListenableBuilder<bool>(
+              valueListenable: PipService().isPipActive,
+              builder: (context, isInPip, child) {
+                if (isInPip || !_showStillWatchingPrompt) {
+                  return const SizedBox.shrink();
+                }
+                return ValueListenableBuilder<bool>(
+                  valueListenable: _controlsVisible,
+                  builder: (context, controlsShown, child) {
+                    return AnimatedPositioned(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      right: 24,
+                      bottom: controlsShown ? 100 : 24,
+                      child: Container(
+                        width: 320,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.9),
+                          borderRadius: const BorderRadius.all(Radius.circular(12)),
                         ),
-                      );
-                    },
-                  );
-                },
-              ),
-              // "Still watching?" overlay (hidden in PiP mode)
-              ValueListenableBuilder<bool>(
-                valueListenable: PipService().isPipActive,
-                builder: (context, isInPip, child) {
-                  if (isInPip || !_showStillWatchingPrompt) {
-                    return const SizedBox.shrink();
-                  }
-                  return ValueListenableBuilder<bool>(
-                    valueListenable: _controlsVisible,
-                    builder: (context, controlsShown, child) {
-                      return AnimatedPositioned(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeInOut,
-                        right: 24,
-                        bottom: controlsShown ? 100 : 24,
-                        child: Container(
-                          width: 320,
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.9),
-                            borderRadius: const BorderRadius.all(Radius.circular(12)),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                t.videoControls.stillWatching,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.7),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                t.videoControls.pausingIn(seconds: '$_stillWatchingCountdown'),
-                                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: FocusableButton(
-                                      focusNode: _stillWatchingPauseFocusNode,
-                                      onPressed: _onStillWatchingPause,
-                                      autoScroll: false,
-                                      onNavigateRight: () => _stillWatchingContinueFocusNode.requestFocus(),
-                                      onNavigateUp: () {},
-                                      onNavigateDown: () {},
-                                      child: OutlinedButton(
-                                        onPressed: _onStillWatchingPause,
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: Colors.white,
-                                          side: BorderSide(color: Colors.white.withValues(alpha: 0.5)),
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                        ),
-                                        child: Text(t.videoControls.pauseButton),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: FocusableButton(
-                                      focusNode: _stillWatchingContinueFocusNode,
-                                      onPressed: _onStillWatchingContinue,
-                                      autoScroll: false,
-                                      onNavigateLeft: () => _stillWatchingPauseFocusNode.requestFocus(),
-                                      onNavigateUp: () {},
-                                      onNavigateDown: () {},
-                                      child: FilledButton(
-                                        onPressed: _onStillWatchingContinue,
-                                        style: FilledButton.styleFrom(
-                                          backgroundColor: Colors.white,
-                                          foregroundColor: Colors.black,
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                        ),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            Text('$_stillWatchingCountdown'),
-                                            const SizedBox(width: 4),
-                                            Text(t.videoControls.continueWatching),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-              // Buffering indicator (also shows during initial load, but not when exiting)
-              // Hidden in PiP mode
-              ValueListenableBuilder<bool>(
-                valueListenable: PipService().isPipActive,
-                builder: (context, isInPip, child) {
-                  if (isInPip) return const SizedBox.shrink();
-                  return ValueListenableBuilder<bool>(
-                    valueListenable: _isBuffering,
-                    builder: (context, isBuffering, child) {
-                      return ValueListenableBuilder<bool>(
-                        valueListenable: _hasFirstFrame,
-                        builder: (context, hasFrame, child) {
-                          if ((!isBuffering && hasFrame) || _isExiting.value) return const SizedBox.shrink();
-                          // Show spinner only - controls overlay provides its own black background during loading
-                          return Positioned.fill(
-                            child: IgnorePointer(
-                              child: Center(
-                                child: Container(
-                                  padding: const EdgeInsets.all(20),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.5),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-                                ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              t.videoControls.stillWatching,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.7),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
-                          );
-                        },
-                      );
-                    },
-                  );
-                },
-              ),
-              // Watch Together overlays (isolated from video surface repaints)
-              RepaintBoundary(
-                child: Stack(
-                  children: [
-                    // Watch Together: reconnecting to host overlay
-                    Selector<WatchTogetherProvider, bool>(
-                      selector: (_, provider) => provider.isWaitingForHostReconnect,
-                      builder: (context, isWaiting, child) {
-                        if (!isWaiting) return const SizedBox.shrink();
-                        return Positioned(
-                          bottom: 120,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              decoration: const BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.all(Radius.circular(20)),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (PlatformDetector.isTV())
-                                    const Icon(Symbols.sync_rounded, size: 14, color: Colors.white)
-                                  else
-                                    const SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            const SizedBox(height: 4),
+                            Text(
+                              t.videoControls.pausingIn(seconds: '$_stillWatchingCountdown'),
+                              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: FocusableButton(
+                                    focusNode: _stillWatchingPauseFocusNode,
+                                    onPressed: _onStillWatchingPause,
+                                    autoScroll: false,
+                                    onNavigateRight: () => _stillWatchingContinueFocusNode.requestFocus(),
+                                    onNavigateUp: () {},
+                                    onNavigateDown: () {},
+                                    child: OutlinedButton(
+                                      onPressed: _onStillWatchingPause,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        side: BorderSide(color: Colors.white.withValues(alpha: 0.5)),
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                      child: Text(t.videoControls.pauseButton),
                                     ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    t.watchTogether.reconnectingToHost,
-                                    style: const TextStyle(color: Colors.white, fontSize: 12),
                                   ),
-                                ],
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: FocusableButton(
+                                    focusNode: _stillWatchingContinueFocusNode,
+                                    onPressed: _onStillWatchingContinue,
+                                    autoScroll: false,
+                                    onNavigateLeft: () => _stillWatchingPauseFocusNode.requestFocus(),
+                                    onNavigateUp: () {},
+                                    onNavigateDown: () {},
+                                    child: FilledButton(
+                                      onPressed: _onStillWatchingContinue,
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: Colors.black,
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Text('$_stillWatchingCountdown'),
+                                          const SizedBox(width: 4),
+                                          Text(t.videoControls.continueWatching),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+            // Buffering indicator (also shows during initial load, but not when exiting)
+            // Hidden in PiP mode
+            ValueListenableBuilder<bool>(
+              valueListenable: PipService().isPipActive,
+              builder: (context, isInPip, child) {
+                if (isInPip) return const SizedBox.shrink();
+                return ValueListenableBuilder<bool>(
+                  valueListenable: _isBuffering,
+                  builder: (context, isBuffering, child) {
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: _hasFirstFrame,
+                      builder: (context, hasFrame, child) {
+                        if ((!isBuffering && hasFrame) || _isExiting.value) return const SizedBox.shrink();
+                        // Show spinner only - controls overlay provides its own black background during loading
+                        return Positioned.fill(
+                          child: IgnorePointer(
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.5),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
                               ),
                             ),
                           ),
                         );
                       },
-                    ),
-                    // Watch Together: participant join/leave notifications
-                    const ParticipantNotificationOverlay(),
-                  ],
-                ),
+                    );
+                  },
+                );
+              },
+            ),
+            // Watch Together overlays (isolated from video surface repaints)
+            RepaintBoundary(
+              child: Stack(
+                children: [
+                  // Watch Together: reconnecting to host overlay
+                  Selector<WatchTogetherProvider, bool>(
+                    selector: (_, provider) => provider.isWaitingForHostReconnect,
+                    builder: (context, isWaiting, child) {
+                      if (!isWaiting) return const SizedBox.shrink();
+                      return Positioned(
+                        bottom: 120,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: const BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.all(Radius.circular(20)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (PlatformDetector.isTV())
+                                  const Icon(Symbols.sync_rounded, size: 14, color: Colors.white)
+                                else
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  t.watchTogether.reconnectingToHost,
+                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  // Watch Together: participant join/leave notifications
+                  const ParticipantNotificationOverlay(),
+                ],
               ),
-              // Black overlay during exit (no spinner - just covers transparency)
-              ValueListenableBuilder<bool>(
-                valueListenable: _isExiting,
-                builder: (context, isExiting, child) {
-                  if (!isExiting) return const SizedBox.shrink();
-                  return Positioned.fill(child: Container(color: Colors.black));
-                },
-              ),
-            ],
-          ),
+            ),
+            // Black overlay during exit (no spinner - just covers transparency)
+            ValueListenableBuilder<bool>(
+              valueListenable: _isExiting,
+              builder: (context, isExiting, child) {
+                if (!isExiting) return const SizedBox.shrink();
+                return Positioned.fill(child: Container(color: Colors.black));
+              },
+            ),
+          ],
         ),
+      ),
     );
   }
 }
