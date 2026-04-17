@@ -13,6 +13,7 @@ import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:oxplayer/widgets/focusable_media_card.dart';
 import 'package:provider/provider.dart';
 
+import '../../focus/focusable_wrapper.dart';
 import '../../i18n/strings.g.dart';
 import '../../infrastructure/data_repository.dart';
 import '../../services/auth_debug_service.dart';
@@ -1020,8 +1021,9 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
   }
 
   Widget _buildStreamAllButton() {
-    return FilledButton.tonalIcon(
-      onPressed: _initialLoading || _streamAllStarting || _items.isEmpty ? null : _streamAllInOrder,
+    final disabled = _initialLoading || _streamAllStarting || _items.isEmpty;
+    final btn = FilledButton.tonalIcon(
+      onPressed: disabled ? null : _streamAllInOrder,
       icon: _streamAllStarting
           ? const SizedBox(
               width: 22,
@@ -1035,6 +1037,15 @@ class _MyTelegramChatMediaScreenState extends State<MyTelegramChatMediaScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
+    );
+    if (disabled) return btn;
+    return FocusableWrapper(
+      onSelect: _streamAllInOrder,
+      semanticLabel: t.myTelegram.streamAll,
+      borderRadius: 12,
+      descendantsAreFocusable: false,
+      focusColor: Theme.of(context).colorScheme.primary,
+      child: btn,
     );
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:oxplayer/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import '../../focus/focus_theme.dart';
 import '../../infrastructure/data_repository.dart';
 import '../../infrastructure/telegram/source_chats_tdlib.dart';
 import '../../i18n/strings.g.dart';
@@ -23,6 +24,8 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   bool _searchFieldEditable = false;
 
   final Map<int, TdlibPickerChatRow> _rowsByChatId = {};
+  /// TDLib main chat list order (new loads append). Avoids alphabetical resort so "load more" items stay at the bottom.
+  final List<int> _mainChatOrder = [];
   int _listLimit = 50;
   bool _loading = true;
   bool _loadingMore = false;
@@ -52,15 +55,19 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   List<TdlibPickerChatRow> get _visibleRows {
     final bucket = _currentBucket;
     final list = _rowsByChatId.values.where((r) => r.matchesBucket(bucket)).toList();
+    int orderOf(TdlibPickerChatRow r) {
+      final i = _mainChatOrder.indexOf(r.chatId);
+      return i >= 0 ? i : 1 << 30;
+    }
     if (bucket == SourceChatPickerBucket.chats) {
       list.sort((a, b) {
         if (a.isSavedMessages != b.isSavedMessages) {
           return a.isSavedMessages ? -1 : 1;
         }
-        return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+        return orderOf(a).compareTo(orderOf(b));
       });
     } else {
-      list.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      list.sort((a, b) => orderOf(a).compareTo(orderOf(b)));
     }
     return list;
   }
@@ -76,14 +83,19 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
     _tabController.addListener(_onTabChanged);
-    _searchFocusNode.addListener(() {
-      if (!_searchFocusNode.hasFocus && mounted) {
-        setState(() => _searchFieldEditable = false);
-      }
-    });
+    _searchFocusNode.addListener(_onSearchFocusChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bootstrap();
     });
+  }
+
+  void _onSearchFocusChanged() {
+    if (!mounted) return;
+    if (!_searchFocusNode.hasFocus && _searchFieldEditable) {
+      setState(() => _searchFieldEditable = false);
+    } else {
+      setState(() {});
+    }
   }
 
   void _onTabChanged() {
@@ -106,6 +118,9 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
   void _enableSearchEditing() {
     if (_searchFieldEditable) return;
     setState(() => _searchFieldEditable = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocusNode.requestFocus();
+    });
   }
 
   @override
@@ -178,6 +193,7 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
         _error = null;
         _listLimit = 50;
         _rowsByChatId.clear();
+        _mainChatOrder.clear();
       });
     } else {
       setState(() => _loadingMore = true);
@@ -208,6 +224,7 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
           );
           if (row != null) {
             _rowsByChatId[id] = row;
+            _mainChatOrder.add(id);
           }
         } catch (e, st) {
           debugPrint('MyTelegramConfig: skip tdlib chat $id: $e\n$st');
@@ -356,6 +373,7 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
               child: Focus(
+                focusNode: _searchFocusNode,
                 onKeyEvent: (node, event) {
                   if (_searchFieldEditable) return KeyEventResult.ignored;
                   if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -389,7 +407,20 @@ class _MyTelegramConfigScreenState extends State<MyTelegramConfigScreen>
                             icon: const AppIcon(Symbols.close_rounded, fill: 1),
                           )
                         : null,
-                    border: const OutlineInputBorder(),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: _searchFocusNode.hasFocus
+                            ? FocusTheme.getFocusBorderColor(context)
+                            : Theme.of(context).colorScheme.outline,
+                        width: _searchFocusNode.hasFocus ? FocusTheme.focusBorderWidth : 1,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: FocusTheme.getFocusBorderColor(context),
+                        width: FocusTheme.focusBorderWidth,
+                      ),
+                    ),
                     isDense: true,
                   ),
                 ),

@@ -232,6 +232,10 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
     final cardBodyNavigateRight =
         (isTV && widget.showActions && _streamFocusNode != null) ? () => _streamFocusNode!.requestFocus() : null;
 
+    // DOWN from the card shell must land on stream first; default traversal often picks download.
+    final cardBodyNavigateDown = widget.onNavigateDown ??
+        ((isTV && widget.showActions && _streamFocusNode != null) ? () => _streamFocusNode!.requestFocus() : null);
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: FocusableWrapper(
@@ -240,7 +244,7 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
         disableScale: true,
         descendantsAreFocusable: isTV,
         onNavigateUp: widget.onNavigateUp,
-        onNavigateDown: widget.onNavigateDown,
+        onNavigateDown: cardBodyNavigateDown,
         onSelect: cardBodySelect,
         onNavigateRight: cardBodyNavigateRight,
         child: InkWell(
@@ -501,6 +505,7 @@ class _FilePreviewCardState extends State<FilePreviewCard> {
       disableScale: true,
       descendantsAreFocusable: false,
       onNavigateLeft: () => widget.focusNode?.requestFocus(),
+      onNavigateUp: widget.focusNode != null ? () => widget.focusNode!.requestFocus() : null,
       onNavigateRight: nextFocusNode != null ? () => nextFocusNode.requestFocus() : null,
       onSelect: widget.onStream,
       child: button,
